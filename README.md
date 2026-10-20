@@ -8,6 +8,8 @@
 
 <p align="center">
   <a href="https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml"><img src="https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml/badge.svg?branch=master" alt="Build" /></a>
+  <a href="https://github.com/mikufoxxx/Wenku8_Flutter/releases/latest"><img src="https://img.shields.io/github/v/release/mikufoxxx/Wenku8_Flutter?style=flat-square&amp;color=555555" alt="Release" /></a>
+  <a href="https://github.com/mikufoxxx/Wenku8_Flutter/releases"><img src="https://img.shields.io/github/downloads/mikufoxxx/Wenku8_Flutter/total?style=flat-square&amp;label=GitHub%20Downloads&amp;color=555555" alt="GitHub Release 下载量" /></a>
   <img src="https://img.shields.io/badge/Platform-Android-555555?style=flat-square" alt="Android" />
   <a href="assets/licenses/GPL-3.0.txt"><img src="https://img.shields.io/badge/License-GPL--3.0-555555?style=flat-square" alt="GPL 3.0" /></a>
 </p>
@@ -36,13 +38,17 @@
 ## 功能特性
 
 - **书籍发现**：分类、排行、出版文库；按书名、作者或标签筛选搜索，点击详情页作者或标签查看相应书单。
-- **书架管理**：立体书架支持循环轮播、惯性滚动、吸附与触觉反馈，可切换为纯列表；与本地书库共用自定义分类，分类可与阅读状态、书籍来源叠加筛选。
-- **阅读排版**：上下滚动、横排翻页与竖排翻页，大屏对页；可选逐段接续、平移、覆盖、纸页翻动或无动画。配色、字号、行距、页边距、段落间距、缩进与对齐支持实时预览；支持导入 TTF／OTF，App 与阅读器可分别设置字体。
-- **阅读工具**：可展开的分卷目录、书签定位与高亮、章内查找、封面与插图大图查看、双指缩放与原图保存、分区点按与音量键翻页、自动滚动与跨章衔接；可选择点书直接续读，在阅读器打开书籍详情。
-- **离线阅读**：App 内章节缓存、缓存管理、阅读历史、进度续读与本地备份。
-- **本地书库**：多选导入 TXT、EPUB、Kindle、FB2、PDF、DOCX、RTF、HTML、Markdown 与 ZIP；支持扫描共享存储或指定文件夹，勾选后导入。同系列分卷可合并，保留目录、插图与阅读记录；支持分类整理、书籍信息编辑与分卷顺序调整，可单独管理或与缓存书籍合并展示，并按来源筛选。
+- **书架管理**：立体书架支持循环轮播、惯性滚动、吸附与触觉反馈，可切换为纯列表；与本地书库共用分类，支持搜索，可按阅读状态与书籍来源叠加筛选。
+- **阅读排版**：上下滚动、横排翻页与竖排翻页，大屏对页；可选逐段接续、平移、覆盖、纸页翻动或无动画。曲面纸页跟随手指，对页从书缝翻动；翻页速度可调。字号、行距、字重、字间距、四边页边距、缩进与对齐支持实时预览，也可为单本书独立保存。
+- **主题与字体**：支持系统莫奈配色、自选主色、图片取色与桌面主题图标开关；阅读器可独立配色、导入背景图片。五款字体按需下载、离线使用或删除，也可导入 TTF／OTF，App、阅读器和单书分别选择，不预装阅读字库。
+- **阅读工具**：分卷目录、本章／整书进度、章内与整书查找、分区点按、音量键翻页、自动阅读与跨章衔接。封面与插图可双指缩放、保存原图；支持点书直接续读，并从阅读器进入详情。
+- **书签与摘录**：长按正文选句或段落，复制、加入书签或快速查看本卷插图；书签支持分类、定位高亮与图片分享，可选 App 图标水印。
+- **离线阅读**：App 内章节与插图缓存、失败续缓存、缓存管理、阅读历史和本地备份。在线书籍仅提供 App 内缓存，不提供整书文件下载或导出。
+- **本地书库**：多选导入 TXT、EPUB、MOBI／AZW／AZW3／PRC、FB2、PDF、DOCX、RTF、HTML、Markdown 与 ZIP；支持扫描共享存储或指定文件夹，勾选后导入，同系列分卷可合并。支持自定义 TXT 目录、书名与作者编辑、自选封面和分卷顺序调整。本地与合并书架可多选、批量移动分类和删除。
+- **EPUB 与书库整理**：支持注音、注释弹窗、常见段落对齐、分隔线与混合横竖排；可手动升级旧 EPUB 排版、批量重建原书封面或整理重复资源，保留原书、目录、进度与书签。
+- **局域网续读**：同一 Wi-Fi 自动发现设备，首次两端确认后自动重连；在「目录 → 章节进度 → 在其他设备上续读」选择设备，缺书时一并传送。两台 App 保持前台时，自动增量同步进度、书签和分类；同时修改可在冲突页选择保留内容。
 - **网盘与同步**：OpenList／WebDAV、夸克网盘导入（实验性），通过 OneDrive、Google Drive 等系统云文档入口手动合并同步原书与阅读记录。
-- **在线听书**：中文音色、自定义 Microsoft SSML 接口、0.5～3 倍速、段落跟随、睡眠定时、后台与锁屏控制。
+- **听书**：自然在线音色、自定义 Microsoft SSML 接口，或自动检测手机已安装的系统 TTS 引擎及音色；支持 0.5～3 倍速、段落跟随、睡眠定时、后台与锁屏控制。系统引擎能否离线使用取决于所选音色。
 - **账号与社区**：文库账号、云书架、书评与回复。
 - **中文支持**：简体中文、香港繁体与台湾繁体，可跟随系统或手动选择。
 - **性能设置**：帧率偏好与低性能设备模式，可独立调整玻璃折射、模糊、动效与立体书架。
@@ -50,7 +56,9 @@
 
 ## 下载与更新
 
-正式安装包请从 [0.4.2 版本页面](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.2)、[镜像下载页](https://git.3952039.xyz/#releases) 或 App 内更新获取。近年的 Android 手机与平板通常选择 **arm64-v8a**；旧款 32 位设备选择 **armeabi-v7a**，x86_64 用于对应架构的设备或模拟器。
+当前正式版为 **[0.4.2 · build 139](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.2)**，沿用原包名与正式签名，可直接覆盖升级。ARM64 安装包约 **32.8 MB**，比 0.4.1 缩小约 **42%**。
+
+可从 [镜像下载页](https://git.3952039.xyz/#releases)、[GitHub Releases](https://github.com/mikufoxxx/Wenku8_Flutter/releases/latest)，或 **我的 → 关于 → 检查更新** 获取。近年的 Android 手机与平板通常选择 **arm64-v8a**；旧款 32 位设备选择 **armeabi-v7a**，x86_64 用于对应架构的设备或模拟器。App 自动优先使用镜像，连接失败时回退到 GitHub，无需手动选择。
 
 本版新增局域网传书续读、书签分类与自动同步、系统朗读引擎、自定义背景和封面、莫奈主题配色；改善 EPUB 注音与注释、批量导入及阅读性能。完整内容见 [更新日志](CHANGELOG.md)。
 
