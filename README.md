@@ -33,10 +33,10 @@
   &nbsp;
   <img src="docs/images/reader.png" width="30%" alt="阅读 · 横排、竖排与沉浸阅读" />
   &nbsp;
-  <img src="docs/images/settings.png" width="30%" alt="设置 · 按自己的习惯调整" />
+  <img src="docs/images/settings.png" width="30%" alt="配色 · 按自己的习惯调整" />
 </p>
 
-<p align="center"><sub>发现故事　／　沉浸阅读　／　按习惯定制</sub></p>
+<p align="center"><sub>发现故事　／　沉浸阅读　／　按习惯定制<br />界面书目为演示数据</sub></p>
 
 ## 阅读，按你的习惯
 
