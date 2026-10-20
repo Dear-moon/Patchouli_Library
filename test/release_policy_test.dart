@@ -14,8 +14,8 @@ void main() {
   });
 
   test('current release upgrades the restored and earlier app versions', () {
-    expect(currentAppVersion, '0.4.2');
-    expect(currentAppBuild, greaterThan(88));
+    expect(currentAppVersion, '0.4.3');
+    expect(currentAppBuild, greaterThan(144));
     final release = AppRelease.fromGithub({
       'tag_name': 'v$currentAppVersion',
       'draft': false,
@@ -36,6 +36,7 @@ void main() {
       (version: '0.3.7', build: 63),
       (version: '0.4.0', build: 87),
       (version: '0.4.1', build: 88),
+      (version: '0.4.2', build: 139),
     ]) {
       expect(
         release.isNewerThan(

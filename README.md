@@ -86,7 +86,7 @@
 
 ## 下载与更新
 
-当前正式版 **[0.4.2 · build 139](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.2)**。ARM64 约 **32.8 MB**，比 0.4.1 缩小约 **42%**，沿用原包名与签名，可直接覆盖升级。
+当前正式版 **[0.4.3 · build 145](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.3)**。修复部分 EPUB 导入失败，新增故障排查与一键复制反馈，阅读字号最低支持 **10 pt**；沿用原包名与签名，可直接覆盖升级。
 
 ### [镜像下载 →](https://git.3952039.xyz/#releases)　[GitHub Releases →](https://github.com/mikufoxxx/Wenku8_Flutter/releases/latest)
 

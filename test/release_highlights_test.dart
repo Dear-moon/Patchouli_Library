@@ -226,7 +226,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text(currentReleaseSections.first.title), findsNothing);
       for (final summary in currentReleaseSummary) {
-        expect(find.text('· $summary'), findsOneWidget);
+        expect(
+          find.text(summary.replaceAll('**', ''), findRichText: true),
+          findsOneWidget,
+        );
       }
       await tester.tap(
         find.byKey(const ValueKey('view-current-release-details')),

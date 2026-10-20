@@ -1,4 +1,4 @@
-const currentReleaseSourcePolicy = '本 APP 以后只保留轻小说文库源和本地导入功能，不再支持任何其他源以及自定义书源。';
+const currentReleaseSourcePolicy = '本 APP 仅支持轻小说文库及本地导入，不再支持其他源或自定义书源。';
 
 const projectFreeNotice = '''**免费与开源**
 

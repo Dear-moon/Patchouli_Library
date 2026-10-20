@@ -337,7 +337,9 @@ lib/touch_sampling.dart
 lib/ui_frame_capture.dart
 lib/ui_notifiers.dart
 lib/updates/app_updates.dart
+lib/updates/current_release_content.dart
 lib/updates/release_highlights.dart
+lib/updates/release_markdown.dart
 lib/updates/release_notices.dart
 lib/updates/update_page.dart
 lib/user_fonts.dart
@@ -463,6 +465,7 @@ test/reading_entry_ui_test.dart
 test/reading_history_state_test.dart
 test/reading_tools_ui_test.dart
 test/release_highlights_test.dart
+test/release_markdown_test.dart
 test/release_policy_test.dart
 test/render_performance_test.dart
 test/route_headers_illustrations_test.dart
