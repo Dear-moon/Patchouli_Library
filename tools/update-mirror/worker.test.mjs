@@ -199,8 +199,7 @@ test('registry ignores obsolete state and serves only reviewed tags', async () =
   } finally { globalThis.fetch = oldFetch; }
 });
 
-test('default publication policy exposes no downloads or cached manifests', async () => {
-  assert.deepEqual(APPROVED_RELEASES, {});
+test('empty publication policy exposes no downloads or cached manifests', async () => {
   const f = fixture(data, undefined, {});
   f.stored.set(host + path + '?asset=12', new Response('cached file'));
   assert.equal((await f.request('/api/releases/latest')).status, 404);
@@ -225,8 +224,19 @@ test('approval filters exact IDs, rejects old versions and omits automatic archi
   assert.equal(result.tarball_url, undefined);
 });
 
-test('default registry never reads saved data or requests upstream', async () => {
-  const registry = new ReleaseRegistry({ storage: { get() { throw new Error('must not read'); } } });
+test('empty registry policy never reads saved data or requests upstream', async () => {
+  const registry = new ReleaseRegistry({ storage: { get() { throw new Error('must not read'); } } }, {}, {});
   assert.equal((await registry.fetch(new Request('https://registry/latest?download=1'))).status, 404);
   assert.equal((await registry.fetch(new Request('https://registry/tags/v0.4.1?download=1'))).status, 404);
+});
+
+test('current distribution only approves its three reviewed APK identities', () => {
+  assert.deepEqual(Object.keys(APPROVED_RELEASES), ['v0.4.2']);
+  assert.equal(new Set(APPROVED_RELEASES['v0.4.2']).size, 3);
+  assert.ok(APPROVED_RELEASES['v0.4.2'].every(id => Number.isSafeInteger(id) && id > 0));
+  const reviewed = APPROVED_RELEASES['v0.4.2'].map(id => ({ ...data.assets[0], id }));
+  const result = approvedMetadata({ ...data, assets: [...reviewed, { id: 1, name: 'source.zip' }] });
+  assert.deepEqual(result.assets, reviewed);
+  assert.equal(approvedTag('v0.4.1'), false);
+  assert.equal(approvedTag('v0.3.7+63'), false);
 });
