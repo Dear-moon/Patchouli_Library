@@ -1,0 +1,29 @@
+const currentReleaseSourcePolicy = '本 APP 以后只保留轻小说文库源和本地导入功能，不再支持任何其他源以及自定义书源。';
+
+const projectFreeNotice = '''**免费与开源**
+
+本项目免费使用，公开源码遵循仓库许可证，第三方组件遵循各自许可。请从项目仓库或 App 内更新获取安装包，不要购买所谓付费版、激活码或解锁服务。''';
+
+const projectContentNotice = '''**内容来源与项目身份**
+
+「轻小说文库」是第三方客户端，并非轻小说文库网站的官方应用。在线书目与阅读内容来自轻小说文库（Wenku8）；本地书籍由用户自行导入，安装包不附带小说文件。''';
+
+const projectRightsNotice = '''**版权与使用提醒**
+
+小说、封面和插图归各自权利人所有，应用的开源许可不授予这些内容的使用权。本项目不支持侵权行为；请仅阅读、导入和缓存有权使用的内容，遵守来源网站规则，不得绕过访问限制、破解 DRM，或未经许可复制、传播、出售内容。''';
+
+const projectRiskNotice = '''**服务与数据风险**
+
+第三方网站和服务可能调整、限流或停止，内容的完整性与可用性以来源为准。升级、整理存储或同步前，请备份重要原书和阅读记录；提交反馈时不要附带密码、Cookie 或令牌。''';
+
+const projectImportantNotices =
+    '''> [!IMPORTANT]
+> **$currentReleaseSourcePolicy**
+
+$projectFreeNotice
+
+$projectContentNotice
+
+$projectRightsNotice
+
+$projectRiskNotice''';

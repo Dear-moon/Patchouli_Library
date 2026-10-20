@@ -36,6 +36,8 @@ python3 tools/check_public_source.py ../Wenku8_Flutter-public-source
 
 [Flutter source checks](../.github/workflows/flutter-ci.yml) 在主分支、Pull Request 或手动运行时执行源码清单检查、Flutter 与原生测试、独立预览构建。它只具有读取权限，不读取正式签名，不上传构建产物，也不创建或更新 Release。
 
+正式安装包沿用已配置的长期签名。维护者通过独立的「Sign reviewed distribution」手动任务签署经过确认的草稿安装包；该任务只向草稿上传签名结果，不自动公开版本。发布前仍须核对包名、版本、构建号、三种架构和旧版签名，确认附件后更新镜像发布清单。
+
 ## 许可与分发
 
 保留原项目的 `LICENSE`、`NOTICE`、`assets/licenses/` 和各第三方组件源码与声明。本 Flutter 组合版本使用 GPL version 3；在线听书适配与文档导入库等仍适用各自许可，见 [第三方组件与分发条件](THIRD_PARTY.md)。

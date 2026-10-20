@@ -127,6 +127,7 @@ key.properties
 !/tools/test_public_source_export.py
 !/tools/generate_app_icons.dart
 !/tools/prepare_release.py
+!/tools/sign_distribution.py
 !/tools/test_prepare_release.py
 !/tools/check_public_source.py
 !/tools/test_public_source_policy.py

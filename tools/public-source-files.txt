@@ -1,5 +1,6 @@
 .githooks/pre-push
 .github/workflows/flutter-ci.yml
+.github/workflows/sign-distribution.yml
 .gitignore
 CHANGELOG.md
 LICENSE
@@ -335,6 +336,7 @@ lib/ui_frame_capture.dart
 lib/ui_notifiers.dart
 lib/updates/app_updates.dart
 lib/updates/release_highlights.dart
+lib/updates/release_notices.dart
 lib/updates/update_page.dart
 lib/user_fonts.dart
 lib/web_publication_catalog.dart
@@ -459,8 +461,8 @@ test/reading_entry_ui_test.dart
 test/reading_history_state_test.dart
 test/reading_tools_ui_test.dart
 test/release_highlights_test.dart
+test/release_policy_test.dart
 test/render_performance_test.dart
-test/restore_041_test.dart
 test/route_headers_illustrations_test.dart
 test/scroll_edge_input_test.dart
 test/selected_value_builder_test.dart
@@ -698,6 +700,7 @@ tools/export_public_source.py
 tools/generate_app_icons.dart
 tools/prepare_release.py
 tools/public-source-files.txt
+tools/sign_distribution.py
 tools/test_prepare_release.py
 tools/test_public_source_export.py
 tools/test_public_source_policy.py

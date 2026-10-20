@@ -1,13 +1,23 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wenku8_flutter/updates/app_updates.dart';
 import 'package:wenku8_flutter/updates/release_highlights.dart';
 
 void main() {
-  test('restoration version upgrades both 0.3.7 and withdrawn 0.4.0', () {
-    expect(currentAppVersion, '0.4.1');
-    expect(currentAppBuild, greaterThan(87));
+  test('package and in-app version identifiers stay aligned', () {
+    final version = RegExp(
+      r'^version:\s*(\S+)',
+      multiLine: true,
+    ).firstMatch(File('pubspec.yaml').readAsStringSync())!.group(1);
+    expect(version, '$currentAppVersion+$currentAppBuild');
+  });
+
+  test('current release upgrades the restored and earlier app versions', () {
+    expect(currentAppVersion, '0.4.2');
+    expect(currentAppBuild, greaterThan(88));
     final release = AppRelease.fromGithub({
-      'tag_name': 'v0.4.1',
+      'tag_name': 'v$currentAppVersion',
       'draft': false,
       'prerelease': false,
       'body': currentReleaseNotes,
@@ -15,16 +25,17 @@ void main() {
         for (final abi in ['arm64-v8a', 'armeabi-v7a', 'x86_64'])
           {
             'id': 100 + abi.length,
-            'name': 'wenku8-0.4.1-$abi.apk',
+            'name': 'wenku8-$currentAppVersion-$abi.apk',
             'size': 57000000,
             'browser_download_url':
-                'https://github.com/$officialUpdateRepository/releases/download/v0.4.1/wenku8-0.4.1-$abi.apk',
+                'https://github.com/$officialUpdateRepository/releases/download/v$currentAppVersion/wenku8-$currentAppVersion-$abi.apk',
           },
       ],
     }, officialUpdateRepository)!;
     for (final old in [
       (version: '0.3.7', build: 63),
       (version: '0.4.0', build: 87),
+      (version: '0.4.1', build: 88),
     ]) {
       expect(
         release.isNewerThan(
@@ -38,12 +49,15 @@ void main() {
       );
     }
     for (final abi in ['arm64-v8a', 'armeabi-v7a', 'x86_64']) {
-      expect(release.assetFor([abi])?.name, 'wenku8-0.4.1-$abi.apk');
+      expect(
+        release.assetFor([abi])?.name,
+        'wenku8-$currentAppVersion-$abi.apk',
+      );
     }
   });
 
   test(
-    'source policy is first, prominent and repeated without claiming fixes',
+    'source policy remains first, prominent and repeated alongside current notes',
     () {
       expect(currentReleaseSummary.first, currentReleaseSourcePolicy);
       expect(currentReleaseSections.first.title, contains('重要说明'));
@@ -56,10 +70,7 @@ void main() {
         contains(currentReleaseSourcePolicy),
       );
       expect(currentReleaseNotes, contains(currentReleaseSourcePolicy));
-      expect(
-        currentReleaseSections.last.items.first,
-        contains('未加入其他功能调整或问题修复'),
-      );
+      expect(currentReleaseNotes, isNot(contains('未加入其他功能调整或问题修复')));
     },
   );
 }
