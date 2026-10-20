@@ -231,12 +231,14 @@ test('empty registry policy never reads saved data or requests upstream', async 
 });
 
 test('current distribution only approves its three reviewed APK identities', () => {
-  assert.deepEqual(Object.keys(APPROVED_RELEASES), ['v0.4.2']);
-  assert.equal(new Set(APPROVED_RELEASES['v0.4.2']).size, 3);
-  assert.ok(APPROVED_RELEASES['v0.4.2'].every(id => Number.isSafeInteger(id) && id > 0));
-  const reviewed = APPROVED_RELEASES['v0.4.2'].map(id => ({ ...data.assets[0], id }));
-  const result = approvedMetadata({ ...data, assets: [...reviewed, { id: 1, name: 'source.zip' }] });
-  assert.deepEqual(result.assets, reviewed);
+  assert.deepEqual(Object.keys(APPROVED_RELEASES), ['v0.4.2', 'v0.4.3']);
+  for (const [tag, ids] of Object.entries(APPROVED_RELEASES)) {
+    assert.equal(new Set(ids).size, 3);
+    assert.ok(ids.every(id => Number.isSafeInteger(id) && id > 0));
+    const reviewed = ids.map(id => ({ ...data.assets[0], id, name: `wenku8-${tag.slice(1)}-arm64-v8a.apk` }));
+    const result = approvedMetadata({ ...data, tag_name: tag, assets: [...reviewed, { id: 1, name: 'source.zip' }] });
+    assert.deepEqual(result.assets, reviewed);
+  }
   assert.equal(approvedTag('v0.4.1'), false);
   assert.equal(approvedTag('v0.3.7+63'), false);
 });

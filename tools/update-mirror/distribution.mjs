@@ -1,8 +1,9 @@
 // Release tags and exact attachment IDs require an explicit publication review.
 export const APPROVED_RELEASES = Object.freeze({
   'v0.4.2': [659841511, 659841509, 659841512],
+  'v0.4.3': [660221004, 660221006, 660221007],
 });
-export const CACHE_NAMESPACE = 'distribution-0.4.2-139';
+export const CACHE_NAMESPACE = 'distribution-0.4.3-145';
 
 export function approvedTag(tag, policy = APPROVED_RELEASES) {
   const version = /^v?(\d+)\.(\d+)\.(\d+)(?:\+\d+)?$/.exec(tag);
