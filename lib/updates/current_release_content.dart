@@ -11,15 +11,8 @@ const releaseFreeNotice = "**本项目完全免费、开源，无任何赞助、
 const releaseReadingNotice =
     "**本项目仅为第三方阅读客户端，提供阅读界面与本地书籍管理，不运营在线书库、不自行发布小说资源。在线内容及可读状态一切以 Wenku8 为准；不提供因版权限制而停止开放的在线书籍阅读。**";
 
-// The approved public and in-app announcements share the same user-facing copy.
-const publicReleaseNotes = r'''
-**本项目仅为第三方阅读客户端，提供阅读界面与本地书籍管理，不运营在线书库、不自行发布小说资源。在线内容及可读状态一切以 Wenku8 为准；不提供因版权限制而停止开放的在线书籍阅读。**
-
-**交流群：1131397088**
-
-遇到问题或有功能建议，欢迎进群反馈。
-
-### ⚠️ 重要提醒
+// Contact information is shown in the app, not in public release announcements.
+const _releaseBody = r'''### ⚠️ 重要提醒
 
 **本项目完全免费、开源，无任何赞助、打赏或付费渠道。**
 
@@ -58,7 +51,9 @@ const publicReleaseNotes = r'''
 - 完善故障排查信息，更准确地区分登录要求、访问验证、限流和网络故障。
 - 反馈问题时请勿发送密码、Cookie 或令牌。
 ''';
-const currentReleaseNotes = publicReleaseNotes;
+const publicReleaseNotes = '$releaseReadingNotice\n\n$_releaseBody';
+const currentReleaseNotes =
+    '$releaseReadingNotice\n\n$inAppCommunityNotice\n\n$_releaseBody';
 
 const currentReleaseSummary = [
   releaseReadingNotice,

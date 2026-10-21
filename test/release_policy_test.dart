@@ -60,37 +60,39 @@ void main() {
     }
   });
 
-  test(
-    'approved public notes keep community and free-use policy prominent',
-    () {
-      expect(currentReleaseSummary.first, releaseReadingNotice);
-      expect(currentReleaseSummary[1], contains('1131397088'));
-      expect(currentReleaseSummary[2], currentReleaseSourcePolicy);
-      expect(currentReleaseSections.first.title, contains('重要说明'));
-      expect(currentReleaseSections.first.items[2], currentReleaseSourcePolicy);
-      expect(
-        currentReleaseSections.last.items.last,
-        contains(currentReleaseSourcePolicy),
-      );
-      expect(currentReleaseNotes, contains(currentReleaseSourcePolicy));
-      expect(currentReleaseNotes, isNot(contains('未加入其他功能调整或问题修复')));
-      expect(currentReleaseNotes, startsWith(releaseReadingNotice));
-      expect(currentReleaseSections.first.items.first, releaseReadingNotice);
-      expect(currentReleaseSections.first.items[1], inAppCommunityNotice);
-      expect(publicReleaseNotes, startsWith(releaseReadingNotice));
-      expect(publicReleaseNotes, contains(inAppCommunityNotice));
-      expect(publicReleaseNotes, contains(releaseFreeNotice));
-      expect(publicReleaseNotes, contains('因版权停止提供'));
-      expect(publicReleaseNotes, isNot(contains('MewX')));
-      expect(publicReleaseNotes, isNot(contains('API')));
-      final changelog = File('CHANGELOG.md').readAsStringSync();
-      final currentChangelog = changelog.split(
-        RegExp(r'^## ', multiLine: true),
-      )[1];
-      final publishedNotes = currentChangelog
-          .substring(currentChangelog.indexOf('\n') + 1)
-          .trim();
-      expect(publishedNotes, publicReleaseNotes.trim());
-    },
-  );
+  test('public notes omit contacts while in-app notices retain them', () {
+    expect(currentReleaseSummary.first, releaseReadingNotice);
+    expect(currentReleaseSummary[1], contains('1131397088'));
+    expect(currentReleaseSummary[2], currentReleaseSourcePolicy);
+    expect(currentReleaseSections.first.title, contains('重要说明'));
+    expect(currentReleaseSections.first.items[2], currentReleaseSourcePolicy);
+    expect(
+      currentReleaseSections.last.items.last,
+      contains(currentReleaseSourcePolicy),
+    );
+    expect(currentReleaseNotes, contains(currentReleaseSourcePolicy));
+    expect(currentReleaseNotes, isNot(contains('未加入其他功能调整或问题修复')));
+    expect(currentReleaseNotes, startsWith(releaseReadingNotice));
+    expect(currentReleaseSections.first.items.first, releaseReadingNotice);
+    expect(currentReleaseSections.first.items[1], inAppCommunityNotice);
+    expect(publicReleaseNotes, startsWith(releaseReadingNotice));
+    expect(currentReleaseNotes, contains(inAppCommunityNotice));
+    expect(publicReleaseNotes, isNot(contains('交流群')));
+    expect(publicReleaseNotes, isNot(contains('1131397088')));
+    expect(publicReleaseNotes, contains(releaseFreeNotice));
+    expect(publicReleaseNotes, contains('因版权停止提供'));
+    expect(publicReleaseNotes, isNot(contains('MewX')));
+    expect(publicReleaseNotes, isNot(contains('API')));
+    final changelog = File('CHANGELOG.md').readAsStringSync();
+    expect(changelog, isNot(contains('1131397088')));
+    final readme = File('README.md').readAsStringSync();
+    expect(readme, isNot(contains('1131397088')));
+    final currentChangelog = changelog.split(
+      RegExp(r'^## ', multiLine: true),
+    )[1];
+    final publishedNotes = currentChangelog
+        .substring(currentChangelog.indexOf('\n') + 1)
+        .trim();
+    expect(publishedNotes, publicReleaseNotes.trim());
+  });
 }

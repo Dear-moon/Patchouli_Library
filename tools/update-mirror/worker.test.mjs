@@ -244,10 +244,10 @@ test('current distribution only approves its three reviewed APK identities', () 
   assert.equal(approvedTag('v0.3.7+63'), false);
 });
 
-test('introduction opens with reading identity, community and free-use notice', () => {
+test('public introduction keeps reading and free-use notices without contacts', () => {
   const identity = HOME.indexOf('本项目仅为第三方阅读客户端');
-  const community = HOME.indexOf('交流群：1131397088');
   const free = HOME.indexOf('本项目完全免费、开源，无任何赞助、打赏或付费渠道');
-  assert.ok(identity > 0 && community > identity && free > community);
+  assert.ok(identity > 0 && free > identity);
   assert.ok(free < HOME.indexOf('轻小说文库 Flutter 客户端。'));
+  assert.doesNotMatch(HOME, /交流群|1131397088/);
 });

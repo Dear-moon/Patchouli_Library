@@ -7,8 +7,6 @@
 >
 > **仅支持轻小说文库及本地导入，不再支持其他源或自定义书源。** 面向 Android 手机与平板，并非轻小说文库网站的官方应用。
 
-**交流群：1131397088** · 使用问题与功能建议也可提交到 [Issues](https://github.com/mikufoxxx/Wenku8_Flutter/issues)。
-
 ## 下载与更新
 
 当前正式版：**[0.4.4 · build 153](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.4)**。
