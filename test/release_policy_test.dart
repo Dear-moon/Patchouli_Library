@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wenku8_flutter/updates/app_updates.dart';
 import 'package:wenku8_flutter/updates/release_highlights.dart';
+import 'package:wenku8_flutter/updates/current_release_content.dart';
 
 void main() {
   test('package and in-app version identifiers stay aligned', () {
@@ -14,8 +15,8 @@ void main() {
   });
 
   test('current release upgrades the restored and earlier app versions', () {
-    expect(currentAppVersion, '0.4.3');
-    expect(currentAppBuild, greaterThan(144));
+    expect(currentAppVersion, '0.4.4');
+    expect(currentAppBuild, 153);
     final release = AppRelease.fromGithub({
       'tag_name': 'v$currentAppVersion',
       'draft': false,
@@ -37,6 +38,8 @@ void main() {
       (version: '0.4.0', build: 87),
       (version: '0.4.1', build: 88),
       (version: '0.4.2', build: 139),
+      (version: '0.4.2', build: 144),
+      (version: '0.4.3', build: 145),
     ]) {
       expect(
         release.isNewerThan(
@@ -58,20 +61,36 @@ void main() {
   });
 
   test(
-    'source policy remains first, prominent and repeated alongside current notes',
+    'approved public notes keep community and free-use policy prominent',
     () {
-      expect(currentReleaseSummary.first, currentReleaseSourcePolicy);
+      expect(currentReleaseSummary.first, releaseReadingNotice);
+      expect(currentReleaseSummary[1], contains('1131397088'));
+      expect(currentReleaseSummary[2], currentReleaseSourcePolicy);
       expect(currentReleaseSections.first.title, contains('重要说明'));
-      expect(
-        currentReleaseSections.first.items.first,
-        currentReleaseSourcePolicy,
-      );
+      expect(currentReleaseSections.first.items[2], currentReleaseSourcePolicy);
       expect(
         currentReleaseSections.last.items.last,
         contains(currentReleaseSourcePolicy),
       );
       expect(currentReleaseNotes, contains(currentReleaseSourcePolicy));
       expect(currentReleaseNotes, isNot(contains('未加入其他功能调整或问题修复')));
+      expect(currentReleaseNotes, startsWith(releaseReadingNotice));
+      expect(currentReleaseSections.first.items.first, releaseReadingNotice);
+      expect(currentReleaseSections.first.items[1], inAppCommunityNotice);
+      expect(publicReleaseNotes, startsWith(releaseReadingNotice));
+      expect(publicReleaseNotes, contains(inAppCommunityNotice));
+      expect(publicReleaseNotes, contains(releaseFreeNotice));
+      expect(publicReleaseNotes, contains('因版权停止提供'));
+      expect(publicReleaseNotes, isNot(contains('MewX')));
+      expect(publicReleaseNotes, isNot(contains('API')));
+      final changelog = File('CHANGELOG.md').readAsStringSync();
+      final currentChangelog = changelog.split(
+        RegExp(r'^## ', multiLine: true),
+      )[1];
+      final publishedNotes = currentChangelog
+          .substring(currentChangelog.indexOf('\n') + 1)
+          .trim();
+      expect(publishedNotes, publicReleaseNotes.trim());
     },
   );
 }

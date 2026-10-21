@@ -10,8 +10,8 @@ import re
 import subprocess
 import tempfile
 
-VERSION = "0.4.3"
-BUILD = 145
+VERSION = "0.4.4"
+BUILD = 153
 PACKAGE = "org.mewx.wenku8_flutter"
 CERTIFICATE = "4e48d6854c5d8cc35685d982aae9fd8d573263405af0b6f5eb69dd26a8dc9f80"
 ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
