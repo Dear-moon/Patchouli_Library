@@ -6,98 +6,47 @@ class ReleaseSection {
   final List<String> items;
 }
 
-const inAppCommunityNotice = "**交流群：1131397088**\n\n遇到问题或有功能建议，欢迎进群反馈。";
+const inAppCommunityNotice = r'''**交流群：1131397088**\
+遇到问题或有功能建议，欢迎进群反馈。''';
 const releaseFreeNotice = "**本项目完全免费、开源，无任何赞助、打赏或付费渠道。**";
 const releaseReadingNotice =
     "**本项目仅为第三方阅读客户端，提供阅读界面与本地书籍管理，不运营在线书库、不自行发布小说资源。在线内容及可读状态一切以 Wenku8 为准；不提供因版权限制而停止开放的在线书籍阅读。**";
 
-// Contact information is shown in the app, not in public release announcements.
-const _releaseBody = r'''### ⚠️ 重要提醒
+const _freeHeading = '### ⚠️ 免费开源，请勿付费';
+const _freeFraudNotice =
+    '不出售会员、激活码或功能解锁服务。任何以本项目或开发者名义收费、募捐、索要赞助的行为均与本项目无关，请勿付款。';
+const _downloadNotice = '请通过**项目仓库或 App 内更新**获取安装包。';
+const _freeNoticeBody =
+    '$_freeHeading\n\n$releaseFreeNotice\n\n$_freeFraudNotice\n\n$_downloadNotice';
+const _websiteRedirectFix =
+    '修复合法官网跳转被误判为“其他站点”的问题，改善详情、目录和正文加载；遇到临时网络故障时，自动尝试备用官网一次。';
+const _backgroundConcentrationFix = '阅读器自定义背景图片浓度最高支持 **100%**，并可保存该设置。';
+const _releaseChanges =
+    '### 本次更新\n\n- $_websiteRedirectFix\n- $_backgroundConcentrationFix';
 
-**本项目完全免费、开源，无任何赞助、打赏或付费渠道。**
-
-不出售会员、激活码或功能解锁服务。任何以本项目或开发者名义收费、募捐、索要赞助的行为均与本项目无关，请勿付款。
-
-- **本 APP 仅支持轻小说文库及本地导入，不再支持其他源或自定义书源。**
-- 请通过项目仓库或 App 内更新获取安装包。
-- 本项目为第三方客户端。小说、封面和插图归各自权利人所有，请合法使用内容，遵守来源规则。
-
-### 本地导入与存储
-
-- **本地导入默认关联原文件，覆盖现有支持格式**，减少重复保存原书造成的额外空间占用；仍可选择复制到应用。
-- TXT 使用目录索引读取，EPUB 按需读取原书资源；其他格式保留必要的转换文件和缓存。
-- 原文件移动或访问权限失效后，支持重新关联，保留阅读进度和书签。
-- 已有书籍不会自动删除原书或旧副本。关联导入后请保留原文件，整理存储前建议备份重要阅读记录。
-
-### EPUB 目录与排版
-
-- 优化原书目录识别，减少封面、简介和彩页被错误拆成大量编号章节的问题，同时保留这些内容。
-- 修复部分 EPUB 收起分卷后，末尾章节仍留在目录中的问题；已导入书籍无需重新导入。
-- 改善书内目录和文字链接跳转，支持定位到对应章节及段落。
-- 改善原书段前后间距、场景分隔留白和图文排版，保留既有书签与阅读位置。
-- 修复部分字体下日文注音超出正文区域的问题，改善小字号下的注音显示。
-
-### 联网阅读与账号
-
-- **新增「在官网页面登录」入口**，可直接在官网完成登录并连接当前账号。
-- 改善登录状态恢复，减少重复连接；公开章节读取不再等待账号重新连接。
-- 改善旧阅读地址及相对链接的兼容性，优化详情、目录和正文加载。
-- 修复部分章节插图附近正文缺失的问题；服务提示不再被当作正文缓存。官网因版权停止提供的章节会显示提示，不再尝试备用读取。
-- 优化插图下载，减少部分设备上的连接超时；图片加载失败不再形成整页空白或影响后续文字。
-
-### 稳定性与故障排查
-
-- 修复退出阅读页后，残留手势事件可能引发异常的问题。
-- 完善故障排查信息，更准确地区分登录要求、访问验证、限流和网络故障。
-- 反馈问题时请勿发送密码、Cookie 或令牌。
-''';
-const publicReleaseNotes = '$releaseReadingNotice\n\n$_releaseBody';
-const currentReleaseNotes =
-    '$releaseReadingNotice\n\n$inAppCommunityNotice\n\n$_releaseBody';
+// Keep the in-app opening intact. Public announcements omit contact information.
+const publicReleaseNotes =
+    '$_freeNoticeBody\n\n$releaseReadingNotice\n\n**$currentReleaseSourcePolicy**\n\n$_releaseChanges';
+const currentReleaseNotes = '$inAppCommunityNotice\n\n$publicReleaseNotes';
 
 const currentReleaseSummary = [
-  releaseReadingNotice,
-  "**交流群：1131397088**",
-  currentReleaseSourcePolicy,
+  inAppCommunityNotice,
   releaseFreeNotice,
-  "本地导入默认关联原文件，优化 EPUB 原书目录、段距和书内跳转。",
-  "改善官网登录、章节加载及插图显示，修复退出阅读页后的手势异常。",
+  releaseReadingNotice,
+  currentReleaseSourcePolicy,
+  _websiteRedirectFix,
+  _backgroundConcentrationFix,
 ];
 
 const currentReleaseSections = [
   ReleaseSection("重要说明 · 请务必阅读", [
-    releaseReadingNotice,
     inAppCommunityNotice,
-    currentReleaseSourcePolicy,
+    _freeHeading,
     releaseFreeNotice,
-    "不出售会员、激活码或功能解锁服务。任何以本项目或开发者名义收费、募捐、索要赞助的行为均与本项目无关，请勿付款。",
-    "请通过项目仓库或 App 内更新获取安装包。",
-    "本项目为第三方客户端。小说、封面和插图归各自权利人所有，请合法使用内容，遵守来源规则。",
-  ]),
-  ReleaseSection("本地导入与存储", [
-    "**本地导入默认关联原文件，覆盖现有支持格式**，减少重复保存原书造成的额外空间占用；仍可选择复制到应用。",
-    "TXT 使用目录索引读取，EPUB 按需读取原书资源；其他格式保留必要的转换文件和缓存。",
-    "原文件移动或访问权限失效后，支持重新关联，保留阅读进度和书签。",
-    "已有书籍不会自动删除原书或旧副本。关联导入后请保留原文件，整理存储前建议备份重要阅读记录。",
-  ]),
-  ReleaseSection("EPUB 目录与排版", [
-    "优化原书目录识别，减少封面、简介和彩页被错误拆成大量编号章节的问题，同时保留这些内容。",
-    "修复部分 EPUB 收起分卷后，末尾章节仍留在目录中的问题；已导入书籍无需重新导入。",
-    "改善书内目录和文字链接跳转，支持定位到对应章节及段落。",
-    "改善原书段前后间距、场景分隔留白和图文排版，保留既有书签与阅读位置。",
-    "修复部分字体下日文注音超出正文区域的问题，改善小字号下的注音显示。",
-  ]),
-  ReleaseSection("联网阅读与账号", [
-    "**新增「在官网页面登录」入口**，可直接在官网完成登录并连接当前账号。",
-    "改善登录状态恢复，减少重复连接；公开章节读取不再等待账号重新连接。",
-    "改善旧阅读地址及相对链接的兼容性，优化详情、目录和正文加载。",
-    "修复部分章节插图附近正文缺失的问题；服务提示不再被当作正文缓存。官网因版权停止提供的章节会显示提示，不再尝试备用读取。",
-    "优化插图下载，减少部分设备上的连接超时；图片加载失败不再形成整页空白或影响后续文字。",
-  ]),
-  ReleaseSection("稳定性与故障排查", [
-    "修复退出阅读页后，残留手势事件可能引发异常的问题。",
-    "完善故障排查信息，更准确地区分登录要求、访问验证、限流和网络故障。",
-    "反馈问题时请勿发送密码、Cookie 或令牌。",
+    _freeFraudNotice,
+    _downloadNotice,
+    releaseReadingNotice,
     currentReleaseSourcePolicy,
   ]),
+  ReleaseSection("本次更新", [_websiteRedirectFix, _backgroundConcentrationFix]),
 ];

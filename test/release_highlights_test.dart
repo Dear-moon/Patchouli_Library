@@ -227,7 +227,10 @@ void main() {
       expect(find.text(currentReleaseSections.first.title), findsNothing);
       for (final summary in currentReleaseSummary) {
         expect(
-          find.text(summary.replaceAll('**', ''), findRichText: true),
+          find.text(
+            summary.replaceAll('**', '').replaceAll('\\\n', '\n'),
+            findRichText: true,
+          ),
           findsOneWidget,
         );
       }
