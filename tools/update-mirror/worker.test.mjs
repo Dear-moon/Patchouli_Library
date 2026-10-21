@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { handle, REPOSITORY, ReleaseRegistry } from './worker.mjs';
+import worker, { handle, REPOSITORY, ReleaseRegistry, HOME } from './worker.mjs';
 import { APPROVED_RELEASES, approvedTag, approvedMetadata } from './distribution.mjs';
 
 const host = 'https://git.3952039.xyz';
@@ -231,7 +231,8 @@ test('empty registry policy never reads saved data or requests upstream', async 
 });
 
 test('current distribution only approves its three reviewed APK identities', () => {
-  assert.deepEqual(Object.keys(APPROVED_RELEASES), ['v0.4.2', 'v0.4.3']);
+  assert.deepEqual(Object.keys(APPROVED_RELEASES), ['v0.4.2', 'v0.4.3', 'v0.4.4']);
+  assert.deepEqual(APPROVED_RELEASES['v0.4.4'], [662095158, 662095160, 662095162]);
   for (const [tag, ids] of Object.entries(APPROVED_RELEASES)) {
     assert.equal(new Set(ids).size, 3);
     assert.ok(ids.every(id => Number.isSafeInteger(id) && id > 0));
@@ -241,4 +242,12 @@ test('current distribution only approves its three reviewed APK identities', () 
   }
   assert.equal(approvedTag('v0.4.1'), false);
   assert.equal(approvedTag('v0.3.7+63'), false);
+});
+
+test('introduction opens with reading identity, community and free-use notice', () => {
+  const identity = HOME.indexOf('本项目仅为第三方阅读客户端');
+  const community = HOME.indexOf('交流群：1131397088');
+  const free = HOME.indexOf('本项目完全免费、开源，无任何赞助、打赏或付费渠道');
+  assert.ok(identity > 0 && community > identity && free > community);
+  assert.ok(free < HOME.indexOf('轻小说文库 Flutter 客户端。'));
 });
