@@ -9,9 +9,9 @@
 
 ## 下载与更新
 
-当前正式版：**[0.4.4 · build 153](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.4)**。
+当前正式版：**[0.4.5 · build 155](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.5)**。
 
-本版默认关联本地原文件，优化 EPUB 原书目录、段距与书内跳转，改善官网登录、章节加载和插图显示，并修复部分 EPUB 收起分卷后末尾章节仍显示的问题。
+本版修复合法官网跳转被误判为“其他站点”的问题，遇到临时网络故障时尝试备用官网一次；自定义阅读背景图片浓度最高支持 **100%**。
 
 ### [镜像下载 →](https://git.3952039.xyz/#releases)　[GitHub Releases →](https://github.com/mikufoxxx/Wenku8_Flutter/releases/latest)
 

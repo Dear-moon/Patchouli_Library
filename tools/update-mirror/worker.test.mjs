@@ -231,8 +231,9 @@ test('empty registry policy never reads saved data or requests upstream', async 
 });
 
 test('current distribution only approves its three reviewed APK identities', () => {
-  assert.deepEqual(Object.keys(APPROVED_RELEASES), ['v0.4.2', 'v0.4.3', 'v0.4.4']);
+  assert.deepEqual(Object.keys(APPROVED_RELEASES), ['v0.4.2', 'v0.4.3', 'v0.4.4', 'v0.4.5']);
   assert.deepEqual(APPROVED_RELEASES['v0.4.4'], [662095158, 662095160, 662095162]);
+  assert.deepEqual(APPROVED_RELEASES['v0.4.5'], [662506455, 662506464, 662506466]);
   for (const [tag, ids] of Object.entries(APPROVED_RELEASES)) {
     assert.equal(new Set(ids).size, 3);
     assert.ok(ids.every(id => Number.isSafeInteger(id) && id > 0));
