@@ -37,6 +37,7 @@ Future<LocalScanResult> scanLocalBooks({
   required Future<LocalImportReport> Function(BookDocumentSelection source)
   importSource,
   required bool Function() current,
+  bool linkText = false,
   void Function(int done, int total)? onProgress,
 }) async {
   final selected = snapshot.books
@@ -44,6 +45,7 @@ Future<LocalScanResult> scanLocalBooks({
       .toList();
   final ids = <int>{}, warnings = [...snapshot.warnings];
   final failures = <LocalImportFailure>[];
+  final notices = <LocalImportNotice>[];
   var added = 0, existing = 0, done = 0;
   onProgress?.call(0, selected.length);
   try {
@@ -51,12 +53,15 @@ Future<LocalScanResult> scanLocalBooks({
       if (!current()) break;
       BookDocumentSelection? staged;
       try {
-        staged = await documents.stageScanBook(entry.token);
+        staged = linkText
+            ? await documents.linkScanBook(entry.token)
+            : await documents.stageScanBook(entry.token);
         final report = await importSource(staged);
         ids.addAll(report.bookIds);
         added += report.added;
         existing += report.existing;
         failures.addAll(report.failures);
+        notices.addAll(report.notices);
         if (report.failures.isEmpty && report.bookIds.isNotEmpty) {
           try {
             await documents.markScanBook(entry.token);
@@ -90,6 +95,7 @@ Future<LocalScanResult> scanLocalBooks({
       added: added,
       existing: existing,
       failures: failures,
+      notices: notices,
     ),
     total: snapshot.total,
     unchanged: snapshot.unchanged,

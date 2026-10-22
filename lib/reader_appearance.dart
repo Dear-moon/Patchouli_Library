@@ -6,6 +6,7 @@ import 'app_ui.dart';
 import 'glass_palette.dart';
 import 'library_state.dart';
 import 'reader_preferences.dart';
+import 'app_palette.dart';
 
 ThemeData readerTheme(
   ThemeData app,
@@ -16,10 +17,10 @@ ThemeData readerTheme(
   final paper = preferences.background(appDark);
   final brightness = ThemeData.estimateBrightnessForColor(paper);
   final dark = brightness == Brightness.dark;
-  final base = brightness == app.brightness
-      ? app
-      : novelTheme(brightness, fontFamily: fontFamily);
-  final ink = preferences.foreground(appDark);
+  final base = novelTheme(brightness, fontFamily: fontFamily);
+  // Dim only the article's ink. Sliders, buttons and text selection retain
+  // their readable control contrast while a user previews night text levels.
+  final ink = preferences.controlForeground(appDark);
   Color raised(double amount) => Color.lerp(paper, ink, amount)!;
   final scheme = base.colorScheme.copyWith(
     surface: paper,
@@ -62,7 +63,8 @@ ThemeData readerTheme(
     ),
     extensions: [
       ...base.extensions.values.where(
-        (extension) => extension is! GlassPalette,
+        (extension) =>
+            extension is! GlassPalette && extension is! AppTonalColors,
       ),
       GlassPalette(
         tint: dark ? raised(.10) : Color.lerp(paper, Colors.white, .24)!,
@@ -80,10 +82,12 @@ class ReaderAppearance extends StatefulWidget {
     required this.state,
     required this.appTheme,
     required this.child,
+    this.bookId,
   });
   final LibraryState state;
   final ThemeData appTheme;
   final Widget child;
+  final int? bookId;
   @override
   State<ReaderAppearance> createState() => _ReaderAppearanceState();
 }
@@ -93,19 +97,16 @@ class _ReaderAppearanceState extends State<ReaderAppearance> {
   ReaderPaper? _paper;
   String? _family;
   ThemeData _resolve() {
-    final paper = widget.state.readerPreferences.paper;
-    final family = widget.state.readerFontFamily;
-    if (!identical(_base, widget.appTheme) ||
+    final preferences = widget.state.readerPreferencesFor(widget.bookId);
+    final paper = preferences.paper;
+    final family = widget.state.readerFontFamilyFor(widget.bookId);
+    if (_base?.brightness != widget.appTheme.brightness ||
         _paper != paper ||
         _family != family) {
       _base = widget.appTheme;
       _paper = paper;
       _family = family;
-      _theme = readerTheme(
-        _base!,
-        widget.state.readerPreferences,
-        fontFamily: family,
-      );
+      _theme = readerTheme(_base!, preferences, fontFamily: family);
     }
     return _theme!;
   }

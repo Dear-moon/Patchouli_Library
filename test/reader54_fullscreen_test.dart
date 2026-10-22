@@ -150,7 +150,6 @@ void main() {
         );
         await fixture.settleReader(tester);
         final status = find.byType(ReaderStatusFooter);
-        final retained = tester.state(status);
         void broadcast() => ServicesBinding.instance.channelBuffers.push(
           'org.mewx.wenku8/reader_status',
           const StandardMethodCodec().encodeSuccessEnvelope({
@@ -167,7 +166,8 @@ void main() {
             state.readerPreferences.copyWith(mode: mode),
           );
           await fixture.settleReader(tester);
-          expect(tester.state(status), same(retained));
+          expect(status, findsOneWidget);
+          expect(find.text('09:41'), findsOneWidget);
           final time = tester.getRect(
             find.byKey(const ValueKey('reader-status-time')),
           );

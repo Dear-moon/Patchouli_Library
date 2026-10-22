@@ -11,6 +11,8 @@ import 'local_books.dart';
 import 'offline_repository.dart';
 import 'pages.dart' show ReaderPage;
 import 'quote_card.dart';
+import 'bookmark_categories.dart';
+import 'setting_menu.dart';
 
 /// A merged volume keeps its original recovery records. Show the equivalent
 /// bookmark in the active series once, without deleting those recovery copies.
@@ -60,6 +62,7 @@ class BookmarkLibraryPage extends StatefulWidget {
 
 class _BookmarkLibraryPageState extends State<BookmarkLibraryPage> {
   String _query = '';
+  String _category = '_all';
   String? _opening;
 
   Novel? _known(int id) => widget.repository is OfflineNovelRepository
@@ -143,10 +146,12 @@ class _BookmarkLibraryPageState extends State<BookmarkLibraryPage> {
           entry,
         ) {
           final book = _known(entry.novelId);
-          return query.isEmpty ||
-              '${entry.bookmark.quote}\n${entry.bookmark.chapterTitle}\n${book?.title ?? ''}\n${book?.author ?? ''}'
-                  .toLowerCase()
-                  .contains(query);
+          return (_category == '_all' ||
+                  'category:${entry.bookmark.category}' == _category) &&
+              (query.isEmpty ||
+                  '${entry.bookmark.quote}\n${entry.bookmark.chapterTitle}\n${book?.title ?? ''}\n${book?.author ?? ''}'
+                      .toLowerCase()
+                      .contains(query));
         }).toList();
         return Align(
           alignment: Alignment.topCenter,
@@ -166,6 +171,22 @@ class _BookmarkLibraryPageState extends State<BookmarkLibraryPage> {
                         onChanged: (value) => setState(() => _query = value),
                       ),
                       const SizedBox(height: 18),
+                      GlassSettingMenu<String>(
+                        icon: CupertinoIcons.folder,
+                        label: '书签分类',
+                        value: _category,
+                        options: {
+                          '_all': '全部书签',
+                          'category:': '未分类',
+                          for (final e in widget.state.bookmarkEntries)
+                            if (e.bookmark.category.isNotEmpty)
+                              'category:${e.bookmark.category}':
+                                  e.bookmark.category,
+                        },
+                        onChanged: (value) => setState(() => _category = value),
+                        reduceMotion: widget.state.reduceMotion,
+                      ),
+                      const SizedBox(height: 12),
                       AppText(
                         '${entries.length} 条书签',
                         style: TextStyle(
@@ -256,6 +277,24 @@ class _BookmarkLibraryPageState extends State<BookmarkLibraryPage> {
                                   reduceMotion: widget.state.reduceMotion,
                                 ),
                                 child: const AppText('分享图片'),
+                              ),
+                            GlassIconButton(
+                              icon: CupertinoIcons.folder,
+                              label: '分类书签 ${mark.id}',
+                              onPressed: () => organizeBookmark(
+                                context,
+                                widget.state,
+                                entry.novelId,
+                                mark,
+                              ),
+                            ),
+                            if (mark.category.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.all(10),
+                                child: AppText(
+                                  mark.category,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
                               ),
                             GlassIconButton(
                               icon: CupertinoIcons.trash,

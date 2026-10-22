@@ -51,6 +51,7 @@ void main() {
           indent: true,
           justify: true,
           tapPaging: true,
+          tapBothSidesNext: true,
           volumePaging: true,
           autoScrollSpeed: 32,
           brightness: .6,
@@ -63,6 +64,7 @@ void main() {
       expect(prefs.margin, 38);
       expect(prefs.paper, ReaderPaper.sage);
       expect(prefs.volumePaging, isTrue);
+      expect(prefs.tapBothSidesNext, isTrue);
       expect(prefs.layoutKey, isNotEmpty);
       final second = await state();
       addTearDown(second.dispose);

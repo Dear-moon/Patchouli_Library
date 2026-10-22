@@ -344,7 +344,7 @@ void main({
           pager.pageBy(1);
           await settleReader(tester);
         }
-        final anchor = pager.debugFirstVisibleAnchor!;
+        final anchor = pager.anchor!;
         final oldPadding = tester
             .widget<ReaderPagedView>(find.byType(ReaderPagedView))
             .padding;
@@ -361,13 +361,9 @@ void main({
         await settleReader(tester);
         expect(pager.debugParagraphMeasurements, measures);
         expect(
-          (
-            pager.debugFirstVisibleAnchor!.paragraph,
-            pager.debugFirstVisibleAnchor!.offset,
-          ),
+          (pager.anchor!.paragraph, pager.anchor!.offset),
           (anchor.paragraph, anchor.offset),
-          reason:
-              'A height change must not move the first visible text across the spine.',
+          reason: 'A height change must retain the semantic reading anchor.',
         );
         await shot(tester, key, 'tablet-${mode.name}-chrome-hidden');
         pager.pageBy(1);

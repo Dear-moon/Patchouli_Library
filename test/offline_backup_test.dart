@@ -40,13 +40,16 @@ void main() {
                 )
                 .toSet(),
             {
+              ('root', 'app_webview'),
               ('file', 'wenku8-offline-v1'),
               ('file', 'wenku8-illustrations-v1'),
               ('sharedpref', 'wenku_account_session.xml'),
               ('sharedpref', 'wenku_web_session.xml'),
+              ('sharedpref', 'wenku_official_identity.xml'),
               ('sharedpref', 'book_scan_folders.xml'),
               ('sharedpref', 'cloud_sources_secure.xml'),
               ('sharedpref', 'custom_speech_secure.xml'),
+              ('sharedpref', 'lan_reading_secure.xml'),
             },
           );
         }

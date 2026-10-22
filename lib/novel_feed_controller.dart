@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 
 import 'catalog.dart';
 import 'book_search.dart';
@@ -32,19 +33,40 @@ class NovelFeedController extends ChangeNotifier {
   bool hasMore = true;
   bool loading = false;
   Object? error;
+  String get failureMessage {
+    final failure = error;
+    if (failure is FormatException && failure.message.toString().isNotEmpty) {
+      return failure.message.toString();
+    }
+    if (failure is PlatformException && failure.details is Map) {
+      return switch ((failure.details as Map)['httpStatus']) {
+        429 => '当前请求较多，请稍后重试；已保存的书籍与阅读记录仍保留。',
+        401 || 403 => '当前连接需要登录或访问验证，请在账号页确认后重试。',
+        451 => '当前服务未提供此内容，已保存的书籍与阅读记录仍保留。',
+        _ => '检查网络后重试，已保存的书籍与阅读记录仍保留。',
+      };
+    }
+    return '检查网络后重试，已保存的书籍与阅读记录仍保留。';
+  }
+
   bool refreshFailed = false;
   int _generation = 0;
   // Accepted data batches, not request attempts. Failed/stale requests must not
   // restart presentation, and appended pages must leave the old rows alone.
   int _resultRevision = 0;
   int _resultStartIndex = 0;
+  bool _resultReplacesRetained = false;
   bool refreshing = false;
   bool _disposed = false;
   Timer? _searchDelay;
 
   List<Novel> get items => _items;
+  bool get hasLoaded => page > 0;
   int get resultRevision => _resultRevision;
   int get resultStartIndex => _resultStartIndex;
+
+  /// A refresh updates the existing view; it is not an initial loading scene.
+  bool get resultReplacesRetained => _resultReplacesRetained;
 
   Future<void> refresh() {
     _searchDelay?.cancel();
@@ -159,9 +181,12 @@ class NovelFeedController extends ChangeNotifier {
     final filteringTags = !search && tags.isNotEmpty;
     final requestedQuery = filteringTags ? tags.join(' ') : query;
     final requestedField = filteringTags ? BookSearchField.tags : searchField;
-    final hadItems = _items.isNotEmpty;
+    final retaining = replace && hasLoaded;
+    final retainedCount = _items.length;
+    final retainedPage = page;
+    var pending = replace ? <Novel>[] : _items;
     loading = true;
-    refreshing = replace && _items.isNotEmpty;
+    refreshing = retaining;
     error = null;
     refreshFailed = false;
     notifyListeners();
@@ -197,40 +222,52 @@ class NovelFeedController extends ChangeNotifier {
         if (result.page != requestedPage) {
           throw const FormatException('分页游标不匹配');
         }
-        final oldCount = _items.length;
+        final oldCount = pending.length;
         final merged = <int, Novel>{
           if (!replacing)
-            for (final item in _items) item.id: item,
+            for (final item in pending) item.id: item,
           for (final item in result.items) item.id: item,
         };
-        _resultStartIndex = replacing ? 0 : oldCount;
-        _items = List.unmodifiable(merged.values);
-        _tagSuggestions.addAll(result.items.expand((book) => book.tags));
-        if (_resultStartIndex < _items.length) _resultRevision++;
-        page = requestedPage;
-        hasMore = result.hasMore;
-        totalItems = result.totalItems;
+        pending = List.unmodifiable(merged.values);
+        final first = replacing ? 0 : oldCount;
         replacing = false;
-        refreshing = false;
-        // At most the first three ordinary API pages, sequentially. Publish
-        // page one immediately, stop on duplicates/errors/end or a new sort.
-        if (search ||
-            filteringTags ||
-            _items.length >= initialItems ||
-            page >= 3 ||
-            !hasMore ||
+        // Refresh the pages already visible as one transaction. Never shrink a
+        // long list to page one while its remaining pages are still in flight.
+        // A failed later page leaves the old content and cursor intact.
+        final complete =
+            !result.hasMore ||
             result.items.isEmpty ||
-            _items.length <= _resultStartIndex) {
-          break;
+            pending.length <= oldCount ||
+            (retaining
+                ? requestedPage >= retainedPage &&
+                      (search ||
+                          filteringTags ||
+                          pending.length >= initialItems ||
+                          requestedPage >= 3) &&
+                      pending.length >= retainedCount
+                : search ||
+                      filteringTags ||
+                      pending.length >= initialItems ||
+                      requestedPage >= 3);
+        if (!retaining || complete) {
+          _resultStartIndex = retaining ? 0 : first;
+          _resultReplacesRetained = retaining;
+          _items = pending;
+          _tagSuggestions.addAll(pending.expand((book) => book.tags));
+          if (_resultStartIndex < _items.length || retaining) _resultRevision++;
+          page = requestedPage;
+          hasMore = result.hasMore;
+          totalItems = result.totalItems;
         }
-        notifyListeners();
+        if (complete) break;
+        if (!retaining) notifyListeners();
         if (_disposed || generation != _generation) return;
-        requestedPage = page + 1;
+        requestedPage++;
       }
     } catch (failure) {
       if (_disposed || generation != _generation) return;
       error = failure;
-      refreshFailed = replacing && hadItems;
+      refreshFailed = retaining;
     } finally {
       if (!_disposed && generation == _generation) {
         loading = false;

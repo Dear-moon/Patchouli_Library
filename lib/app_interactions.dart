@@ -131,6 +131,7 @@ VoidCallback? showNovelFeedback(
   FutureOr<void> Function()? action,
   String actionFailure = '操作保存失败，请重试',
   ValueListenable<double>? headerVisibility,
+  Duration? duration,
 }) {
   if (!context.mounted) return null;
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
@@ -161,6 +162,7 @@ VoidCallback? showNovelFeedback(
         opacity: appearance.opacity,
         child: NovelFeedbackNotice(
           message: message,
+          duration: duration,
           headerVisibility: header,
           actionLabel: actionLabel,
           onAction: action == null || actionLabel == null
@@ -193,12 +195,14 @@ class NovelFeedbackNotice extends StatefulWidget {
     this.actionLabel,
     this.onAction,
     this.headerVisibility,
+    this.duration,
   });
   final String message;
   final String? actionLabel;
   final VoidCallback onDismiss;
   final Future<void> Function()? onAction;
   final ValueListenable<double>? headerVisibility;
+  final Duration? duration;
   @override
   State<NovelFeedbackNotice> createState() => _NovelFeedbackNoticeState();
 }
@@ -224,9 +228,11 @@ class _NovelFeedbackNoticeState extends State<NovelFeedbackNotice>
     }
     // Notices are transient even with a screen reader. Give long copy and
     // actions more reading time, but never require a separate close control.
-    final milliseconds = widget.onAction == null
-        ? (480 + widget.message.runes.length * 28).clamp(900, 2200)
-        : (widget.message.runes.length / 18).ceil().clamp(4, 7) * 1000;
+    final milliseconds =
+        widget.duration?.inMilliseconds ??
+        (widget.onAction == null
+            ? (480 + widget.message.runes.length * 28).clamp(900, 2200)
+            : (widget.message.runes.length / 18).ceil().clamp(4, 7) * 1000);
     _timer = Timer(
       Duration(
         milliseconds: MediaQuery.accessibleNavigationOf(context)

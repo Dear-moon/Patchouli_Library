@@ -161,5 +161,9 @@ ReaderContent placeIllustrations(
     ]),
     inlineOwners: Map.unmodifiable(owners),
     placementIds: Map.unmodifiable(ids),
+    formats: source.formats,
+    notes: source.notes,
+    revision: source.revision,
+    coordinateMap: source.coordinateMap,
   );
 }

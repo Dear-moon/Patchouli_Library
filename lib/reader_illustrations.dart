@@ -19,10 +19,15 @@ typedef IllustrationRequest = Future<Uint8List> Function(String url);
 class ReaderIllustrationCache {
   ReaderIllustrationCache({
     IllustrationRequest? request,
+    this.offlineReader,
     this.maxBytes = 16 * 1024 * 1024,
   }) : _request = request ?? LegacyTransport.illustration;
   static final shared = ReaderIllustrationCache();
   final IllustrationRequest _request;
+
+  /// The application binds its explicit book cache once at startup. Viewing
+  /// cache eviction never deletes these durable, book-owned illustrations.
+  Future<Uint8List?> Function(String url)? offlineReader;
   final int maxBytes;
   final _pending = <String, Future<Uint8List>>{};
   final _cache = <String, Uint8List>{};
@@ -118,7 +123,7 @@ class ReaderIllustrationCache {
       try {
         final bytes = url.startsWith('wenku-local:')
             ? await LocalBookMedia.load(url)
-            : await _request(url);
+            : await offlineReader?.call(url) ?? await _request(url);
         if (bytes.isEmpty || bytes.length > 8 * 1024 * 1024) {
           throw const FormatException('插图大小无效');
         }
@@ -130,6 +135,8 @@ class ReaderIllustrationCache {
           _bytes += bytes.length;
         }
         return bytes;
+      } catch (error) {
+        rethrow;
       } finally {
         if (epoch == _epoch) _pending.remove(url);
       }
@@ -156,6 +163,7 @@ class ReaderIllustrationFrame extends StatelessWidget {
     this.preserveSize = false,
     this.localLayout = const LocalImageLayout(),
     this.fontSize = 19,
+    this.alignment = Alignment.topCenter,
   });
 
   final Widget child;
@@ -164,6 +172,7 @@ class ReaderIllustrationFrame extends StatelessWidget {
   final bool preserveSize;
   final LocalImageLayout localLayout;
   final double fontSize;
+  final Alignment alignment;
 
   @override
   Widget build(BuildContext context) {
@@ -188,9 +197,9 @@ class ReaderIllustrationFrame extends StatelessWidget {
                 ? Duration.zero
                 : const Duration(milliseconds: 300),
             curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
+            alignment: alignment,
             child: Align(
-              alignment: fitPage ? Alignment.center : Alignment.topCenter,
+              alignment: Alignment(alignment.x, fitPage ? 0 : -1),
               heightFactor: fitPage ? null : 1,
               child: SizedBox(
                 width: target.width,
@@ -239,6 +248,7 @@ class ReaderIllustration extends StatefulWidget {
     this.localLayout = const LocalImageLayout(),
     this.fontSize = 19,
     this.sizedFrame = false,
+    this.alignment = Alignment.topCenter,
   });
   final String url;
   final VoidCallback? onOpen;
@@ -250,6 +260,7 @@ class ReaderIllustration extends StatefulWidget {
 
   /// Pagination has already resolved percentages against the whole leaf.
   final bool sizedFrame;
+  final Alignment alignment;
   @override
   State<ReaderIllustration> createState() => _ReaderIllustrationState();
 }
@@ -276,6 +287,18 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
     if (old.url != widget.url || old.cache != widget.cache) _future = _load();
   }
 
+  String _failureLabel(Object? error) {
+    final status = error is PlatformException && error.details is Map
+        ? (error.details as Map)['httpStatus']
+        : null;
+    return switch (status) {
+      401 || 403 => '图片服务暂未提供这张插图',
+      404 || 410 => '原始插图已失效',
+      429 => '图片请求较多，请稍后重试',
+      _ => '插图加载失败',
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final cached = _cache.peek(widget.url), size = _cache.sizeOf(widget.url);
@@ -298,6 +321,7 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
                       widget.url.startsWith('wenku-local:'),
                   localLayout: widget.localLayout,
                   fontSize: widget.fontSize,
+                  alignment: widget.alignment,
                   child: child,
                 );
           Widget localRetry() => Semantics(
@@ -324,27 +348,33 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
             if (widget.url.startsWith('wenku-local:')) {
               return frame(localRetry());
             }
-            return frame(
-              Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(CupertinoIcons.photo, size: 28),
-                    const SizedBox(height: 12),
-                    const AppText('插图加载失败'),
-                    GlassTextButton(
-                      onPressed: () {
-                        _cache.evict(widget.url);
-                        setState(() {
-                          _future = _load();
-                        });
-                      },
-                      child: const AppText('重试插图'),
-                    ),
-                  ],
-                ),
+            final failure = Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(CupertinoIcons.photo, size: 28),
+                  const SizedBox(height: 12),
+                  AppText(_failureLabel(snapshot.data?.error)),
+                  GlassTextButton(
+                    onPressed: () {
+                      _cache.evict(widget.url);
+                      setState(() {
+                        _future = _load();
+                      });
+                    },
+                    child: const AppText('重试插图'),
+                  ),
+                ],
               ),
             );
+            // A missing remote file must not leave a page-sized blank hole in
+            // scrolling prose. Paged leaves keep their established geometry.
+            return widget.fullScreen || widget.fitPage || widget.sizedFrame
+                ? frame(failure)
+                : Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: failure,
+                  );
           }
           if (bytes == null) {
             return frame(

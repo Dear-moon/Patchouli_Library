@@ -62,7 +62,7 @@ class BookFolderScanner(private val context: Context) {
             committed = true
             entries.clear()
             importedIndex = null
-            if (old != null && old != uri) try {
+            if (old != null && old != uri && !BookTextLinks(context).usesGrant(old)) try {
                 resolver.releasePersistableUriPermission(old, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } catch (_: Exception) { }
             return info()!!
@@ -90,7 +90,7 @@ class BookFolderScanner(private val context: Context) {
         check(preferences.edit().clear().commit()) { "文件夹设置保存失败" }
         entries.clear()
         importedIndex = null
-        if (uri != null) try {
+        if (uri != null && !BookTextLinks(context).usesGrant(uri)) try {
             resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         } catch (_: Exception) { }
     }
@@ -134,13 +134,23 @@ class BookFolderScanner(private val context: Context) {
             "total" to index.books.size, "warnings" to index.warnings)
     }
 
-    fun stage(token: String, root: File, copy: (Uri, File, Long) -> Unit): Map<String, String> {
-        val node = entries[token] ?: error("扫描结果已过期，请重新扫描")
+    private fun source(node: FolderBookNode): Uri {
         val uri = if (allStorage()) null else tree() ?: error("请先选择书籍文件夹")
-        val source = if (allStorage()) {
+        return if (allStorage()) {
             check(canReadAll()) { "共享存储权限已关闭" }
             Uri.fromFile(File(node.id))
         } else DocumentsContract.buildDocumentUriUsingTree(uri!!, node.id)
+    }
+
+    internal fun link(token: String, links: BookTextLinks, root: File, copy: (Uri, File, Long) -> Unit): Map<String, String> {
+        val node = entries[token] ?: error("扫描结果已过期，请重新扫描")
+        require(node.size <= BookArchiveImport.limit(node.name)) { "书籍文件超过大小限制" }
+        return mapOf("name" to node.name, "reference" to links.remember(source(node), if (allStorage()) null else tree()))
+    }
+
+    fun stage(token: String, root: File, copy: (Uri, File, Long) -> Unit): Map<String, String> {
+        val node = entries[token] ?: error("扫描结果已过期，请重新扫描")
+        val source = source(node)
         require(node.size <= BookArchiveImport.limit(node.name)) { "书籍文件过大" }
         val target = File.createTempFile("import-", ".source", root)
         try {

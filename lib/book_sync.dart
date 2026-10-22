@@ -13,6 +13,8 @@ import 'local_books.dart';
 import 'local_book_series.dart';
 import 'local_series_actions.dart';
 import 'local_library_preferences.dart';
+import 'local_import_options.dart';
+import 'local_coordinate_upgrade.dart';
 
 class BookSyncBundle {
   const BookSyncBundle(
@@ -21,15 +23,40 @@ class BookSyncBundle {
     this.organization,
     this.bookMetadata,
     this.series,
+    this.importOptions = const {},
   });
   final String backup;
   final List<LocalBookInput> books;
   final Map<String, dynamic>? organization;
   final Map<String, dynamic>? bookMetadata;
   final Map<String, dynamic>? series;
+  final Map<int, LocalImportOptions> importOptions;
+}
+
+Map<int, LocalImportOptions> _importOptions(Object? raw) {
+  if (raw is! Map || raw.length > 10000) {
+    throw const FormatException('同步目录设置格式有误');
+  }
+  final result = <int, LocalImportOptions>{};
+  for (final entry in raw.entries) {
+    final id = entry.key is String ? int.tryParse(entry.key) : null;
+    if (id == null ||
+        id < localBookIdStart ||
+        id > 0x7fffffff ||
+        entry.key != '$id') {
+      throw const FormatException('同步目录设置的书籍标识有误');
+    }
+    result[id] = LocalImportOptions.fromJson(entry.value).effective;
+  }
+  return Map.unmodifiable(result);
 }
 
 Uint8List encodeBookSync(BookSyncBundle bundle) {
+  final settings = _importOptions({
+    for (final entry in bundle.importOptions.entries)
+      if (!entry.value.isDefault)
+        '${entry.key}': entry.value.effective.toJson(),
+  });
   final zip = Archive();
   final books = <Map<String, Object>>[];
   for (final (i, book) in bundle.books.indexed) {
@@ -48,7 +75,14 @@ Uint8List encodeBookSync(BookSyncBundle bundle) {
   final metadata = utf8.encode(
     jsonEncode({
       'format': 'wenku8-book-sync',
-      'version': 1,
+      // Only new per-original parsing settings require version 2. Ordinary
+      // sync manifests keep their existing version-1 structure.
+      'version': settings.isEmpty ? 1 : 2,
+      if (settings.isNotEmpty)
+        'importOptions': {
+          for (final entry in settings.entries)
+            '${entry.key}': entry.value.toJson(),
+        },
       'books': books,
       if (bundle.organization != null)
         'organization': LocalLibraryPreferences.validateOrganization(
@@ -100,7 +134,7 @@ BookSyncBundle decodeBookSync(Uint8List bytes) {
   final manifest = jsonDecode(text('manifest.json', LibraryBackup.maxBytes));
   if (manifest is! Map ||
       manifest['format'] != 'wenku8-book-sync' ||
-      manifest['version'] != 1 ||
+      ![1, 2].contains(manifest['version']) ||
       manifest['books'] is! List ||
       manifest['books'].length > 200) {
     throw const FormatException('请选择文库生成的 .wenku8sync 同步文件');
@@ -132,6 +166,9 @@ BookSyncBundle decodeBookSync(Uint8List bytes) {
   return BookSyncBundle(
     text('library.json', LibraryBackup.maxBytes),
     books,
+    importOptions: manifest['version'] == 2
+        ? _importOptions(manifest['importOptions'])
+        : const {},
     organization: manifest['organization'] == null
         ? null
         : LocalLibraryPreferences.validateOrganization(
@@ -283,7 +320,46 @@ class BookSync extends ChangeNotifier {
     // until all referenced local books have been imported successfully.
     for (final input
         in syncOriginals ? bundle.books : const <LocalBookInput>[]) {
-      await books.import(input);
+      await books.import(
+        input,
+        optionsById: bundle.importOptions,
+        requireMatchingOptions: true,
+      );
+    }
+    if (syncReading) {
+      final referenced = <int>{
+        for (final key in backup.records.keys)
+          if (key.startsWith('reading_position_') ||
+              key.startsWith('reader_bookmarks_') ||
+              key.startsWith('chapter_'))
+            int.parse(key.substring(key.lastIndexOf('_') + 1)),
+      };
+      for (final series
+          in bundle.series == null
+              ? const <LocalBookSeries>[]
+              : decodeLocalSeries(bundle.series)) {
+        if (referenced.contains(series.id)) {
+          referenced.addAll(series.volumes.map((volume) => volume.bookId));
+        }
+      }
+      final originals = books.originals.map((book) => book.id).toSet();
+      for (final id in referenced) {
+        final expected = bundle.importOptions[id] ?? const LocalImportOptions();
+        if (!originals.contains(id)) {
+          if (expected.customToc) {
+            throw const FormatException('有自定义目录的原书尚未导入，请先开启原书同步，再恢复对应的阅读记录');
+          }
+        } else if (books.importOptionsFor(id).directoryIdentity !=
+            expected.directoryIdentity) {
+          throw const FormatException('两端使用的目录规则不同，阅读记录未覆盖；请先统一该书的目录规则');
+        }
+      }
+      await books.rememberEpubLayouts({
+        for (final id in referenced)
+          if (!originals.contains(id))
+            id: (bundle.importOptions[id] ?? const LocalImportOptions())
+                .inlineEpubImages,
+      });
     }
     if (syncOriginals && bundle.bookMetadata != null) {
       await books.mergeMetadata(bundle.bookMetadata);
@@ -335,6 +411,7 @@ class BookSync extends ChangeNotifier {
       }
       status = '正在合并书籍与阅读记录';
       _notify();
+      if (syncReading) await normalizeLocalReadingRecords(books, state);
       final backup = syncReading
           ? await state.createBackup()
           : remote != null
@@ -363,6 +440,14 @@ class BookSync extends ChangeNotifier {
               ? books.exportMetadata()
               : remote?.bookMetadata,
           series: syncOriginals ? books.exportSeries() : remote?.series,
+          importOptions: syncOriginals || syncReading
+              ? {
+                  ...?remote?.importOptions,
+                  ...books.retainedImportOptions,
+                  for (final book in books.originals)
+                    book.id: books.importOptionsFor(book.id),
+                }
+              : remote?.importOptions ?? const {},
         ),
       );
       await files.output.writeAsBytes(bytes, flush: true);

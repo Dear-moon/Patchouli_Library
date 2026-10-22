@@ -355,7 +355,13 @@ void main({
       await tester.pumpAndSettle();
       await capture?.call(tester, boundary, 'local-book-profile');
       final save = find.byKey(const ValueKey('local-edit-save'));
-      await tester.ensureVisible(save);
+      final editorScroll = find
+          .descendant(
+            of: find.byType(LocalBookEditor),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      await tester.scrollUntilVisible(save, 240, scrollable: editorScroll);
       await tester.pumpAndSettle();
       await tester.tap(save);
       await ioSettle(
@@ -373,11 +379,23 @@ void main({
       await tester.tap(config);
       await ioSettle(tester);
       final delete = find.byKey(const ValueKey('local-edit-delete'));
-      await tester.ensureVisible(delete);
+      await tester.scrollUntilVisible(
+        delete,
+        240,
+        scrollable: find
+            .descendant(
+              of: find.byType(LocalBookEditor),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       await tester.tap(delete);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('local-remove-files')));
+      final removeFiles = find.byKey(const ValueKey('local-remove-files'));
+      await tester.ensureVisible(removeFiles);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同时删除本机文件'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('删除本机文件').last);
       await ioSettle(

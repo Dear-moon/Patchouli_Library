@@ -31,6 +31,23 @@ abstract final class ChineseText {
   static Map<String, _Lexicon> _lexicons = {};
   static final _cache = <(String, bool, String), String>{};
   static int _cacheUnits = 0;
+  static Future<_Lexicon>? _searchLexicon;
+
+  /// Normalize queries for the simplified catalogue, not the user's stored
+  /// book text or display preference. Dictionaries load only on first search.
+  static Future<String> searchQuery(String source) async {
+    if (!RegExp(r'[\u3400-\u9fff]').hasMatch(source)) return source;
+    final lexicon = await (_searchLexicon ??= () async {
+      const names = ['TSPhrases', 'TSCharacters'];
+      final sources = await Future.wait([
+        for (final name in names)
+          rootBundle.loadString('assets/opencc/$name.txt'),
+      ]);
+      return compute(_readSearchLexicon, sources);
+    }());
+    return lexicon.convert(source);
+  }
+
   static Future<List<String>> readerParagraphs(
     List<String> paragraphs,
     Locale locale,
@@ -135,6 +152,20 @@ class _Lexicon {
     }
     return out.toString();
   }
+}
+
+_Lexicon _readSearchLexicon(List<String> sources) {
+  final words = <String, String>{};
+  for (final source in sources) {
+    for (final line in source.split('\n')) {
+      if (line.isEmpty || line.startsWith('#')) continue;
+      final fields = line.trim().split('\t');
+      if (fields.length == 2) {
+        words.putIfAbsent(fields[0], () => fields[1].split(' ').first);
+      }
+    }
+  }
+  return _Lexicon(words);
 }
 
 Map<String, _Lexicon> _readLexicons(Map<String, String> sources) {

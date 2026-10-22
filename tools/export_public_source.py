@@ -18,8 +18,9 @@ FILES = (
     "tools/check_public_source.py", "tools/test_public_source_policy.py",
     "tools/public-source-files.txt", ".githooks/pre-push",
     "tools/create_update_fixtures.py",
+    "third_party/JUNIVERSALCHARDET.md",
 )
-DIRECTORIES = ("lib", "assets", "shaders", "test", "integration_test", "android", "ios", "docs/images", "third_party/liquid_glass_easy", "third_party/libmobi", "tools/update-mirror")
+DIRECTORIES = ("lib", "assets", "shaders", "test", "integration_test", "android", "ios", "docs/images", "third_party/liquid_glass_easy", "third_party/libmobi", "third_party/juniversalchardet-2.0.4", "tools/update-mirror")
 PRIVATE_NAMES = {
     "local.properties", "key.properties", "GeneratedPluginRegistrant.java",
     "GeneratedPluginRegistrant.h", "GeneratedPluginRegistrant.m",

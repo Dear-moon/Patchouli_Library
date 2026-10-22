@@ -128,12 +128,14 @@ class _AuthorWorksPageState extends State<AuthorWorksPage> {
           return ContentNotice(
             icon: CupertinoIcons.wifi_exclamationmark,
             title: '作品加载失败',
-            message: '请检查网络后重试',
+            message: _feed.failureMessage,
             onRetry: _feed.retry,
           );
         }
         return LoadedContentSequence(
-          generation: _feed.resultRevision,
+          generation: _feed.resultReplacesRetained
+              ? null
+              : _feed.resultRevision,
           firstIndex: _feed.resultStartIndex == 0
               ? 0
               : _feed.resultStartIndex + 1,
@@ -177,7 +179,7 @@ class _AuthorWorksPageState extends State<AuthorWorksPage> {
                       ),
                     ),
                   ),
-                  if (_feed.items.isEmpty && _feed.loading)
+                  if (_feed.items.isEmpty && _feed.loading && !_feed.hasLoaded)
                     const SliverPadding(
                       padding: EdgeInsets.symmetric(horizontal: 24),
                       sliver: SliverToBoxAdapter(

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'support/serif_fixture.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support/reader_panels.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,12 +18,19 @@ import 'package:wenku8_flutter/low_performance_page.dart';
 import 'package:wenku8_flutter/main.dart';
 import 'package:wenku8_flutter/pages.dart';
 import 'package:wenku8_flutter/performance_preferences.dart';
+import 'package:wenku8_flutter/personal_images.dart';
 import 'package:wenku8_flutter/updates/app_updates.dart';
 import 'package:wenku8_flutter/updates/update_page.dart';
 
 import 'support/cover_fixture.dart';
 import 'support/listening_fixture.dart';
+import 'support/font_store_fixture.dart';
 import 'support/visual_review.dart';
+
+class _EmptyBackgrounds extends ReaderBackgroundStore {
+  @override
+  Future<List<String>> list() async => [];
+}
 
 class _AdaptiveUpdatePlatform implements UpdatePlatform {
   @override
@@ -122,10 +130,9 @@ void main({AdaptiveCapture? capture, bool native = false}) {
   if (!native) {
     setUpAll(() async {
       await loadReviewFonts();
-      await (FontLoader('SourceHanSerifCN')..addFont(
-            rootBundle.load('assets/fonts/SourceHanSerifCN-Regular.otf'),
-          ))
-          .load();
+      await (FontLoader(
+        'SourceHanSerifCN',
+      )..addFont(loadSerifFixture())).load();
     });
   }
   for (final profile in _profiles) {
@@ -153,7 +160,13 @@ void main({AdaptiveCapture? capture, bool native = false}) {
         'reduceMotion': true,
         'appTypeface': AppTypeface.sourceHanSerif.name,
       });
-      final library = await LibraryState.load();
+      final library = native
+          ? await LibraryState.load()
+          : LibraryState(
+              await SharedPreferences.getInstance(),
+              fonts: InstalledSerifFixture(),
+              backgrounds: _EmptyBackgrounds(),
+            );
       final output = FakeListeningOutput();
       final updates = AppUpdates(
         preferences: await SharedPreferences.getInstance(),
@@ -241,9 +254,23 @@ void main({AdaptiveCapture? capture, bool native = false}) {
       await snapshot('settings');
       await tester.ensureVisible(find.byKey(const ValueKey('my-settings')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('my-settings')));
+      await tester.tap(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('my-settings')),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('settings-reading-entry')));
+      await tester.tap(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('settings-reading-entry')),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.descendant(
@@ -432,7 +459,7 @@ void main({AdaptiveCapture? capture, bool native = false}) {
       await page(AppUpdatePage(updates: updates));
       await snapshot('updates');
       await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('download-app-update')),
+        find.byKey(const ValueKey('update-package-action')),
         180,
         scrollable: find
             .descendant(
@@ -443,11 +470,11 @@ void main({AdaptiveCapture? capture, bool native = false}) {
       );
       await tester.pumpAndSettle();
       await Scrollable.ensureVisible(
-        tester.element(find.byKey(const ValueKey('download-app-update'))),
+        tester.element(find.byKey(const ValueKey('update-package-action'))),
         alignment: .5,
       );
       await tester.pumpAndSettle();
-      onScreen(find.byKey(const ValueKey('download-app-update')));
+      onScreen(find.byKey(const ValueKey('update-package-action')));
       await snapshot('update-download');
       await tester.pumpWidget(const SizedBox.shrink());
     });

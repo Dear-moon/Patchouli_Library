@@ -100,6 +100,16 @@ class PublicSourcePolicyTest(unittest.TestCase):
             (root / 'unexpected.txt').write_text('unreviewed')
             self.assertTrue(any('inventory review required' in issue for issue in policy.inspect(root)))
 
+    def test_exact_license_doi_does_not_allow_private_addresses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'assets/licenses/poi.txt'
+            source.parent.mkdir(parents=True)
+            source.write_text(policy.UPSTREAM_LICENSE_CITATIONS['assets/licenses/poi.txt'])
+            self.assertEqual(policy.inspect(root), [])
+            source.write_text(source.read_text() + '\nhttps://' + '192.168.' + '2.10/')
+            self.assertEqual(len(policy.inspect(root)), 1)
+
     def test_renamed_provider_configuration_is_blocked(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

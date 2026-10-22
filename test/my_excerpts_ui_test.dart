@@ -24,15 +24,13 @@ import 'package:wenku8_flutter/reader_selection.dart';
 import 'package:wenku8_flutter/reader_vertical_text.dart';
 import 'reader_modes_test.dart' show settleReader;
 import 'support/visual_review.dart';
+import 'support/serif_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
     await loadReviewFonts();
-    await (FontLoader('SourceHanSerifCN')..addFont(
-          rootBundle.load('assets/fonts/SourceHanSerifCN-Regular.otf'),
-        ))
-        .load();
+    await (FontLoader('SourceHanSerifCN')..addFont(loadSerifFixture())).load();
   });
   const quote = '时间没有停在那个夏天，但我们依然记得窗边的风。';
   final book = Novel(

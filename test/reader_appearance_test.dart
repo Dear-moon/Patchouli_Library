@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_ui.dart';
 import 'package:wenku8_flutter/catalog.dart';
 import 'package:wenku8_flutter/glass_palette.dart';
+import 'package:wenku8_flutter/library_state.dart';
 import 'package:wenku8_flutter/listening/controller.dart';
 import 'package:wenku8_flutter/listening/store.dart';
 import 'package:wenku8_flutter/listening/widgets.dart';
@@ -18,6 +19,7 @@ import 'package:wenku8_flutter/reader_turn_motion.dart';
 import 'reader_modes_test.dart' as fixture;
 import 'support/listening_fixture.dart';
 import 'support/visual_review.dart';
+import 'support/background_fixture.dart';
 
 void main({
   bool native = false,
@@ -25,6 +27,23 @@ void main({
 }) {
   TestWidgetsFlutterBinding.ensureInitialized();
   if (!native) setUpAll(loadReviewFonts);
+  Future<LibraryState> appearanceLibrary() async {
+    if (native) return fixture.library(ReaderMode.paged);
+    SharedPreferences.setMockInitialValues({
+      'readerChromeVisible': true,
+      'readerChromeHintSeen': true,
+      'reduceMotion': true,
+    });
+    final state = LibraryState(
+      await SharedPreferences.getInstance(),
+      backgrounds: EmptyReaderBackgrounds(),
+    );
+    await state.setReaderPreferences(
+      const ReaderPreferences(mode: ReaderMode.paged),
+    );
+    return state;
+  }
+
   void window(WidgetTester tester, Size size) {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = size;
@@ -49,7 +68,7 @@ void main({
       '${brightness.name} reader paper colors update chrome and an open settings surface',
       (tester) async {
         window(tester, const Size(390, 844));
-        final library = await fixture.library(ReaderMode.paged);
+        final library = await appearanceLibrary();
         addTearDown(library.dispose);
         final key = GlobalKey();
         final app = fixture.app(library) as MaterialApp;
@@ -133,7 +152,7 @@ void main({
     tester,
   ) async {
     window(tester, const Size(390, 844));
-    final library = await fixture.library(ReaderMode.paged);
+    final library = await appearanceLibrary();
     addTearDown(library.dispose);
     final controller = ListeningController(
       repository: const DemoNovelRepository(),
@@ -192,7 +211,7 @@ void main({
       '${wide ? 'book' : 'phone'} horizontal vertical mode switch retains the old layout and animates new parts',
       (tester) async {
         window(tester, Size(wide ? 1024 : 390, 844));
-        final library = await fixture.library(ReaderMode.paged);
+        final library = await appearanceLibrary();
         await library.setReduceMotion(false);
         addTearDown(library.dispose);
         final key = GlobalKey();

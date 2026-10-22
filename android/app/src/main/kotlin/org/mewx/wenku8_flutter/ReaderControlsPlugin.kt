@@ -2,6 +2,7 @@ package org.mewx.wenku8_flutter
 
 import android.app.Activity
 import android.view.KeyEvent
+import android.view.View
 import android.provider.Settings
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -13,6 +14,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodChannel
@@ -40,6 +42,7 @@ class ReaderControlsPlugin : FlutterPlugin, ActivityAware {
     }
     private fun hideStatusBar(hidden: Boolean) {
         activity?.window?.let { window ->
+            ReaderWindowLayout.apply(window)
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             if (hidden) controller.hide(WindowInsetsCompat.Type.statusBars())
@@ -68,18 +71,35 @@ class ReaderControlsPlugin : FlutterPlugin, ActivityAware {
         }
         channel = MethodChannel(binding.binaryMessenger, "org.mewx.wenku8/reader_controls").also {
             it.setMethodCallHandler { call, result ->
+                if (call.method == "navigationCapabilities") {
+                    result.success(mapOf("systemFloatingNavigation" to android.os.Build.MANUFACTURER.equals("HUAWEI", true)))
+                    return@setMethodCallHandler
+                }
+                if (call.method == "navigationSettings") {
+                    try {
+                        val context = activity ?: applicationContext ?: error("No context")
+                        context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        result.success(null)
+                    } catch (_: Exception) { result.error("SETTINGS", "请在手机设置中搜索悬浮导航", null) }
+                    return@setMethodCallHandler
+                }
+                if (call.method == "windowInsets") {
+                    val view = activity?.findViewById<View>(FlutterActivity.FLUTTER_VIEW_ID)
+                    result.success(view?.let(CaptionBarInsets::read))
+                    return@setMethodCallHandler
+                }
                 if (call.method == "brightness") {
                     val current = activity
                     if (current == null) { result.error("NO_ACTIVITY", "阅读页面未显示", null); return@setMethodCallHandler }
                     val windowValue = current.window.attributes.screenBrightness
                     val value = if (windowValue >= 0f) windowValue else
                         Settings.System.getInt(current.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
-                    result.success(value.coerceIn(.03f, 1f).toDouble()); return@setMethodCallHandler
+                    result.success(value.coerceIn(0f, 1f).toDouble()); return@setMethodCallHandler
                 }
                 if (call.method != "apply") { result.notImplemented(); return@setMethodCallHandler }
                 volumePaging = call.argument<Boolean>("volumePaging") == true
                 val brightness = call.argument<Number>("brightness")?.toFloat() ?: -1f
-                if (brightness != -1f && brightness !in .03f..1f) {
+                if (brightness != -1f && brightness !in 0f..1f) {
                     result.error("brightness", "阅读亮度超出范围", null); return@setMethodCallHandler
                 }
                 activity?.window?.let { window -> val attrs = window.attributes; attrs.screenBrightness = brightness; window.attributes = attrs }

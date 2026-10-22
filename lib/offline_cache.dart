@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -16,24 +17,31 @@ Object? _decodeMetadata(String text) => jsonDecode(text);
 typedef CacheEpoch = ({int all, int book});
 
 class OfflineBook {
-  OfflineBook({required this.novel, required this.chapterBytes})
-    : chapterIds = Set.unmodifiable(
-        novel.chapters.map((chapter) => chapter.id),
-      ),
-      cachedCount = novel.chapters
-          .where((chapter) => chapterBytes.containsKey(chapter.id))
-          .length,
-      bytes = chapterBytes.values.fold(0, (a, b) => a + b);
+  OfflineBook({
+    required this.novel,
+    required this.chapterBytes,
+    this.illustrationBytes = const {},
+  }) : chapterIds = Set.unmodifiable(
+         novel.chapters.map((chapter) => chapter.id),
+       ),
+       cachedCount = novel.chapters
+           .where((chapter) => chapterBytes.containsKey(chapter.id))
+           .length,
+       bytes =
+           chapterBytes.values.fold(0, (a, b) => a + b) +
+           illustrationBytes.values.fold(0, (a, b) => a + b);
 
   OfflineBook._({
     required this.novel,
     required this.chapterBytes,
+    required this.illustrationBytes,
     required this.chapterIds,
     required this.cachedCount,
     required this.bytes,
   });
   final Novel novel;
   final Map<int, int> chapterBytes;
+  final Map<String, int> illustrationBytes;
   final Set<int> chapterIds;
   final int cachedCount;
   final int bytes;
@@ -41,9 +49,19 @@ class OfflineBook {
   OfflineBook _withChapter(int id, int size) => OfflineBook._(
     novel: novel,
     chapterBytes: Map.unmodifiable({...chapterBytes, id: size}),
+    illustrationBytes: illustrationBytes,
     chapterIds: chapterIds,
     cachedCount: cachedCount + (chapterBytes.containsKey(id) ? 0 : 1),
     bytes: bytes - (chapterBytes[id] ?? 0) + size,
+  );
+
+  OfflineBook _withIllustration(String url, int size) => OfflineBook._(
+    novel: novel,
+    chapterBytes: chapterBytes,
+    illustrationBytes: Map.unmodifiable({...illustrationBytes, url: size}),
+    chapterIds: chapterIds,
+    cachedCount: cachedCount,
+    bytes: bytes - (illustrationBytes[url] ?? 0) + size,
   );
 }
 
@@ -53,7 +71,9 @@ class OfflineCacheStore extends ChangeNotifier {
   OfflineCacheStore(this.directory);
   final Directory directory;
   static const maxBodyBytes = 8 * 1024 * 1024;
+  static const maxIllustrationBytes = 8 * 1024 * 1024;
   final Map<int, OfflineBook> _books = {};
+  final Map<String, Set<int>> _illustrationOwners = {};
   final Map<int, int> _bookEpochs = {};
   final Map<int, FrameChangeNotifier> _bookChanges = {};
   int _allEpoch = 0;
@@ -85,6 +105,71 @@ class OfflineCacheStore extends ChangeNotifier {
   File _body(int id, int chapter) {
     if (chapter <= 0) throw ArgumentError.value(chapter, 'chapterId');
     return File('${_folder(id).path}/c$chapter.txt');
+  }
+
+  // The digest is a fixed-length filesystem key, not an integrity check. Images
+  // live with their book, outside the transport's evictable viewing cache.
+  File _illustration(int id, String url) => File(
+    '${_folder(id).path}/images/${sha256.convert(utf8.encode(url))}.image',
+  );
+
+  Future<Map<String, int>> _scanIllustrations(int id) async {
+    final manifest = File('${_folder(id).path}/images.json');
+    try {
+      if (!await manifest.exists() ||
+          await manifest.length() > 4 * 1024 * 1024) {
+        return const {};
+      }
+      final data = jsonDecode(await manifest.readAsString());
+      if (data is! Map<String, dynamic> ||
+          data['version'] != 1 ||
+          data['images'] is! Map<String, dynamic>) {
+        return const {};
+      }
+      final sizes = <String, int>{};
+      for (final entry in (data['images'] as Map<String, dynamic>).entries) {
+        final size = entry.value;
+        if (size is! int || size <= 0 || size > maxIllustrationBytes) continue;
+        final file = _illustration(id, entry.key);
+        if (await file.exists() && await file.length() == size) {
+          sizes[entry.key] = size;
+        }
+      }
+      return Map.unmodifiable(sizes);
+    } on FileSystemException {
+      return const {};
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  Future<bool> hasIllustration(int id, String url) async {
+    await load();
+    final size = _books[id]?.illustrationBytes[url];
+    if (size == null) return false;
+    try {
+      final file = _illustration(id, url);
+      return await file.exists() && await file.length() == size;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  /// Reader lookups are indexed by URL; reopening a book needs no network call
+  /// and does not scan every cached book or decode all its illustrations.
+  Future<Uint8List?> readIllustration(String url) async {
+    await load();
+    for (final id in _illustrationOwners[url]?.toList() ?? const <int>[]) {
+      if (!await hasIllustration(id, url)) continue;
+      try {
+        final bytes = await _illustration(id, url).readAsBytes();
+        if (bytes.length == _books[id]?.illustrationBytes[url]) return bytes;
+      } on FileSystemException {
+        // Another book may also own this image; deletion never causes a miss
+        // for its remaining durable copy.
+      }
+    }
+    return null;
   }
 
   Future<T> _serialize<T>(Future<T> Function() operation) {
@@ -141,11 +226,18 @@ class OfflineCacheStore extends ChangeNotifier {
       found[id] = OfflineBook(
         novel: novel,
         chapterBytes: Map.unmodifiable(sizes),
+        illustrationBytes: await _scanIllustrations(id),
       );
     }
     _books
       ..clear()
       ..addAll(found);
+    _illustrationOwners.clear();
+    for (final book in found.values) {
+      for (final url in book.illustrationBytes.keys) {
+        (_illustrationOwners[url] ??= {}).add(book.novel.id);
+      }
+    }
     _loaded = true;
     _changed();
   }
@@ -264,6 +356,7 @@ class OfflineCacheStore extends ChangeNotifier {
       _books[novel.id] = OfflineBook(
         novel: stored,
         chapterBytes: previous?.chapterBytes ?? const {},
+        illustrationBytes: previous?.illustrationBytes ?? const {},
       );
       _changed(novel.id);
       return true;
@@ -298,6 +391,37 @@ class OfflineCacheStore extends ChangeNotifier {
     });
   }
 
+  Future<bool> saveIllustration(
+    int id,
+    String url,
+    Uint8List bytes, {
+    required CacheEpoch epoch,
+  }) async {
+    if (bytes.isEmpty || bytes.length > maxIllustrationBytes) {
+      throw const FormatException('插图超过本地缓存大小限制');
+    }
+    await load();
+    return _serialize(() async {
+      if (!isCurrent(id, epoch)) return false;
+      final previous = _books[id];
+      if (previous == null) return false;
+      final updated = previous._withIllustration(url, bytes.length);
+      final manifest = _encodeMetadata({
+        'version': 1,
+        'images': updated.illustrationBytes,
+      });
+      if (manifest.length > 4 * 1024 * 1024) {
+        throw const FormatException('插图目录超过本地缓存大小限制');
+      }
+      await _atomicWrite(_illustration(id, url), bytes);
+      await _atomicWrite(File('${_folder(id).path}/images.json'), manifest);
+      _books[id] = updated;
+      (_illustrationOwners[url] ??= {}).add(id);
+      _changed(id);
+      return true;
+    });
+  }
+
   Future<void> removeBook(int id) {
     // Invalidate immediately, even when a write is already queued.
     _bookEpochs[id] = (_bookEpochs[id] ?? 0) + 1;
@@ -305,6 +429,10 @@ class OfflineCacheStore extends ChangeNotifier {
       final folder = _folder(id);
       if (await folder.exists()) await folder.delete(recursive: true);
       _books.remove(id);
+      _illustrationOwners.removeWhere((_, owners) {
+        owners.remove(id);
+        return owners.isEmpty;
+      });
       _changed(id);
     });
   }
@@ -315,6 +443,7 @@ class OfflineCacheStore extends ChangeNotifier {
       if (await directory.exists()) await directory.delete(recursive: true);
       await directory.create(recursive: true);
       _books.clear();
+      _illustrationOwners.clear();
       _changed();
     });
   }

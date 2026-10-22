@@ -192,7 +192,13 @@ void main() {
       await captureReview(tester, capture, 'batch-selection-phone');
       await tester.tap(find.byKey(const ValueKey('local-batch-remove')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('local-remove-files')));
+      final removeFiles = find.descendant(
+        of: find.byKey(const ValueKey('local-remove-files')),
+        matching: find.text('同时删除本机文件'),
+      );
+      await tester.ensureVisible(removeFiles);
+      await tester.pumpAndSettle();
+      await tester.tap(removeFiles);
       await tester.pumpAndSettle();
       expect(find.text('删除 2 本书的本机文件？'), findsOneWidget);
       await tester.tap(find.text('取消'));
@@ -201,7 +207,13 @@ void main() {
       expect(find.text('移除 2 本书'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('local-batch-remove')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('local-remove-shelf-only')));
+      final shelfOnly = find.descendant(
+        of: find.byKey(const ValueKey('local-remove-shelf-only')),
+        matching: find.text('仅移出书架'),
+      );
+      await tester.ensureVisible(shelfOnly);
+      await tester.pumpAndSettle();
+      await tester.tap(shelfOnly);
       await ioSettle(tester);
       expect(library.hiddenLocalBooks, {items[0].id, items[1].id});
       expect(books.books, hasLength(3));
@@ -217,7 +229,8 @@ void main() {
   testWidgets('combined shelf retains the same local-only batch entry', (
     tester,
   ) async {
-    await tester.runAsync(() => add('合并后也能管理'));
+    final book = (await tester.runAsync(() => add('合并后也能管理')))!;
+    final group = await library.organization.addGroup('旅途');
     final cache = OfflineCacheStore(Directory('${root.path}/cache'));
     await tester.runAsync(cache.load);
     final repository = OfflineNovelRepository(
@@ -248,6 +261,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(LocalBookBatchPage), findsOneWidget);
     expect(find.text('合并后也能管理'), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey('local-batch-all')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('local-batch-category')));
+    await tester.pumpAndSettle();
+    expect(find.text('移至分类'), findsOneWidget);
+    await tester.tap(find.text('旅途'));
+    await ioSettle(tester);
+    expect(library.organization.groupOf(book.id), group);
+    expect(find.text('旅途'), findsOneWidget);
+    expect(find.text('请选择书籍'), findsOneWidget);
+    expect(books.book(book.id), isNotNull);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

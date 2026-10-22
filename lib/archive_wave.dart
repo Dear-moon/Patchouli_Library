@@ -7,12 +7,17 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'app_ui.dart';
+import 'app_palette.dart';
 import 'archive_scroll_simulation.dart';
 import 'archive_shelf_geometry.dart';
+import 'archive_shelf_loading.dart';
 import 'catalog.dart';
 import 'book_source_badge.dart';
 import 'performance_preferences.dart';
 import 'library_reflow.dart';
+import 'legacy_cover.dart';
+import 'local_book_media.dart';
+import 'archive_spine_title.dart';
 
 /// Scroll position is the single clock for the continuous extraction wave.
 class ArchiveFileCarousel extends StatefulWidget {
@@ -46,27 +51,22 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
   int _lastPulse = -1000;
   late final _entrance = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 720),
+    duration: const Duration(milliseconds: 520),
     value: widget.animateEntrance ? 0 : 1,
-  )..addListener(_assemble);
+  );
 
   @visibleForTesting
   AnimationController get debugEntranceClock => _entrance;
-
-  void _assemble() => _pose.present(_entrance.value);
 
   void _finishEntrance() {
     if (!_entrance.isCompleted) _entrance.value = 1;
   }
 
-  Widget _entryLabel(Widget child, double start) => widget.animateEntrance
-      ? RevealFromTop(animation: _entrance, start: start, end: 1, child: child)
-      : child;
-
   @override
   void initState() {
     super.initState();
-    _pose = _WavePose(widget.books.length, 0);
+    _pose = _WavePose(widget.books.length, 0, _entrance);
+    _entrance.addListener(_pose.inkChanged);
     _active = ValueNotifier(0);
   }
 
@@ -79,7 +79,6 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
         !TickerMode.valuesOf(context).enabled) {
       _finishEntrance();
     } else if (!_entrance.isAnimating && !_entrance.isCompleted) {
-      _pose.present(_entrance.value);
       _entrance.forward();
     }
   }
@@ -168,6 +167,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
   void dispose() {
     _scroll?.removeListener(_scrolled);
     _scroll?.dispose();
+    _entrance.removeListener(_pose.inkChanged);
     _entrance.dispose();
     _pose.dispose();
     _active.dispose();
@@ -211,174 +211,163 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
               )..addListener(_scrolled);
               final rowHeight = ArchiveShelfGeometry.rowHeight(cover, height);
               final dark = Theme.of(context).brightness == Brightness.dark;
-              return LoadingHandoff(
-                animation: _entrance,
-                end: .9,
-                placeholder: const ClipRect(
-                  child: OverflowBox(
-                    alignment: Alignment.topCenter,
-                    maxHeight: double.infinity,
-                    child: ArchiveShelfSkeleton(),
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      height: rowHeight,
-                      child: NotificationListener<ScrollNotification>(
-                        onNotification: (notification) {
-                          if (notification is ScrollStartNotification &&
-                              notification.dragDetails != null) {
-                            _finishEntrance();
-                            _targetIndex = null;
-                            _command++;
-                            _hapticGesture = true;
-                            _lastDetent = _pose.logicalFocus.round();
-                          } else if (notification is ScrollStartNotification &&
-                              _targetIndex != null) {
-                            _hapticGesture = true;
-                          } else if (notification is ScrollEndNotification) {
-                            _hapticGesture = false;
-                          }
-                          return false;
-                        },
-                        child: Scrollable(
-                          key: const ValueKey('archive-file-carousel'),
-                          controller: _scroll,
-                          axisDirection: AxisDirection.right,
-                          physics: widget.books.length == 1
-                              ? const NeverScrollableScrollPhysics()
-                              : _ArchiveSnapPhysics(pose: _pose),
-                          viewportBuilder: (context, offset) => _ShelfRow(
-                            offset: offset,
-                            pose: _pose,
-                            spine: spine,
-                            cover: cover,
-                            height: height,
-                            dark: dark,
-                            children: [
-                              for (var i = 0; i < _pose.poolCount; i++)
-                                _volume(
-                                  context,
-                                  widget.books[_pose.bookIndex(i)],
-                                  i,
-                                  spine,
-                                  cover,
-                                  height,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    // Only labels change at index crossings. Never rebuild the bank for
-                    // each scroll pixel, and never restart a separate extraction timer.
-                    _entryLabel(
-                      ValueListenableBuilder<int>(
-                        valueListenable: _active,
-                        builder: (context, index, _) {
-                          final book =
-                              widget.books[index % widget.books.length];
-                          final scale =
-                              MediaQuery.textScalerOf(context).scale(17) / 17;
-                          return SizedBox(
-                            height:
-                                16 + 17 * 1.35 * 2 * scale + 12 * 1.4 * scale,
-                            child: JellyTapSurface(
-                              key: const ValueKey('archive-shelf-open'),
-                              onTap: () => _open(_pose.focus.round()),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 8,
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          AppText(
-                                            book.title,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontSize: 17,
-                                              height: 1.35,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          AppText(
-                                            '${book.author} · ${book.isComplete ? '已完结' : '连载中'}',
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              height: 1.4,
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onSurfaceVariant,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    const Icon(
-                                      CupertinoIcons.arrow_up_right,
-                                      size: 20,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                      .52,
-                    ),
-                    _entryLabel(
-                      ValueListenableBuilder<int>(
-                        valueListenable: _active,
-                        builder: (context, index, _) => Row(
+              return Column(
+                key: const ValueKey('archive-shelf-arrival'),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    height: rowHeight,
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        if (notification is ScrollStartNotification &&
+                            notification.dragDetails != null) {
+                          _finishEntrance();
+                          _targetIndex = null;
+                          _command++;
+                          _hapticGesture = true;
+                          _lastDetent = _pose.logicalFocus.round();
+                        } else if (notification is ScrollStartNotification &&
+                            _targetIndex != null) {
+                          _hapticGesture = true;
+                        } else if (notification is ScrollEndNotification) {
+                          _hapticGesture = false;
+                        }
+                        return false;
+                      },
+                      child: Scrollable(
+                        key: const ValueKey('archive-file-carousel'),
+                        controller: _scroll,
+                        axisDirection: AxisDirection.right,
+                        physics: widget.books.length == 1
+                            ? const NeverScrollableScrollPhysics()
+                            : _ArchiveSnapPhysics(pose: _pose),
+                        viewportBuilder: (context, offset) => _ShelfRow(
+                          offset: offset,
+                          pose: _pose,
+                          spine: spine,
+                          cover: cover,
+                          height: height,
+                          dark: dark,
                           children: [
-                            const Spacer(),
-                            if (widget.books.length > 1) ...[
-                              IconButton(
-                                tooltip: '上一份档案',
-                                onPressed: () => _step(-1),
-                                icon: const Icon(
-                                  CupertinoIcons.chevron_left,
-                                  size: 13,
-                                ),
-                                visualDensity: VisualDensity.compact,
+                            for (var i = 0; i < _pose.poolCount; i++)
+                              _volume(
+                                context,
+                                widget.books[_pose.bookIndex(i)],
+                                i,
+                                spine,
+                                cover,
+                                height,
                               ),
-                              Semantics(
-                                label:
-                                    '第 ${index % widget.books.length + 1} 本，共 ${widget.books.length} 本，循环浏览',
-                                child: ArchiveCode(
-                                  '${(index % widget.books.length + 1).toString().padLeft(2, '0')} / ${widget.books.length.toString().padLeft(2, '0')}',
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: '下一份档案',
-                                onPressed: () => _step(1),
-                                icon: const Icon(
-                                  CupertinoIcons.chevron_right,
-                                  size: 13,
-                                ),
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ],
                           ],
                         ),
                       ),
-                      .72,
                     ),
-                  ],
-                ),
+                  ),
+                  // Only labels change at index crossings. Never rebuild the bank for
+                  // each scroll pixel, and never restart a separate extraction timer.
+                  ValueListenableBuilder<int>(
+                    valueListenable: _active,
+                    builder: (context, index, _) {
+                      final book = widget.books[index % widget.books.length];
+                      final scale =
+                          MediaQuery.textScalerOf(context).scale(17) / 17;
+                      return SizedBox(
+                        height: 16 + 17 * 1.35 * 2 * scale + 12 * 1.4 * scale,
+                        child: LoadingHandoff(
+                          animation: _entrance,
+                          crossfade: true,
+                          start: .2,
+                          end: .75,
+                          placeholder: const LoadingSkeleton(
+                            layout: SkeletonLayout.actions,
+                          ),
+                          child: JellyTapSurface(
+                            key: const ValueKey('archive-shelf-open'),
+                            onTap: () => _open(_pose.focus.round()),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        AppText(
+                                          book.title,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 17,
+                                            height: 1.35,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        AppText(
+                                          '${book.author} · ${book.isComplete ? '已完结' : '连载中'}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            height: 1.4,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Icon(
+                                    CupertinoIcons.arrow_up_right,
+                                    size: 20,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  ValueListenableBuilder<int>(
+                    valueListenable: _active,
+                    builder: (context, index, _) => Row(
+                      children: [
+                        const Spacer(),
+                        if (widget.books.length > 1) ...[
+                          IconButton(
+                            tooltip: '上一份档案',
+                            onPressed: () => _step(-1),
+                            icon: const Icon(
+                              CupertinoIcons.chevron_left,
+                              size: 13,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          Semantics(
+                            label:
+                                '第 ${index % widget.books.length + 1} 本，共 ${widget.books.length} 本，循环浏览',
+                            child: ArchiveCode(
+                              '${(index % widget.books.length + 1).toString().padLeft(2, '0')} / ${widget.books.length.toString().padLeft(2, '0')}',
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '下一份档案',
+                            onPressed: () => _step(1),
+                            icon: const Icon(
+                              CupertinoIcons.chevron_right,
+                              size: 13,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               );
             },
           ),
@@ -398,8 +387,21 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
     final dark = Theme.of(context).brightness == Brightness.dark;
     final number = _pose.bookIndex(index) + 1;
     void tap() => _tap(index);
-    final glyphs = book.title.characters.toList();
-    final title = [...glyphs.take(7), if (glyphs.length > 7) '…'].join('\n');
+    Widget ink(Widget child, {bool spine = false}) => ArchiveShelfInk(
+      animation: _entrance,
+      start: _pose.inkStart(index),
+      end: _pose.inkStart(index) + .35,
+      base: spine
+          ? (dark ? ArchiveDesign.darkRaised : const Color(0xFFF2F0E9))
+          : dark
+          ? Theme.of(context).extension<AppTonalColors>()?.glassSurface ??
+                ArchiveDesign.darkSurface
+          : Theme.of(context).extension<AppTonalColors>()?.milk ??
+                ArchiveDesign.milk,
+      ink: Theme.of(context).colorScheme.onSurface,
+      spine: spine,
+      child: child,
+    );
     return _BookVolume(
       key: ValueKey('archive-slot-$index'),
       pose: _pose,
@@ -414,89 +416,88 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
       children: [
         ExcludeSemantics(
           child: RepaintBoundary(
-            child: ContentPanel(
-              key: ValueKey('archive-spine-$index'),
-              radius: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 9),
-              // Solid physical faces occlude other files; milk comes from shading,
-              // not alpha that lets readable rear text bleed through the surface.
-              backgroundColor: dark
-                  ? ArchiveDesign.darkRaised
-                  : const Color(0xFFF2F0E9),
-              onTap: tap,
-              child: MediaQuery.withNoTextScaling(
-                child: Column(
-                  children: [
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: ArchiveCode(number.toString().padLeft(2, '0')),
-                    ),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: Center(
-                        child: AppText(
-                          title,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 9,
-                            height: 1.08,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+            child: ink(
+              ContentPanel(
+                key: ValueKey('archive-spine-$index'),
+                radius: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 9),
+                // Solid physical faces occlude other files; milk comes from shading,
+                // not alpha that lets readable rear text bleed through the surface.
+                backgroundColor: dark
+                    ? ArchiveDesign.darkRaised
+                    : const Color(0xFFF2F0E9),
+                onTap: tap,
+                child: MediaQuery.withNoTextScaling(
+                  child: Column(
+                    children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: ArchiveCode(number.toString().padLeft(2, '0')),
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Icon(
-                      CupertinoIcons.circle,
-                      size: 6,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ],
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: Center(child: ArchiveSpineTitle(book.title)),
+                      ),
+                      const SizedBox(height: 6),
+                      Icon(
+                        CupertinoIcons.circle,
+                        size: 6,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
                 ),
               ),
+              spine: true,
             ),
           ),
         ),
         ExcludeSemantics(
           child: RepaintBoundary(
-            child: ContentPanel(
-              key: ValueKey('archive-cover-$index'),
-              radius: 0,
-              padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
-              backgroundColor: dark
-                  ? ArchiveDesign.darkSurface
-                  : ArchiveDesign.milk,
-              onTap: tap,
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ArchiveCode(
-                          'NO.${number.toString().padLeft(3, '0')}',
+            child: ink(
+              ContentPanel(
+                key: ValueKey('archive-cover-$index'),
+                radius: 0,
+                padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
+                backgroundColor: dark
+                    ? Theme.of(
+                            context,
+                          ).extension<AppTonalColors>()?.glassSurface ??
+                          ArchiveDesign.darkSurface
+                    : Theme.of(context).extension<AppTonalColors>()?.milk ??
+                          ArchiveDesign.milk,
+                onTap: tap,
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ArchiveCode(
+                            'NO.${number.toString().padLeft(3, '0')}',
+                          ),
                         ),
-                      ),
-                      if (widget.sourceLabel?.call(book) case final label?)
-                        BookSourceBadge(label),
-                    ],
-                  ),
-                  const SizedBox(height: 7),
-                  Expanded(
-                    child: _LazyArchiveCover(
-                      book: book,
-                      pose: _pose,
-                      index: index,
-                      width: cover - 20,
-                      height: (cover - 20) * 166 / 118,
-                      // Only the focused copy participates in Hero. Its stable
-                      // identity survives pool wrapping and viewport resizing.
-                      heroTag: CoverHeroTag(this, book.id),
-                      reduced: _reduced,
+                        if (widget.sourceLabel?.call(book) case final label?)
+                          BookSourceBadge(label),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  ArchiveCode(ArchiveDesign.fileCode(book.id)),
-                ],
+                    const SizedBox(height: 7),
+                    Expanded(
+                      child: _LazyArchiveCover(
+                        book: book,
+                        pose: _pose,
+                        index: index,
+                        width: cover - 20,
+                        height: (cover - 20) * 166 / 118,
+                        // Only the focused copy participates in Hero. Its stable
+                        // identity survives pool wrapping and viewport resizing.
+                        heroTag: CoverHeroTag(this, book.id),
+                        reduced: _reduced,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    ArchiveCode(ArchiveDesign.fileCode(book.id)),
+                  ],
+                ),
               ),
             ),
           ),
@@ -651,14 +652,56 @@ class _LazyArchiveCover extends StatefulWidget {
 
 class _LazyArchiveCoverState extends State<_LazyArchiveCover> {
   bool get _near => (widget.pose.focus.round() - widget.index).abs() <= 1;
+  bool get _warm => (widget.pose.focus.round() - widget.index).abs() <= 2;
   bool get _focused => widget.pose.focus.round() == widget.index;
-  late bool _lastNear, _lastFocused;
+  late bool _lastNear, _lastFocused, _lastWarm;
+  Object? _warming;
   @override
   void initState() {
     super.initState();
     _lastNear = _near;
     _lastFocused = _focused;
+    _lastWarm = _warm;
     widget.pose.addListener(_changed);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _prewarm();
+  }
+
+  void _prewarm() {
+    final book = widget.book;
+    if (!_warm ||
+        book.coverUrl == null ||
+        !TickerMode.valuesOf(context).enabled) {
+      return;
+    }
+    final width = novelCoverDecodeWidth(
+      widget.width,
+      MediaQuery.devicePixelRatioOf(context),
+    );
+    final key = (book.id, book.coverUrl, width);
+    if (_warming == key) return;
+    _warming = key;
+    unawaited(() async {
+      try {
+        final bytes = book.coverUrl!.startsWith('wenku-local:')
+            ? await LocalBookMedia.loadCover(book.coverUrl!)
+            : await LegacyCover.bytes(book.id, url: book.coverUrl);
+        if (!mounted || !_warm || _warming != key) return;
+        // Decode one detent before the face is mounted, at exactly the same
+        // resolution/key as NovelCover. No extra image widgets or tickers.
+        await precacheImage(
+          ResizeImage.resizeIfNeeded(width, null, MemoryImage(bytes)),
+          context,
+          onError: (_, _) {},
+        );
+      } catch (_) {
+        // Visible covers retain their normal error/retry path.
+      }
+    }());
   }
 
   @override
@@ -670,9 +713,19 @@ class _LazyArchiveCoverState extends State<_LazyArchiveCover> {
     }
     _lastNear = _near;
     _lastFocused = _focused;
+    _lastWarm = _warm;
+    _prewarm();
   }
 
   void _changed() {
+    if (_warm != _lastWarm) {
+      _lastWarm = _warm;
+      if (_warm) {
+        _prewarm();
+      } else {
+        _warming = null;
+      }
+    }
     if (_near == _lastNear && _focused == _lastFocused) return;
     setState(() {
       _lastNear = _near;
@@ -697,17 +750,16 @@ class _LazyArchiveCoverState extends State<_LazyArchiveCover> {
             child: MediaQuery(
               data: MediaQuery.of(context).copyWith(
                 disableAnimations:
-                    widget.reduced ||
-                    !_focused ||
-                    MediaQuery.disableAnimationsOf(context),
+                    widget.reduced || MediaQuery.disableAnimationsOf(context),
               ),
               child: TickerMode(
-                enabled: _focused,
+                enabled: _near,
                 child: NovelCover(
                   widget.book,
                   width: widget.width,
                   height: widget.height,
-                  heroTag: widget.heroTag,
+                  heroTag: _focused ? widget.heroTag : null,
+                  fadeIn: true,
                 ),
               ),
             ),
@@ -782,13 +834,25 @@ class _ArchiveSnapPhysics extends ScrollPhysics {
 }
 
 class _WavePose extends ChangeNotifier {
-  _WavePose(this.count, this.logicalFocus);
+  _WavePose(this.count, this.logicalFocus, this.entrance);
+  final Animation<double> entrance;
   int count;
   double logicalFocus;
   double viewport = 340, pitch = pitchFor(340);
   int edgeSlots = 15;
   bool holdLayoutFocus = false;
-  double entrance = 1;
+  void inkChanged() => notifyListeners();
+  double inkStart(int index) => ((index - focus + 8) / 24).clamp(0.0, .65);
+  double inkProgress(int index) => Interval(
+    inkStart(index),
+    inkStart(index) + .35,
+    curve: Curves.easeOutCubic,
+  ).transform(entrance.value.clamp(0.0, 1.0));
+  double loadingLift(int index) => archiveLoadingLift(
+    index - focus,
+    SchedulerBinding.instance.currentSystemFrameTimeStamp,
+    1 - inkProgress(index),
+  );
   double get focus => count < 2 ? 0 : edgeSlots + logicalFocus % count;
   int get poolCount => count < 2 ? count : count + edgeSlots * 2;
   int bookIndex(int slot) => count < 2 ? 0 : (slot - edgeSlots) % count;
@@ -826,26 +890,6 @@ class _WavePose extends ChangeNotifier {
     if (notify) notifyListeners();
   }
 
-  void present(double value) {
-    if (entrance == value) return;
-    entrance = value;
-    notifyListeners();
-  }
-
-  Offset assemblyOffset(int slot) {
-    if (entrance == 1) return Offset.zero;
-    // Assemble from the back along each parallel solid's depth axis. Stagger
-    // only the visible bank, never the number of logical loop occurrences.
-    final order = ((slot - focus) + viewport / pitch / 2 + 2).clamp(0.0, 16.0);
-    final start = order * .018;
-    final progress = Interval(
-      start,
-      start + .52,
-      curve: Curves.easeOutCubic,
-    ).transform(entrance);
-    return const Offset(depthX, depthY) * (56 * (1 - progress));
-  }
-
   double railY(int slot) {
     return ArchiveShelfGeometry.railY(slot - focus);
   }
@@ -854,14 +898,9 @@ class _WavePose extends ChangeNotifier {
     final distance = (index - focus).abs();
     if (distance >= radius) return 0;
     final value = math.cos(distance / radius * math.pi / 2);
-    final crest = entrance == 1
-        ? 1.0
-        : const Interval(
-            .38,
-            1,
-            curve: Curves.easeOutCubic,
-          ).transform(entrance);
-    return value * value * crest;
+    // The loading skeleton already shows this crest. Keep its pose throughout
+    // the ink handoff instead of dropping the selected book then lifting it.
+    return value * value;
   }
 }
 
@@ -916,8 +955,6 @@ class ArchiveShelfSceneRender extends RenderBox
   int get debugCentreSlot => _pose.focus.round();
   int get debugPoolCount => _pose.poolCount;
   double get debugPitch => _pose.pitch;
-  double get debugEntranceProgress => _pose.entrance;
-  Offset debugAssemblyOffset(int slot) => _pose.assemblyOffset(slot);
   List<int> get debugPaintOrder => _visible;
   @override
   Path? coverOcclusion(RenderBox face) {
@@ -948,8 +985,7 @@ class ArchiveShelfSceneRender extends RenderBox
 
   Rect get _viewport => Offset.zero & size;
   Offset _offset(int i) =>
-      Offset(_x[i] - _pose.focus * _pose.pitch, _pose.railY(i)) +
-      _pose.assemblyOffset(i);
+      Offset(_x[i] - _pose.focus * _pose.pitch, _pose.railY(i));
   List<int> get _visible => [
     for (var i = 0; i < _boxes.length; i++)
       if (_viewport.overlaps(_boxes[i].paintBounds.shift(_offset(i)))) i,
@@ -1199,7 +1235,8 @@ class ArchiveBoxDepthRender extends RenderBox
   Matrix4 get debugSpineTransform => _base.clone();
   double get debugFootprint => _WavePose.footprint(_spine, _cover);
   Offset get _origin {
-    return ArchiveShelfGeometry.origin(_cover, _height, debugOpenFraction);
+    return ArchiveShelfGeometry.origin(_cover, _height, debugOpenFraction) +
+        Offset(0, _pose.loadingLift(_index));
   }
 
   Matrix4 get _base {

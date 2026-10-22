@@ -22,7 +22,7 @@ class _Documents extends LocalDocumentsFixture {
   bool released = false;
   int picks = 0;
   @override
-  Future<List<BookDocumentSelection>> pickBooks() async {
+  Future<List<BookDocumentSelection>> pickForImport() async {
     picks++;
     return selections;
   }

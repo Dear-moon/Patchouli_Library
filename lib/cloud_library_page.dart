@@ -374,7 +374,7 @@ class _CloudBookBrowserState extends State<CloudBookBrowser> {
       _committing = false;
   int _generation = 0, _received = 0;
   int? _total;
-  String? _error, _current;
+  String? _error, _current, _loadedFolder;
   @override
   void initState() {
     super.initState();
@@ -411,6 +411,7 @@ class _CloudBookBrowserState extends State<CloudBookBrowser> {
           for (final e in listing.entries) e.id: e,
         };
         _entries = values.values.toList();
+        _loadedFolder = _folders.last.id;
         _next = listing.nextPage;
       });
     } catch (e) {
@@ -639,7 +640,9 @@ class _CloudBookBrowserState extends State<CloudBookBrowser> {
                         child: const AppText('刷新目录'),
                       ),
                     ],
-                    if (_loading && _entries.isEmpty)
+                    if (_loading &&
+                        _entries.isEmpty &&
+                        _loadedFolder != _folders.last.id)
                       const BookRowSkeleton(label: '正在读取网盘目录'),
                     if (!_loading && _error == null && _entries.isEmpty)
                       const Padding(
@@ -660,6 +663,7 @@ class _CloudBookBrowserState extends State<CloudBookBrowser> {
                 itemBuilder: (context, index) {
                   final entry = _entries[index];
                   return LoadedContentItem(
+                    key: ValueKey(('cloud-entry', entry.id)),
                     index: index,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 5),

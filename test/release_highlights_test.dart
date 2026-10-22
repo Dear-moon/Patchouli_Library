@@ -184,8 +184,11 @@ void main() {
       find.byKey(const ValueKey('switch-app-update-channel')),
       findsNothing,
     );
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('view-current-release-details')),
+    await Scrollable.ensureVisible(
+      tester.element(
+        find.byKey(const ValueKey('view-current-release-details')),
+      ),
+      alignment: .5,
     );
     await tester.pumpAndSettle();
     await tester.runAsync(
@@ -383,6 +386,9 @@ void main() {
       await tester.pumpAndSettle();
       await captureReview(tester, capture, 'release-${scene.name}');
       for (var i = 0; i < currentReleaseSections.length; i++) {
+        if (i == 1) {
+          await captureReview(tester, capture, 'release-${scene.name}-account');
+        }
         expect(
           find.byKey(const ValueKey('release-details-next')).hitTestable(),
           findsOneWidget,

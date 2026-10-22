@@ -3,11 +3,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'support/serif_fixture.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_ui.dart';
 import 'package:wenku8_flutter/updates/app_updates.dart';
 import 'package:wenku8_flutter/updates/update_page.dart';
+import 'support/visual_review.dart';
 
 const _captureDirectory = String.fromEnvironment('UPDATE_PROMPT_CAPTURE');
 const _captureKey = ValueKey('update-prompt-render');
@@ -100,13 +102,9 @@ void main() {
   late Directory directory;
 
   setUpAll(() async {
+    await loadReviewFonts();
     if (_captureDirectory.isEmpty) return;
-    await (FontLoader('SourceHanSerifCN')
-          ..addFont(
-            rootBundle.load('assets/fonts/SourceHanSerifCN-Regular.otf'),
-          )
-          ..addFont(rootBundle.load('assets/fonts/SourceHanSerifCN-Bold.otf')))
-        .load();
+    await (FontLoader('SourceHanSerifCN')..addFont(loadSerifFixture())).load();
     await (FontLoader('packages/cupertino_icons/CupertinoIcons')..addFont(
           rootBundle.load('packages/cupertino_icons/assets/CupertinoIcons.ttf'),
         ))
@@ -139,8 +137,9 @@ void main() {
     Brightness brightness = Brightness.light,
     double textScale = 1,
     bool reduced = false,
+    GlobalKey? capture,
   }) => RepaintBoundary(
-    key: _captureKey,
+    key: capture ?? _captureKey,
     child: MaterialApp(
       debugShowCheckedModeBanner: false,
       navigatorKey: navigator,
@@ -189,10 +188,16 @@ void main() {
     Brightness brightness = Brightness.light,
     double scale = 1,
     bool reduced = false,
+    GlobalKey? capture,
   }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpWidget(
-      host(brightness: brightness, textScale: scale, reduced: reduced),
+      host(
+        brightness: brightness,
+        textScale: scale,
+        reduced: reduced,
+        capture: capture,
+      ),
     );
     await tester.pump(const Duration(seconds: 2));
     await tester.pumpAndSettle();
@@ -202,6 +207,71 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'remote Markdown is preserved in the prompt and About update page',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final original = source.release!;
+      source.release = AppRelease(
+        tag: original.tag,
+        version: original.version,
+        notes:
+            '## 功能更新\n\n**免费开源**，请认准项目仓库。\n\n- 保留阅读位置\n- 改善本地导入\n\n> [!WARNING]\n> 升级前请备份。\n\n[查看项目](../../)',
+        page: original.page,
+        assets: original.assets,
+      );
+      final capture = GlobalKey();
+      await start(tester, capture: capture);
+      expect(find.text('功能更新', findRichText: true), findsOneWidget);
+      expect(find.text('免费开源，请认准项目仓库。', findRichText: true), findsOneWidget);
+      expect(find.text('警告\n升级前请备份。', findRichText: true), findsOneWidget);
+      expect(
+        tester.widget<ReleaseNotes>(find.byType(ReleaseNotes)).baseUri,
+        original.page,
+      );
+      await captureReview(tester, capture, 'update-markdown-prompt');
+      await tester.tap(find.byKey(const ValueKey('postpone-app-update')));
+      await tester.pumpAndSettle();
+      unawaited(
+        navigator.currentState!.push(
+          MaterialPageRoute<void>(
+            builder: (_) => AppUpdatePage(updates: updates),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('功能更新', findRichText: true), findsOneWidget);
+      final remote = tester
+          .widgetList<ReleaseNotes>(find.byType(ReleaseNotes))
+          .singleWhere((notes) => notes.text == source.release!.notes);
+      expect(remote.baseUri, original.page);
+      await Scrollable.ensureVisible(
+        tester.element(find.text('功能更新', findRichText: true)),
+        alignment: .2,
+      );
+      await tester.pumpAndSettle();
+      await captureReview(tester, capture, 'update-markdown-about');
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('app-important-notices')),
+        300,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('update-page-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(find.text('版权与使用提醒', findRichText: true), findsOneWidget);
+      expect(source.downloads, 0);
+      expect(platform.installs, 0);
+      expect(tester.takeException(), isNull);
+      await close(tester);
+    },
+  );
 
   testWidgets(
     'new release prompts once; later persists across foreground checks',

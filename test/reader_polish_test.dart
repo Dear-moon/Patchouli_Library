@@ -97,7 +97,17 @@ void main({
               media.padding.horizontal -
               state.readerPreferences.margin * 2,
         );
-        final pageRect = tester.getRect(find.byType(PageView));
+        // The whole paper travels; its body inset reserves toolbar space.
+        final view = tester.widget<ReaderPagedView>(
+          find.byType(ReaderPagedView),
+        );
+        final frame = tester.getRect(find.byType(PageView));
+        final pageRect = Rect.fromLTWH(
+          frame.left + view.padding.left,
+          frame.top + view.padding.top,
+          size.width,
+          size.height,
+        );
         expect(
           pageRect.top,
           greaterThan(tester.getRect(key('reader-chrome-header')).bottom),

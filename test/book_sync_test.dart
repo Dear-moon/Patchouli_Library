@@ -2,14 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/book_documents.dart';
 import 'package:wenku8_flutter/book_sync.dart';
 import 'package:wenku8_flutter/library_state.dart';
+import 'package:wenku8_flutter/local_import_options.dart';
 import 'package:wenku8_flutter/local_books.dart';
 import 'package:wenku8_flutter/local_series_actions.dart';
 import 'support/local_series_fixture.dart';
+import 'epub_illustration_toc_test.dart' show illustratedEpub;
 
 class _Document extends BookDocuments {
   _Document(this.cloud, this.folder);
@@ -48,6 +51,368 @@ class _Document extends BookDocuments {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  const custom = LocalImportOptions(
+    customToc: true,
+    chapterRule: r'^【.+】$',
+    volumeRule: '',
+    autoTitles: false,
+  );
+  test(
+    'ordinary sync stays version 1, custom per-original rules require version 2',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final state = await LibraryState.load();
+      addTearDown(state.dispose);
+      final backup = await (await state.createBackup()).encode();
+      Map<String, dynamic> manifest(Uint8List data) => jsonDecode(
+        utf8.decode(
+          ZipDecoder()
+              .decodeBytes(data)
+              .findFile('manifest.json')!
+              .readBytes()!,
+        ),
+      );
+      final ordinary = encodeBookSync(BookSyncBundle(backup, const []));
+      expect(manifest(ordinary)['version'], 1);
+      expect(decodeBookSync(ordinary).importOptions, isEmpty);
+      const id = localBookIdStart + 1;
+      final next = encodeBookSync(
+        BookSyncBundle(backup, const [], importOptions: {id: custom}),
+      );
+      expect(manifest(next)['version'], 2);
+      expect(decodeBookSync(next).importOptions[id]!.identity, custom.identity);
+      final epub = encodeBookSync(
+        BookSyncBundle(
+          backup,
+          const [],
+          importOptions: {id: const LocalImportOptions(inlineEpubImages: true)},
+        ),
+      );
+      expect(decodeBookSync(epub).importOptions[id]!.inlineEpubImages, true);
+      for (final invalid in [
+        {'wrong-id': custom.toJson()},
+        {
+          '$id': {'version': 2},
+        },
+        {
+          '$id': {...custom.toJson(), 'chapterRule': ''},
+        },
+      ]) {
+        final archive = ZipDecoder().decodeBytes(next);
+        archive.removeFile(archive.findFile('manifest.json')!);
+        final bytes = utf8.encode(
+          jsonEncode({...manifest(next), 'importOptions': invalid}),
+        );
+        archive.addFile(ArchiveFile('manifest.json', bytes.length, bytes));
+        expect(
+          () =>
+              decodeBookSync(Uint8List.fromList(ZipEncoder().encode(archive))),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+  for (final inline in [false, true]) {
+    test(
+      'reading-only sync retains EPUB positions before original arrives, inline=$inline',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'wenku-epub-record-sync-',
+        );
+        addTearDown(() => root.delete(recursive: true));
+        final cloud = File('${root.path}/cloud')..writeAsBytesSync([]);
+        final input = LocalBookInput('插图.epub', illustratedEpub());
+        final source = LocalBookStore(Directory('${root.path}/source'));
+        addTearDown(source.dispose);
+        await source.load();
+        final original = await source.import(
+          input,
+          requireMatchingOptions: !inline,
+        );
+        SharedPreferences.setMockInitialValues({});
+        final before = await LibraryState.load();
+        addTearDown(before.dispose);
+        await before.savePosition(
+          novel: original,
+          chapter: 1,
+          offset: 50,
+          maximum: 100,
+          width: 390,
+          paragraphIndex: 0,
+          textOffset: 3,
+        );
+        await before.addBookmark(
+          novel: original,
+          position: before.positionFor(original.id)!,
+        );
+        await cloud.writeAsBytes(
+          encodeBookSync(
+            BookSyncBundle(
+              await (await before.createBackup()).encode(),
+              const [],
+              importOptions: {
+                original.id: source.importOptionsFor(original.id),
+              },
+            ),
+          ),
+        );
+        SharedPreferences.setMockInitialValues({'bookSyncOriginals': false});
+        final prefs = await SharedPreferences.getInstance();
+        final state = LibraryState(prefs);
+        addTearDown(state.dispose);
+        final target = LocalBookStore(Directory('${root.path}/target'));
+        addTearDown(target.dispose);
+        await target.load();
+        final service = BookSync(
+          books: target,
+          state: state,
+          preferences: prefs,
+          documents: _Document(cloud, target.directory),
+        );
+        addTearDown(service.dispose);
+        await service.load();
+        await service.sync();
+        expect(service.error, isNull);
+        expect(target.originals, isEmpty);
+        expect(state.positionFor(original.id)!.chapter, 1);
+        expect(state.bookmarksFor(original.id).single.position.textOffset, 3);
+        final output = decodeBookSync(await cloud.readAsBytes());
+        expect(
+          output.importOptions[original.id]?.inlineEpubImages ?? false,
+          inline,
+        );
+        final restarted = LocalBookStore(target.directory);
+        addTearDown(restarted.dispose);
+        await restarted.load();
+        final imported = await restarted.import(input);
+        expect(
+          imported.chapters.map((c) => c.title),
+          original.chapters.map((c) => c.title),
+        );
+        expect(
+          await restarted.chapterContent(imported.id, imported.chapters[1]),
+          await source.chapterContent(original.id, original.chapters[1]),
+        );
+      },
+    );
+  }
+  test(
+    'custom directory originals and merged volumes retain chapters and bookmarks across devices',
+    () async {
+      final root = await Directory.systemTemp.createTemp('wenku-custom-sync-');
+      addTearDown(() => root.delete(recursive: true));
+      final cloud = File('${root.path}/cloud')..writeAsBytesSync([]);
+      SharedPreferences.setMockInitialValues({});
+      final pa = await SharedPreferences.getInstance();
+      final a = LibraryState(pa);
+      addTearDown(a.dispose);
+      final ba = LocalBookStore(Directory('${root.path}/a'));
+      await ba.load();
+      addTearDown(ba.dispose);
+      final volumes = [
+        for (var i = 1; i <= 2; i++)
+          await ba.import(
+            LocalBookInput(
+              '系列 第$i卷.txt',
+              Uint8List.fromList(utf8.encode('【晨光$i】\n第一段。\n【歸途$i】\n第二段完整正文。')),
+            ),
+            options: custom,
+          ),
+      ];
+      final series = await saveLocalSeries(
+        books: ba,
+        library: a,
+        title: '合订本',
+        volumes: [
+          for (final (i, book) in volumes.indexed)
+            (bookId: book.id, title: '第${i + 1}卷'),
+        ],
+      );
+      await a.savePosition(
+        novel: series,
+        chapter: 3,
+        offset: 100,
+        maximum: 1000,
+        width: 390,
+        paragraphIndex: 0,
+        textOffset: 3,
+      );
+      await a.addBookmark(novel: series, position: a.positionFor(series.id)!);
+      final sa = BookSync(
+        books: ba,
+        state: a,
+        preferences: pa,
+        documents: _Document(cloud, ba.directory),
+      );
+      addTearDown(sa.dispose);
+      await sa.load();
+      await sa.sync();
+      expect(sa.error, isNull);
+      final packed = decodeBookSync(await cloud.readAsBytes());
+      expect(
+        packed.importOptions.keys.toSet(),
+        volumes.map((book) => book.id).toSet(),
+      );
+      SharedPreferences.setMockInitialValues({});
+      final pb = await SharedPreferences.getInstance();
+      final b = LibraryState(pb);
+      addTearDown(b.dispose);
+      final bb = LocalBookStore(Directory('${root.path}/b'));
+      await bb.load();
+      addTearDown(bb.dispose);
+      final sb = BookSync(
+        books: bb,
+        state: b,
+        preferences: pb,
+        documents: _Document(cloud, bb.directory),
+      );
+      addTearDown(sb.dispose);
+      await sb.load();
+      await sb.sync();
+      expect(sb.error, isNull);
+      expect(bb.books.single.chapters.map((chapter) => chapter.title), [
+        '【晨光1】',
+        '【歸途1】',
+        '【晨光2】',
+        '【歸途2】',
+      ]);
+      expect(b.positionFor(series.id)!.chapter, 3);
+      expect(b.bookmarksFor(series.id).single.position.textOffset, 3);
+      for (final book in bb.originals) {
+        expect(bb.importOptionsFor(book.id).identity, custom.identity);
+      }
+      final restarted = LocalBookStore(bb.directory);
+      addTearDown(restarted.dispose);
+      await restarted.load();
+      expect(
+        restarted.books.single.chapters.map((c) => c.title),
+        bb.books.single.chapters.map((c) => c.title),
+      );
+      await sa.sync();
+      expect(sa.error, isNull);
+    },
+  );
+  for (final originals in [true, false]) {
+    test(
+      'different parsing rules block record overwrite, originals=$originals',
+      () async {
+        final root = await Directory.systemTemp.createTemp('wenku-sync-rules-');
+        addTearDown(() => root.delete(recursive: true));
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        final state = LibraryState(prefs);
+        addTearDown(state.dispose);
+        final books = LocalBookStore(Directory('${root.path}/books'));
+        await books.load();
+        addTearDown(books.dispose);
+        final input = LocalBookInput(
+          '规则.txt',
+          Uint8List.fromList(utf8.encode('【早晨】\n完整正文。\n【晚上】\n另一个完整段落。')),
+        );
+        final book = await books.import(input, options: custom);
+        await state.savePosition(
+          novel: book,
+          chapter: 1,
+          offset: 90,
+          maximum: 1000,
+          width: 390,
+        );
+        await state.addBookmark(
+          novel: book,
+          position: state.positionFor(book.id)!,
+        );
+        final remote = await (await state.createBackup()).encode();
+        await state.savePosition(
+          novel: book,
+          chapter: 0,
+          offset: 20,
+          maximum: 1000,
+          width: 390,
+        );
+        final before = state.positionFor(book.id)!;
+        final cloud = File('${root.path}/cloud')
+          ..writeAsBytesSync(
+            encodeBookSync(
+              BookSyncBundle(remote, originals ? [input] : const []),
+            ),
+          );
+        final doc = _Document(cloud, books.directory);
+        final sync = BookSync(
+          books: books,
+          state: state,
+          preferences: prefs,
+          documents: doc,
+        );
+        addTearDown(sync.dispose);
+        await sync.configure(originals: originals);
+        await sync.load();
+        await sync.sync();
+        expect(sync.error, contains('目录规则不同'));
+        expect(doc.writes, 0);
+        expect(state.positionFor(book.id)!.chapter, before.chapter);
+        expect(state.positionFor(book.id)!.offset, before.offset);
+        expect(state.bookmarksFor(book.id), hasLength(1));
+        expect(books.importOptionsFor(book.id).identity, custom.identity);
+        expect(books.book(book.id)!.chapters.length, 2);
+      },
+    );
+  }
+  test(
+    'title display differences keep positions compatible, absent custom originals do not',
+    () async {
+      final root = await Directory.systemTemp.createTemp('wenku-sync-titles-');
+      addTearDown(() => root.delete(recursive: true));
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final state = LibraryState(prefs);
+      addTearDown(state.dispose);
+      final books = LocalBookStore(Directory('${root.path}/books'));
+      await books.load();
+      addTearDown(books.dispose);
+      final input = LocalBookInput(
+        '无标题.txt',
+        Uint8List.fromList(utf8.encode('没有章名，但需要保留相同段落和定位。')),
+      );
+      final book = await books.import(
+        input,
+        options: const LocalImportOptions(autoTitles: false),
+      );
+      await state.savePosition(
+        novel: book,
+        chapter: 0,
+        offset: 40,
+        maximum: 100,
+        width: 390,
+      );
+      final backup = await (await state.createBackup()).encode();
+      final cloud = File('${root.path}/cloud')
+        ..writeAsBytesSync(encodeBookSync(BookSyncBundle(backup, [input])));
+      final doc = _Document(cloud, books.directory);
+      final sync = BookSync(
+        books: books,
+        state: state,
+        preferences: prefs,
+        documents: doc,
+      );
+      addTearDown(sync.dispose);
+      await sync.load();
+      await sync.sync();
+      expect(sync.error, isNull);
+      expect(books.book(book.id)!.chapters.single.title, '正文');
+      await cloud.writeAsBytes(
+        encodeBookSync(
+          BookSyncBundle(backup, const [], importOptions: {book.id: custom}),
+        ),
+      );
+      await books.remove(book.id);
+      for (final originals in [false, true]) {
+        await sync.configure(originals: originals);
+        await sync.sync();
+        expect(sync.error, contains('自定义目录的原书尚未导入'));
+      }
+      expect(doc.writes, 1);
+    },
+  );
   test(
     'two devices merge originals, latest positions and bookmarks without local shelf membership or secrets',
     () async {

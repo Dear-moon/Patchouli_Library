@@ -15,8 +15,8 @@ void main() {
   });
 
   test('current release upgrades the restored and earlier app versions', () {
-    expect(currentAppVersion, '0.4.6');
-    expect(currentAppBuild, 163);
+    expect(currentAppVersion, '0.4.7');
+    expect(currentAppBuild, 183);
     final release = AppRelease.fromGithub({
       'tag_name': 'v$currentAppVersion',
       'draft': false,
@@ -44,6 +44,8 @@ void main() {
       (version: '0.4.4', build: 154),
       (version: '0.4.5', build: 155),
       (version: '0.4.5', build: 162),
+      (version: '0.4.6', build: 163),
+      (version: '0.4.6', build: 182),
     ]) {
       expect(
         release.isNewerThan(
@@ -82,11 +84,17 @@ void main() {
     expect(currentReleaseSummary[3], currentReleaseSourcePolicy);
     expect(currentReleaseSections.first.title, contains('重要说明'));
     expect(currentReleaseSections.first.items.last, currentReleaseSourcePolicy);
-    expect(currentReleaseSections.last.title, '本次更新');
-    expect(currentReleaseSections.last.items, hasLength(3));
-    expect(currentReleaseSections.last.items[0], contains('官网页面完成验证'));
-    expect(currentReleaseSections.last.items[1], contains('输入中文'));
-    expect(currentReleaseSections.last.items[2], contains('主动加入书架'));
+    expect(currentReleaseSections, hasLength(6));
+    expect(currentReleaseSections[1].title, '阅读器与翻页');
+    expect(currentReleaseSections[1].items, hasLength(8));
+    expect(currentReleaseSections.last.title, '评论与联网阅读');
+    expect(currentReleaseSections.last.items.last, contains('插图连接超时'));
+    expect(currentReleaseNotes, contains('左右点按均为下一页'));
+    expect(currentReleaseNotes, contains('强制竖屏'));
+    expect(currentReleaseNotes, contains('每种语言单独配置音色'));
+    for (final hidden in ['发布前待确认', '仍需补齐真机验收', '仅复制故障码', '加密', '故障排查']) {
+      expect(currentReleaseNotes, isNot(contains(hidden)));
+    }
     expect(currentReleaseNotes, contains(currentReleaseSourcePolicy));
     expect(currentReleaseNotes, isNot(contains('未加入其他功能调整或问题修复')));
     expect(currentReleaseNotes, contains(releaseReadingNotice));

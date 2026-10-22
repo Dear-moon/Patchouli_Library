@@ -103,7 +103,7 @@ void main() {
   );
 
   testWidgets(
-    'pagination and pull refresh use only skeletons and preserve scroll',
+    'pagination adds skeletons while refresh retains content and scroll',
     (tester) async {
       final repo = _PendingPages();
       final feed = NovelFeedController(repo, search: true);
@@ -149,9 +149,10 @@ void main() {
       final refresh = feed.refresh();
       await tester.pump();
       expect(
-        find.byKey(const ValueKey('feed-refresh-skeleton')),
+        find.byKey(const ValueKey('feed-refresh-progress')),
         findsOneWidget,
       );
+      expect(find.byType(LoadingSkeleton), findsNothing);
       expect(scroll.position.pixels, 120);
       repo.refresh.complete(
         NovelPage(items: [demoNovels.first], page: 1, totalPages: 2),
@@ -159,7 +160,7 @@ void main() {
       await refresh;
       await tester.pumpAndSettle();
       expect(scroll.position.pixels, 120);
-      expect(find.byKey(const ValueKey('feed-refresh-skeleton')), findsNothing);
+      expect(find.byKey(const ValueKey('feed-refresh-progress')), findsNothing);
       expect(tester.binding.transientCallbackCount, 0);
     },
   );
@@ -174,7 +175,10 @@ class _PendingPages extends DemoNovelRepository {
     int page = 1,
     bool refresh = false,
   }) async {
-    if (refresh) return this.refresh.future;
+    if (refresh && page == 1) return this.refresh.future;
+    if (refresh && page == 2) {
+      return NovelPage(items: [demoNovels[1]], page: 2, totalPages: 2);
+    }
     if (page == 2) return this.page.future;
     return NovelPage(items: [demoNovels.first], page: 1, totalPages: 2);
   }

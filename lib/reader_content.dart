@@ -4,8 +4,11 @@ import 'package:flutter/widgets.dart';
 import 'local_book_media.dart';
 import 'local_image_layout.dart';
 import 'app_language.dart';
+import 'reader_rich_content.dart';
+import 'reader_coordinate_map.dart';
+import 'reader_languages.dart';
 
-List<String> _splitParagraphs(String source) => source.split('\n\n');
+ReaderRichBody _splitParagraphs(String source) => ReaderRichBody.decode(source);
 
 class ReaderContent {
   const ReaderContent(
@@ -13,14 +16,65 @@ class ReaderContent {
     this.readingOrder,
     this.inlineOwners = const {},
     this.placementIds = const {},
+    this.formats = const {},
+    this.notes = const {},
+    this.revision = '',
+    this.coordinateMap,
+    this.languageFilter = '',
   });
   final List<String> paragraphs;
   final List<int>? readingOrder;
   final Map<int, int> inlineOwners;
   final Map<int, String> placementIds;
+  final Map<int, ReaderRichParagraph> formats;
+  final Map<String, String> notes;
+  final String revision;
+  final ReaderCoordinateMap? coordinateMap;
+  final String languageFilter;
+  Set<String> get languages => {
+    for (final f in formats.values)
+      if (f.language.isNotEmpty) f.language,
+  };
   Iterable<int> get order =>
       readingOrder ?? Iterable.generate(paragraphs.length);
   static final _imageLists = Expando<List<String>>('chapter-illustrations');
+  static final _publisherSpacing = Expando<bool>('publisher-spacing');
+  String layoutKey(String base) {
+    final layout =
+        (_publisherSpacing[this] ??= formats.values.any(
+          (format) => !format.spacing.empty,
+        ))
+        ? 'publisher-spacing-v1|$base'
+        : base;
+    return languageFilter.isEmpty
+        ? layout
+        : '$layout|languages=$languageFilter';
+  }
+
+  ReaderContent withHiddenLanguages(
+    Set<String> hidden, {
+    String? onlyLanguage,
+  }) {
+    final excluded = onlyLanguage == null
+        ? languages.intersection(hidden)
+        : languages.difference({onlyLanguage});
+    if (excluded.isEmpty) return this;
+    final names = excluded.toList()..sort();
+    return ReaderContent(
+      paragraphs,
+      readingOrder: List.unmodifiable(
+        order.where((index) => !excluded.contains(formats[index]?.language)),
+      ),
+      inlineOwners: inlineOwners,
+      placementIds: placementIds,
+      formats: formats,
+      notes: notes,
+      revision: revision,
+      coordinateMap: coordinateMap,
+      languageFilter: names.join(','),
+    );
+  }
+
   List<String> get illustrations => _imageLists[this] ??= List.unmodifiable([
     for (final index in order) ?readerIllustrationUrl(paragraphs[index]),
   ]);
@@ -28,37 +82,70 @@ class ReaderContent {
     if (chineseLocale(locale).countryCode == 'CN') return this;
     return ReaderContent(
       List.unmodifiable([
-        for (final text in paragraphs)
-          readerIllustrationUrl(text) != null || text.trim() == '[插图]'
+        for (final (index, text) in paragraphs.indexed)
+          readerIllustrationUrl(text) != null ||
+                  text.trim() == '[插图]' ||
+                  formats[index]?.language.isNotEmpty == true &&
+                      formats[index]!.language != 'zh'
               ? text
               : ChineseText.convert(text, locale, reader: true),
       ]),
       readingOrder: readingOrder,
       inlineOwners: inlineOwners,
       placementIds: placementIds,
+      formats: formats,
+      notes: notes,
+      revision: revision,
+      coordinateMap: coordinateMap,
+      languageFilter: languageFilter,
     );
   }
 
   static Future<ReaderContent> parse(String source) async {
     if (source.trim().isEmpty) throw const FormatException('章节正文为空');
-    final paragraphs = source.length > 64 * 1024
+    final rich = source.length > 64 * 1024
         ? await compute(_splitParagraphs, source)
         : _splitParagraphs(source);
-    return ReaderContent(List.unmodifiable(paragraphs));
+    return ReaderContent(
+      List.unmodifiable(rich.paragraphs),
+      formats: rich.formats,
+      notes: rich.notes,
+      revision: rich.revision,
+      coordinateMap: rich.coordinateMap,
+    );
   }
 
   Future<ReaderContent> localizedAsync(Locale locale) async {
     if (chineseLocale(locale).countryCode == 'CN') return this;
+    // A Chinese UI preference must not rewrite Japanese kanji in bilingual books.
+    final eligible = [
+      for (var i = 0; i < paragraphs.length; i++)
+        if (formats[i]?.language.isNotEmpty != true ||
+            readerLanguageCode(formats[i]!.language) == 'zh')
+          i,
+    ];
+    final translated = await ChineseText.readerParagraphs([
+      for (final i in eligible) paragraphs[i],
+    ], locale);
+    final localized = List<String>.of(paragraphs);
+    for (var i = 0; i < eligible.length; i++) {
+      localized[eligible[i]] = translated[i];
+    }
     return ReaderContent(
-      List.unmodifiable(await ChineseText.readerParagraphs(paragraphs, locale)),
+      List.unmodifiable(localized),
       readingOrder: readingOrder,
       inlineOwners: inlineOwners,
       placementIds: placementIds,
+      formats: formats,
+      notes: notes,
+      revision: revision,
+      coordinateMap: coordinateMap,
+      languageFilter: languageFilter,
     );
   }
 }
 
-/// Standalone paired resource markers. Images keep their
+/// Standalone paired markers in persisted reader content. Images keep their
 /// paragraph index, so bookmarks and lazy restoration share one coordinate map.
 String? readerIllustrationUrl(String paragraph) {
   const marker = '<!--image-->';
@@ -77,9 +164,9 @@ String? readerIllustrationUrl(String paragraph) {
   if (tail.isNotEmpty) return null;
   if (uri == null ||
       !['https', 'http'].contains(uri.scheme) ||
-      uri.host.isEmpty ||
       uri.userInfo.isNotEmpty ||
-      (uri.hasPort && ![80, 443].contains(uri.port))) {
+      (uri.hasPort && ![80, 443].contains(uri.port)) ||
+      uri.host.isEmpty) {
     return null;
   }
   return uri.replace(scheme: 'https', port: 443).toString();

@@ -48,11 +48,12 @@ abstract final class LocalPlatform {
     required bool active,
     required LibraryState state,
     ValueChanged<int>? onPage,
+    bool pageKeysActive = true,
   }) {
     if (!android) return;
     if (active) {
       _readerOwner = owner;
-      _onPage = onPage;
+      _onPage = pageKeysActive ? onPage : null;
       readerControls.setMethodCallHandler((call) async {
         if (call.method == 'page' && call.arguments is int) {
           _onPage?.call(call.arguments as int);
@@ -66,7 +67,8 @@ abstract final class LocalPlatform {
     }
     readerControls
         .invokeMethod<void>('apply', {
-          'volumePaging': active && state.readerPreferences.volumePaging,
+          'volumePaging':
+              active && pageKeysActive && state.readerPreferences.volumePaging,
           'brightness': active ? state.readerPreferences.brightness : null,
           'hideStatusBar': active && state.readerPreferences.hideSystemStatus,
         })
@@ -90,11 +92,19 @@ abstract final class LocalPlatform {
 }
 
 /// Route/lifecycle notifications rebuild only this zero-size binding, not the
-/// reader's article. Covering/leaving the page or backgrounding releases it.
+/// article. Reader-owned sheets retain its window appearance but suspend page
+/// keys; another page or backgrounding releases the window.
 class ReaderScreenBinding extends StatefulWidget {
-  const ReaderScreenBinding({super.key, required this.state, this.onPage});
+  const ReaderScreenBinding({
+    super.key,
+    required this.state,
+    this.onPage,
+    this.readerOverlayOpen,
+  });
   final LibraryState state;
   final ValueChanged<int>? onPage;
+  // Read at route/lifecycle changes: opening a sheet need not rebuild the book.
+  final ValueGetter<bool>? readerOverlayOpen;
   @override
   State<ReaderScreenBinding> createState() => _ReaderScreenBindingState();
 }
@@ -114,13 +124,17 @@ class _ReaderScreenBindingState extends State<ReaderScreenBinding>
   }
 
   void _update() {
-    final active = mounted && _foreground && _current;
+    final active =
+        mounted &&
+        _foreground &&
+        (_current || widget.readerOverlayOpen?.call() == true);
     LocalPlatform.keepScreen(this, active && widget.state.keepScreenOn);
     LocalPlatform.reader(
       this,
       active: active,
       state: widget.state,
       onPage: widget.onPage,
+      pageKeysActive: _current,
     );
   }
 
@@ -183,7 +197,7 @@ class _ReaderBrightnessGestureState extends State<ReaderBrightnessGesture> {
     final height = MediaQuery.sizeOf(context).height;
     widget.onChanged(
       widget.state.readerPreferences.copyWith(
-        brightness: (base - _delta / height).clamp(.03, 1.0),
+        brightness: (base - _delta / height).clamp(0.0, 1.0),
       ),
       persist,
     );

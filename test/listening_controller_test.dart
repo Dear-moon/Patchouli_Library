@@ -362,6 +362,40 @@ void main() {
       expect(output.playing, true);
     },
   );
+  test(
+    'a completion arriving after pause resumes into the next clip',
+    () async {
+      final handler = ListeningAudioHandler(controller);
+      try {
+        await controller.start(speechBook(['第一段。', '第二段。']), chapter: 0);
+        output.positionEvents.add(const Duration(milliseconds: 29900));
+        await controller.pause();
+        // A short clip can finish in the native player before its delayed
+        // completion event reaches Dart, after pause has already changed phase.
+        output.complete();
+        await listeningMicrotasks();
+        expect(controller.snapshot.value.phase, ListeningPhase.paused);
+        expect(controller.snapshot.value.segment, 0);
+        await handler.play();
+        await listeningMicrotasks();
+        expect(controller.snapshot.value.phase, ListeningPhase.playing);
+        expect(controller.snapshot.value.segment, 1);
+        expect(output.playing, true);
+        expect(output.initialPosition, Duration.zero);
+      } finally {
+        handler.close();
+      }
+    },
+  );
+  test('a delayed final completion does not replay a finished clip', () async {
+    await controller.start(speechBook(['最后一段。']), chapter: 0);
+    await controller.pause();
+    output.complete();
+    await listeningMicrotasks();
+    await controller.resume();
+    await listeningMicrotasks();
+    expect(controller.snapshot.value.phase, ListeningPhase.completed);
+  });
   test('pause while synthesis is pending prevents late auto-play', () async {
     audio.gate = Completer<void>();
     final starting = controller.start(demoNovels.first, chapter: 0);
@@ -583,17 +617,16 @@ void main() {
     expect(output.speed, .5);
   });
   test(
-    'offline is pending development and never calls a system engine',
+    'system voice discovery and selection persist without auto-play',
     () async {
       await controller.refreshVoices(online: false);
-      expect(controller.voices.value.offline, isEmpty);
-      expect(controller.voices.value.message, contains('待开发'));
+      expect(controller.voices.value.offline, hasLength(1));
+      expect(controller.voices.value.message, isNull);
       final voice = (await audio.offlineVoices()).first;
-      await expectLater(
-        controller.setVoice(voice),
-        throwsA(isA<SpeechFailure>()),
-      );
-      expect(controller.snapshot.value.voice.source, ListeningSource.edge);
+      await controller.setVoice(voice);
+      expect(controller.snapshot.value.voice.source, ListeningSource.system);
+      expect(controller.store.voice.engine, voice.engine);
+      expect(output.plays, 0);
     },
   );
   test(
@@ -745,10 +778,10 @@ void main() {
   );
 
   test(
-    'retired saved voices reset without playback and cannot be reselected',
+    'old unvalidated selections migrate, explicit public TTS selections stay saved',
     () async {
       const voice = SpeechVoice(
-        id: 'old',
+        id: '@default',
         label: 'old',
         engine: 'com.oplus.ttsaccessibilityengine',
         source: ListeningSource.system,
@@ -759,10 +792,9 @@ void main() {
         '{"id":"old","label":"old","engine":"com.oplus.ttsaccessibilityengine","source":"system","offline":true}',
       );
       expect(controller.store.voice.id, defaultEdgeVoice.id);
-      await expectLater(
-        controller.setVoice(voice),
-        throwsA(isA<SpeechFailure>()),
-      );
+      await controller.setVoice(voice);
+      expect(controller.store.voice.id, '@default');
+      expect(controller.store.voice.source, ListeningSource.system);
       expect(output.plays, 0);
     },
   );

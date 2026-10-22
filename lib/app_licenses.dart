@@ -12,6 +12,16 @@ void registerAppLicenses() {
     yield LicenseEntryWithLineBreaks(const [
       'Source Han Serif CN · Adobe',
     ], await rootBundle.loadString('assets/fonts/OFL-SourceHanSerif.txt'));
+    for (final entry in const {
+      'SourceHanSans': 'Source Han Sans CN · Adobe',
+      'LXGWWenKaiScreen': 'LXGW WenKai GB Screen · LXGW / Klee Project',
+      'ZhuqueFangsong': 'Zhuque Fangsong · TrionesType / Alegreya',
+      'Iansui': 'Iansui · But Ko / Klee Project',
+    }.entries) {
+      yield LicenseEntryWithLineBreaks([
+        entry.value,
+      ], await rootBundle.loadString('assets/fonts/OFL-${entry.key}.txt'));
+    }
     yield LicenseEntryWithLineBreaks(const [
       'edge-tts protocol · rany',
     ], await rootBundle.loadString('assets/licenses/edge-tts.txt'));
@@ -23,9 +33,13 @@ void registerAppLicenses() {
       'commonmark-java · Atlassian': 'commonmark',
       'PDFBox Android · Apache Software Foundation / Tom Roush': 'pdfbox',
       'PDFBox / FontBox notices': 'pdfbox-notice',
+      'Apache POI HWPF and document dependencies': 'poi',
       'Bouncy Castle': 'bouncycastle',
       'OpenJDK desugaring · Oracle / Google': 'desugar-jdk',
       'OpenCC dictionaries · BYVoid and contributors': 'opencc',
+      'juniversalchardet · Mozilla / Kohei Taketa / Alberto Fernández':
+          'juniversalchardet',
+      'Cronet · Chromium and bundled third-party components': 'cronet',
     }.entries) {
       yield LicenseEntryWithLineBreaks([
         item.key,

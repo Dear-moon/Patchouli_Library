@@ -1,6 +1,7 @@
 import 'library_state.dart';
 import 'offline_repository.dart';
 import 'local_library_preferences.dart';
+import 'catalog.dart';
 
 /// The shelf contains saved books and, when merged, imported originals.
 /// Cached trial chapters provide offline availability, never membership.
@@ -21,13 +22,28 @@ Set<int> bookshelfIds(
           (id) =>
               state.localBookVisible(id) &&
               (!filterSource || bookshelfMatchesSource(id, state, offline)) &&
-              (!filterCategory || bookshelfMatchesCategory(id, state)),
+              (!filterCategory ||
+                  bookshelfMatchesCategory(
+                    id,
+                    state,
+                    book:
+                        offline?.local?.book(id) ??
+                        offline?.cache.book(id)?.novel,
+                  )),
         )
         .toSet();
 
-bool bookshelfMatchesCategory(int id, LibraryState state) =>
-    state.organization.shelfSelected == LocalLibraryPreferences.all ||
-    state.organization.groupOf(id) == state.organization.shelfSelected;
+bool bookshelfMatchesCategory(int id, LibraryState state, {Novel? book}) {
+  final selected = state.organization.shelfSelected;
+  if (LocalLibraryPreferences.categoryAuthor(selected) case final author?) {
+    return LocalLibraryPreferences.authorName(
+          (book ?? state.cachedNovel(id))?.author ?? '',
+        ) ==
+        author;
+  }
+  return selected == LocalLibraryPreferences.all ||
+      state.organization.groupOf(id) == selected;
+}
 
 bool bookshelfMatchesSource(
   int id,

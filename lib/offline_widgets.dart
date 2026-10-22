@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'app_ui.dart';
+import 'archive_progress.dart';
 import 'app_interactions.dart';
 import 'catalog.dart';
 import 'offline_cache.dart';
@@ -13,42 +14,59 @@ class OfflineBookStatus extends StatelessWidget {
     required this.repository,
     required this.novel,
     this.localDirectory = false,
+    this.reduceMotion = false,
   });
   final OfflineNovelRepository repository;
   final Novel novel;
-  final bool localDirectory;
+  final bool localDirectory, reduceMotion;
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: repository.bookChanges(novel.id),
-    builder: (context, _) {
-      final job = repository.jobFor(novel.id);
-      final saved = repository.cache.book(novel.id);
-      final count = saved == null
-          ? 0
-          : identical(saved.novel.chapters, novel.chapters)
-          ? saved.cachedCount
-          : novel.chapters
-                .where((chapter) => saved.chapterBytes.containsKey(chapter.id))
-                .length;
-      return AppText(
-        job?.active == true ||
+  Widget build(BuildContext context) {
+    final content = AnimatedBuilder(
+      animation: repository.bookChanges(novel.id),
+      builder: (context, _) {
+        final job = repository.jobFor(novel.id);
+        final saved = repository.cache.book(novel.id);
+        final count = saved == null
+            ? 0
+            : identical(saved.novel.chapters, novel.chapters)
+            ? saved.cachedCount
+            : novel.chapters
+                  .where(
+                    (chapter) => saved.chapterBytes.containsKey(chapter.id),
+                  )
+                  .length;
+        final label =
+            job?.active == true ||
                 job?.phase == DownloadPhase.failed ||
                 job?.phase == DownloadPhase.cancelled
             ? job!.label
             : novel.chapters.isEmpty
             ? '暂无章节缓存'
-            : '${localDirectory ? '本地目录 · ' : ''}缓存 $count / ${novel.chapters.length} 章',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontSize: 12,
-          height: 1.5,
-        ),
-      );
-    },
-  );
+            : '${localDirectory ? '本地目录 · ' : ''}缓存 $count / ${novel.chapters.length} 章'
+                  '${(saved?.illustrationBytes.length ?? 0) > 0 ? ' · ${saved!.illustrationBytes.length} 张插图' : ''}';
+        return AppText(
+          label,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            fontSize: 12,
+            height: 1.5,
+          ),
+        );
+      },
+    );
+    return reduceMotion || MediaQuery.disableAnimationsOf(context)
+        ? content
+        : AnimatedSize(
+            duration: NovelMotion.enter,
+            reverseDuration: NovelMotion.exit,
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.centerLeft,
+            child: content,
+          );
+  }
 }
 
 enum _BookAction { all, next, retry, cancel, remove }
@@ -67,14 +85,36 @@ class OfflineBookMenu extends StatelessWidget {
   final bool reduceMotion;
 
   @override
-  Widget build(BuildContext context) => GlassMenuAnchor(
-    child: Builder(
-      builder: (anchor) => GlassIconButton(
-        icon: CupertinoIcons.cloud_download,
-        label: '离线缓存',
-        onPressed: () => _show(anchor),
-      ),
-    ),
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: repository.bookChanges(novel.id),
+    builder: (context, _) {
+      final job = repository.jobFor(novel.id);
+      final active = job?.active == true;
+      final done = job?.phase == DownloadPhase.completed;
+      return GlassMenuAnchor(
+        child: Builder(
+          builder: (anchor) => ArchiveTransferButton(
+            key: ValueKey('book-cache-action-${novel.id}'),
+            icon: done
+                ? CupertinoIcons.check_mark
+                : CupertinoIcons.cloud_download,
+            label: active ? '取消缓存' : '离线缓存',
+            working: active,
+            completed: done,
+            value: job?.phase == DownloadPhase.queued
+                ? 0
+                : (job?.total ?? 0) > 0
+                ? job!.completed / job.total
+                : null,
+            status: job?.label,
+            reduceMotion: reduceMotion,
+            onPressed: active
+                ? () => repository.cancel(novel.id)
+                : () => _show(anchor),
+          ),
+        ),
+      );
+    },
   );
 
   Future<void> _show(BuildContext context) async {
@@ -231,8 +271,10 @@ class _OfflineCachePageState extends State<OfflineCachePage> {
         body: FutureBuilder<void>(
           future: _loaded,
           builder: (context, snapshot) => LoadedContentSequence(
-            generation: snapshot.connectionState == ConnectionState.done
-                ? _loaded
+            generation:
+                snapshot.connectionState == ConnectionState.done ||
+                    widget.repository.cache.books.isNotEmpty
+                ? 'cache-ready'
                 : null,
             child: AnimatedBuilder(
               animation: widget.repository,
@@ -272,7 +314,7 @@ class _OfflineCachePageState extends State<OfflineCachePage> {
                               ),
                               const SizedBox(height: 12),
                               const AppText(
-                                '已缓存正文可离线阅读。清理缓存不会移出书架，也不会删除阅读进度。',
+                                '已缓存正文与插图可离线阅读。清理缓存不会移出书架，也不会删除阅读进度。',
                                 style: TextStyle(fontSize: 13, height: 1.7),
                               ),
                               if (snapshot.hasError ||
@@ -327,6 +369,7 @@ class _OfflineCachePageState extends State<OfflineCachePage> {
                                     OfflineBookStatus(
                                       repository: widget.repository,
                                       novel: novel,
+                                      reduceMotion: widget.reduceMotion,
                                     ),
                                     const SizedBox(height: 4),
                                     AppText(

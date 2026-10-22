@@ -26,12 +26,8 @@ class SpeechVoice {
   final bool offline;
   final int quality;
   bool get supported =>
-      source != ListeningSource.system ||
-      (offline && supportedSystemSpeechEngine(engine));
-  // Offline engine plumbing is retained for development, not offered as a
-  // working product feature until device coverage and synthesis are ready.
-  bool get availableForListening =>
-      source != ListeningSource.system && supported;
+      source != ListeningSource.system || supportedSystemSpeechEngine(engine);
+  bool get availableForListening => supported;
   Map<String, Object?> toJson() => {
     'id': id,
     'label': label,
@@ -40,6 +36,7 @@ class SpeechVoice {
     'engine': engine,
     'offline': offline,
     'quality': quality,
+    if (source == ListeningSource.system) 'systemApi': 1,
   };
   factory SpeechVoice.fromJson(Map<String, dynamic> json) => SpeechVoice(
     id: json['id'] as String,
@@ -67,12 +64,11 @@ const alternateEdgeVoice = SpeechVoice(
   source: ListeningSource.edge,
 );
 
-/// Retire the previous vendor integration, including persisted selections.
-/// Other installed engines continue to use the public Android TTS contract.
+/// Installed services are used exclusively through Android's public TTS API.
 bool supportedSystemSpeechEngine(String? engine) =>
     engine != null &&
-    engine.isNotEmpty &&
-    !const ['com.oplus.', 'com.oppo.', 'com.heytap.'].any(engine.startsWith);
+    (engine == '@default' ||
+        RegExp(r'^[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+$').hasMatch(engine));
 
 /// Normalize ISO Chinese metadata without changing the native voice ID.
 String? chineseSpeechLocale(String value) {
@@ -95,13 +91,20 @@ String? chineseSpeechLocale(String value) {
 }
 
 class SpeechSegment {
-  const SpeechSegment(this.paragraph, this.start, this.end, this.text);
+  const SpeechSegment(
+    this.paragraph,
+    this.start,
+    this.end,
+    this.text, {
+    this.language = '',
+  });
   final int paragraph, start, end;
-  final String text;
+  final String text, language;
   String key(SpeechVoice voice) => sha256
       .convert(
         utf8.encode(
-          'speech-v1|${voice.source.name}|${voice.engine}|${voice.id}|$text',
+          'speech-v1|${voice.source.name}|${voice.engine}|${voice.id}'
+          '${voice.id == '@default' || voice.source == ListeningSource.custom ? '|${voice.locale}' : ''}|$text',
         ),
       )
       .toString();
@@ -152,6 +155,7 @@ List<SpeechSegment> speechRecoverySegments(SpeechSegment segment) {
         segment.start + part.start,
         segment.start + part.end,
         part.text,
+        language: segment.language,
       ),
   ];
 }
@@ -229,7 +233,7 @@ class SpeechCancelled implements Exception {
   const SpeechCancelled();
 }
 
-enum SpeechFailureKind { unavailable, content, timeout }
+enum SpeechFailureKind { unavailable, missingLanguage, content, timeout }
 
 class SpeechFailure implements Exception {
   const SpeechFailure(
@@ -238,7 +242,8 @@ class SpeechFailure implements Exception {
   });
   final String message;
   final SpeechFailureKind kind;
-  bool get recoverable => kind != SpeechFailureKind.unavailable;
+  bool get recoverable =>
+      kind == SpeechFailureKind.content || kind == SpeechFailureKind.timeout;
   @override
   String toString() => message;
 }

@@ -4,15 +4,22 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catalog.dart';
+import 'app_typography.dart';
 import 'book_identity.dart';
+import 'book_text_encoding.dart';
+import 'local_import_options.dart';
 import 'performance_preferences.dart';
 import 'local_book_media.dart';
 import 'reader_preferences.dart';
+import 'reader_book_style.dart';
 import 'user_fonts.dart';
 import 'illustration_placement.dart';
+import 'app_palette.dart';
+import 'reading_entry.dart';
 
 final backupPreferenceKeys = <String>{
   'theme',
+  AppPalettePreferences.key,
   'appLanguage',
   'readerFontSize',
   'readerLineHeight',
@@ -20,6 +27,7 @@ final backupPreferenceKeys = <String>{
   'glassBlur',
   'glassOpacity',
   'readerKeepScreenOn',
+  'forcePortrait',
   'readerPreferences',
   'checkAppUpdates',
   'appTypeface',
@@ -32,7 +40,10 @@ final backupPreferenceKeys = <String>{
   'adaptWhenOffline',
   'localReaderMode',
   'directReading',
+  'directReadingPages',
   'combinedShelf',
+  'localTxtEncoding',
+  LocalImportOptions.preferenceKey,
   PerformancePreferences.modeKey,
   ...PerformanceEffect.values.map((effect) => effect.preferenceKey),
 };
@@ -41,10 +52,11 @@ const _listKeys = {
   'reading_history_hidden',
   'recentSearches',
   'local_shelf_hidden',
+  'directReadingPages',
 };
 const restoreJournalKey = 'library_restore_journal';
 final _recordKey = RegExp(
-  r'^(chapter|shelf_added|novel_meta|reading_position|reader_bookmarks|book_merge|illustration_layout)_([1-9][0-9]{0,9})$',
+  r'^(chapter|shelf_added|novel_meta|reading_position|reader_bookmarks|book_merge|illustration_layout|reader_style)_([1-9][0-9]{0,9})$',
 );
 
 bool isLibraryRecordKey(String key) =>
@@ -174,6 +186,11 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
             throw const FormatException('搜索记录格式有误');
           }
           if (seen.add(item.trim().toLowerCase())) list.add(item.trim());
+        } else if (key == 'directReadingPages') {
+          if (!ReadingEntry.values.any((page) => page.name == item)) {
+            throw const FormatException('直接阅读页面设置有误');
+          }
+          if (seen.add(item)) list.add(item);
         } else {
           final id = int.tryParse(item);
           if (id == null || id <= 0 || id > 0x7fffffff) {
@@ -186,6 +203,7 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
     } else if (backupPreferenceKeys.contains(key)) {
       final valid = switch (key) {
         'theme' => ['system', 'light', 'dark'].contains(value),
+        AppPalettePreferences.key => _validAppPalette(value),
         'shelfSort' => ['recentRead', 'recentAdded', 'title'].contains(value),
         'shelfLayout' => ['shelf', 'list'].contains(value),
         'shelfSourceFilter' => [
@@ -202,6 +220,7 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
         ].contains(value),
         'reduceMotion' ||
         'readerKeepScreenOn' ||
+        'forcePortrait' ||
         'adaptWhenOffline' ||
         'localReaderMode' ||
         'directReading' ||
@@ -213,12 +232,18 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
           'hongKong',
           'taiwan',
         ].contains(value),
-        'appTypeface' => value == 'system' || value == 'sourceHanSerif',
+        'appTypeface' => AppTypeface.values.any((font) => font.name == value),
         'appCustomFont' =>
           value == '' ||
               (validFontChoice(value) && (value as String).startsWith('font_')),
         'readerTypeface' => validFontChoice(value, follow: true),
-        'readerFontSize' => _number(value, 15, 27),
+        'localTxtEncoding' => localTextEncodingOptions.containsKey(value),
+        LocalImportOptions.preferenceKey => _validLocalImportOptions(value),
+        'readerFontSize' => _number(
+          value,
+          minimumReaderFontSize,
+          maximumReaderFontSize,
+        ),
         'readerLineHeight' => _number(value, 1.3, 2.2),
         'readerPreferences' => _validReaderPreferences(value),
         'glassBlur' => _number(value, 0, 24),
@@ -285,6 +310,11 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
           throw const FormatException('封面颜色格式有误');
         }
         output[key] = jsonEncode(novel.toSnapshot());
+      } else if (key.startsWith(bookReaderStylePrefix)) {
+        if (record is! Map<String, dynamic>) {
+          throw const FormatException('本书排版格式有误');
+        }
+        output[key] = jsonEncode(ReaderBookStyle.fromJson(record).toJson());
       } else if (key.startsWith('reading_position_')) {
         _validatePosition(record);
         output[key] = jsonEncode(record);
@@ -316,7 +346,12 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
               (mark['chapterTitle'] as String).length > 2048 ||
               (mark['quote'] != null &&
                   (mark['quote'] is! String ||
-                      (mark['quote'] as String).length > 12000))) {
+                      (mark['quote'] as String).length > 12000)) ||
+              (mark['category'] != null &&
+                  (mark['category'] is! String ||
+                      (mark['category'] as String).length > 30)) ||
+              (mark['categoryAt'] != null &&
+                  (mark['categoryAt'] is! int || mark['categoryAt'] < 0))) {
             throw const FormatException('书签格式有误');
           }
           _validatePosition(mark['position']);
@@ -330,6 +365,26 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
 
 bool _number(Object? value, double min, double max) =>
     value is num && value.isFinite && value >= min && value <= max;
+bool _validAppPalette(Object? value) {
+  if (value is! String) return false;
+  try {
+    AppPalettePreferences.decode(value);
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
+bool _validLocalImportOptions(Object? value) {
+  if (value is! String || value.length > 4096) return false;
+  try {
+    LocalImportOptions.decode(value);
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
 bool _validReaderPreferences(Object? value) {
   if (value is! String || value.length > 4096) return false;
   try {

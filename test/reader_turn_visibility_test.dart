@@ -47,7 +47,10 @@ void main({
                   child: ReaderPagedView(
                     controller: controller,
                     style: style,
-                    preferences: ReaderPreferences(mode: mode),
+                    preferences: ReaderPreferences(
+                      mode: mode,
+                      chapterEntrance: true,
+                    ),
                     title: '书页之间 · 顺序与留白',
                     padding: const EdgeInsets.fromLTRB(26, 56, 26, 40),
                     content: ReaderContent(

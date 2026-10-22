@@ -8,6 +8,9 @@ import java.nio.charset.Charset
 internal object BookRtfImport {
     private data class State(var ignored: Boolean = false, var unicodeFallback: Int = 1)
     fun read(source: File, writer: BookEpubWriter) {
+        read(BookDocumentInput(source), writer)
+    }
+    fun read(source: BookDocumentInput, writer: BookEpubWriter) {
         source.inputStream().bufferedReader(Charsets.ISO_8859_1).use { raw ->
             raw.mark(4096); val header = CharArray(2048); val count = raw.read(header); raw.reset()
             val prefix = String(header, 0, maxOf(0, count))

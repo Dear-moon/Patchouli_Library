@@ -4,11 +4,12 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/updates/app_updates.dart';
 import 'package:wenku8_flutter/updates/update_page.dart';
+import 'package:wenku8_flutter/app_ui.dart';
 
 const _repo = 'example/reader';
 Map<String, dynamic> _json({
@@ -1016,6 +1017,40 @@ void main() {
         expect(platform.opened.last.host, 'github.com');
         expect(client.urls, hasLength(2));
       }, createHttpClient: (_) => client);
+    },
+  );
+
+  testWidgets(
+    'About project and download button hands the destination to the browser',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await HttpOverrides.runZoned(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: novelTheme(Brightness.light),
+            home: AppUpdatePage(updates: updates),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final link = find.byKey(const ValueKey('app-project-download'));
+        await tester.scrollUntilVisible(
+          link,
+          400,
+          scrollable: find.descendant(
+            of: find.byKey(const ValueKey('update-page-scroll')),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(link);
+        await tester.pumpAndSettle();
+        expect(platform.opened.single, Uri.parse(updateMirrorOrigin));
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      }, createHttpClient: (_) => _Client([_Reply(200, [])]));
     },
   );
 }

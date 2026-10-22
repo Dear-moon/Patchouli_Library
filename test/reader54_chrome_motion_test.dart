@@ -15,7 +15,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(loadReviewFonts);
   for (final mode in ReaderMode.values) {
-    testWidgets('${mode.name} chrome reflow has continuous retained ink', (
+    testWidgets('${mode.name} chrome overlay leaves the article ink unchanged', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(390, 844);
@@ -28,6 +28,9 @@ void main() {
       addTearDown(tester.view.resetPadding);
       final state = await fixture.library(mode);
       addTearDown(state.dispose);
+      await state.setReaderPreferences(
+        state.readerPreferences.copyWith(reflowOnChrome: false),
+      );
       await state.setReduceMotion(false);
       await tester.pumpWidget(fixture.app(state));
       await fixture.settleReader(tester);
@@ -57,13 +60,9 @@ void main() {
                 .value,
         });
         const output = String.fromEnvironment('REVIEW_ARTIFACTS');
-        final progress = motion.evaluate().isEmpty
-            ? 1.0
-            : tester.widget<ReaderIncrementalViewport>(motion).animation.value;
         final publication =
             mode.paginated &&
             elapsed >= 0 &&
-            progress == 0 &&
             tester.widget<ReaderPagedView>(paged).controller.ready;
         final compare = mode.paginated && (elapsed == -1 || publication);
         if (output.isEmpty && !compare) return;
@@ -109,7 +108,7 @@ void main() {
                 changed,
                 0,
                 reason:
-                    '${mode.name} $phase at $elapsed ms published new pagination before motion',
+                    '${mode.name} $phase at $elapsed ms changed article ink during a controls toggle',
               );
               verified++;
             }

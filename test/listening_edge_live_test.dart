@@ -35,4 +35,23 @@ void main() {
     },
     skip: !const bool.fromEnvironment('LIVE_EDGE_TTS'),
   );
+  test(
+    'live multilingual catalog advertises Japanese and synthesizes its matching voice',
+    () async {
+      HttpOverrides.global = null;
+      final client = EdgeSpeechClient();
+      final voices = await client.voices();
+      final japanese = voices.firstWhere(
+        (voice) => voice.id == 'ja-JP-NanamiNeural',
+      );
+      expect(japanese.locale, 'ja-JP');
+      final bytes = await client.synthesize(
+        'これは日本語の読み上げテストです。次の段落も、正しい言語で読みます。',
+        japanese,
+        SpeechCancellation(),
+      );
+      expect(bytes.length, greaterThan(1000));
+    },
+    skip: !const bool.fromEnvironment('LIVE_EDGE_TTS'),
+  );
 }

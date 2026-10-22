@@ -15,6 +15,17 @@ class ReaderBookLayout {
   Size get pageSize => pages.first.size;
   Object get key => (viewport, pages.first, pages.last, count, spine);
 
+  /// Paper reaches the screen edges while pagination keeps its text rectangle.
+  Rect frameFor(int index, EdgeInsets insets) {
+    final body = pages[index].shift(Offset(insets.left, insets.top));
+    return Rect.fromLTRB(
+      index == 0 ? 0 : body.left,
+      0,
+      index == count - 1 ? viewport.width + insets.horizontal : body.right,
+      viewport.height + insets.vertical,
+    );
+  }
+
   factory ReaderBookLayout.resolve({
     required Size viewport,
     required double margin,
@@ -30,6 +41,15 @@ class ReaderBookLayout {
       }
       final bounds = feature.bounds.shift(-origin);
       final vertical = bounds.height > bounds.width;
+      // A fully opened flexible display has a crease, not two separate panes.
+      // Treating its zero-width fold as a hinge made compact inner screens fall
+      // below the two-page threshold and render only the left half of the book.
+      final occludes = vertical ? bounds.width > 0 : bounds.height > 0;
+      if (feature.type == DisplayFeatureType.fold &&
+          !occludes &&
+          feature.state != DisplayFeatureState.postureHalfOpened) {
+        continue;
+      }
       if (vertical &&
           bounds.left > area.left &&
           bounds.right < area.right &&
@@ -91,12 +111,16 @@ class ReaderBookSpread extends StatelessWidget {
     this.rightToLeft = false,
     this.edgeOverflow = 0,
     this.verticalOverflow = 0,
+    this.clipLeaves = true,
+    this.frameInsets,
   });
   final ReaderBookLayout layout;
   final List<Widget> pages;
   final bool rightToLeft;
   final double edgeOverflow;
   final double verticalOverflow;
+  final bool clipLeaves;
+  final EdgeInsets? frameInsets;
 
   @override
   Widget build(BuildContext context) => Stack(
@@ -104,7 +128,14 @@ class ReaderBookSpread extends StatelessWidget {
     children: [
       if (layout.spine case final spine?)
         Positioned.fromRect(
-          rect: spine,
+          rect: frameInsets == null
+              ? spine
+              : Rect.fromLTWH(
+                  spine.left + frameInsets!.left,
+                  0,
+                  spine.width,
+                  layout.viewport.height + frameInsets!.vertical,
+                ),
           child: IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -123,10 +154,16 @@ class ReaderBookSpread extends StatelessWidget {
         ),
       for (var index = 0; index < pages.length; index++)
         Positioned.fromRect(
-          rect: layout.pages[rightToLeft ? layout.count - 1 - index : index],
+          rect: frameInsets == null
+              ? layout.pages[rightToLeft ? layout.count - 1 - index : index]
+              : layout.frameFor(
+                  rightToLeft ? layout.count - 1 - index : index,
+                  frameInsets!,
+                ),
           child: Semantics(
             sortKey: OrdinalSortKey(index.toDouble()),
             child: ClipRect(
+              clipBehavior: clipLeaves ? Clip.hardEdge : Clip.none,
               clipper: edgeOverflow == 0 && verticalOverflow == 0
                   ? null
                   : _BookTurnClip(

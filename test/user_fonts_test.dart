@@ -14,6 +14,8 @@ import 'package:wenku8_flutter/user_fonts.dart';
 import 'package:wenku8_flutter/book_documents.dart';
 import 'cloud_library_ui_test.dart' show ioSettle;
 import 'support/visual_review.dart';
+import 'support/font_store_fixture.dart';
+import 'support/font_download_fixture.dart';
 
 class _FontDocuments extends BookDocuments {
   _FontDocuments(this.path);
@@ -31,6 +33,7 @@ class _FontDocuments extends BookDocuments {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(loadReviewFonts);
+  setUpAll(prepareSerifFixture);
   test(
     'real OTF imports durably; app and reader fonts remain independent',
     () async {
@@ -40,6 +43,7 @@ void main() {
       var loads = 0;
       UserFontStore store() => UserFontStore(
         directory: root,
+        downloads: FixtureFontDownload(),
         loader: (_, _) async {
           loads++;
         },
@@ -53,7 +57,7 @@ void main() {
       await fonts.load();
       final font = await fonts.importFile(
         '自己的字体.otf',
-        File('assets/fonts/SourceHanSerifCN-Regular.otf').absolute.path,
+        File('test/fixtures/fonts/SourceHanSerifCN-VF.otf').absolute.path,
       );
       expect(loads, 1);
       await state.setAppFont(font.id);
@@ -61,13 +65,17 @@ void main() {
       await state.setReaderTypeface('system');
       var readerChanges = 0;
       state.readerSettingsChanges.addListener(() => readerChanges++);
+      await fonts.downloadSourceHanSerif();
       await state.setAppTypeface(AppTypeface.sourceHanSerif);
       expect(state.appFontId, 'sourceHanSerif');
       expect(state.readerFontId, 'system');
       expect(readerChanges, 0);
       await state.setReaderTypeface(font.id);
       expect(state.readerFontFamily, font.family);
-      expect(loads, 1);
+      await state.setIndependentReaderStyle(1, true);
+      await state.setReaderTypeface(font.id, bookId: 1);
+      expect(state.readerFontFamilyFor(1), font.family);
+      expect(loads, 2);
       final position = ReadingPosition(
         chapter: 0,
         chapterId: 1,
@@ -102,9 +110,11 @@ void main() {
       await restarted.removeUserFont(font.id);
       expect(restarted.readerTypeface, followAppFont);
       expect(restarted.readerFontId, 'sourceHanSerif');
+      expect(restarted.readerTypefaceFor(1), followAppFont);
+      expect(restarted.readerFontIdFor(1), 'sourceHanSerif');
       expect(restarted.fonts.fonts, isEmpty);
       expect(
-        await File('assets/fonts/SourceHanSerifCN-Regular.otf').exists(),
+        await File('test/fixtures/fonts/SourceHanSerifCN-VF.otf').exists(),
         true,
       );
     },
@@ -162,7 +172,10 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     SharedPreferences.setMockInitialValues({'reduceMotion': true});
-    final state = LibraryState(await SharedPreferences.getInstance());
+    final state = LibraryState(
+      await SharedPreferences.getInstance(),
+      fonts: InstalledSerifFixture(),
+    );
     addTearDown(state.dispose);
     final key = GlobalKey();
     await tester.pumpWidget(
@@ -186,7 +199,10 @@ void main() {
     await tester.tap(find.text('阅读器字体'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reader-font-sourceHanSerif')));
-    await tester.pumpAndSettle();
+    await ioSettle(
+      tester,
+      until: () => state.readerTypeface == 'sourceHanSerif',
+    );
     expect(state.readerTypeface, 'sourceHanSerif');
     expect(state.appFontId, 'system');
     expect(tester.takeException(), isNull);
@@ -206,7 +222,7 @@ void main() {
       );
       addTearDown(state.dispose);
       final documents = _FontDocuments(
-        File('assets/fonts/SourceHanSerifCN-Regular.otf').absolute.path,
+        File('test/fixtures/fonts/SourceHanSerifCN-VF.otf').absolute.path,
       );
       final key = GlobalKey();
       await tester.pumpWidget(
@@ -225,6 +241,8 @@ void main() {
         until: () => fonts.fonts.isNotEmpty && documents.released,
       );
       final font = fonts.fonts.single;
+      await tester.ensureVisible(find.text('阅读器字体'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('阅读器字体'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('reader-font-${font.id}')));

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
@@ -14,6 +15,10 @@ import 'reader_preferences.dart';
 import 'font_settings_page.dart';
 import 'glass_choices.dart';
 import 'setting_menu.dart';
+import 'book_documents.dart';
+import 'reader_languages.dart';
+import 'bookmark_categories.dart';
+import 'feature_pages.dart' show confirmNovelAction;
 
 sealed class ReaderToolAction {
   const ReaderToolAction();
@@ -21,6 +26,12 @@ sealed class ReaderToolAction {
 
 class ReaderSeekProgress extends ReaderToolAction {
   const ReaderSeekProgress(this.fraction);
+  final double fraction;
+}
+
+class ReaderSeekBookProgress extends ReaderToolAction {
+  const ReaderSeekBookProgress(this.chapter, this.fraction);
+  final int chapter;
   final double fraction;
 }
 
@@ -43,6 +54,10 @@ class ReaderStartAutoScroll extends ReaderToolAction {
 
 class ReaderOpenIllustrations extends ReaderToolAction {
   const ReaderOpenIllustrations();
+}
+
+class ReaderOpenHandoff extends ReaderToolAction {
+  const ReaderOpenHandoff();
 }
 
 /// The chapter drawer owns scrubbing and text navigation; settings only owns
@@ -159,6 +174,10 @@ class ReaderTools extends StatefulWidget {
     this.onIllustrations,
     this.listeningBuilder,
     this.initialTab,
+    this.onStyleScopeChanged,
+    this.onReaderTypefaceChanged,
+    this.languages = const {},
+    this.onHiddenLanguagesChanged,
   });
   final Novel novel;
   final LibraryState state;
@@ -174,12 +193,41 @@ class ReaderTools extends StatefulWidget {
   final ValueChanged<double>? onFontPreview, onLineHeightPreview;
   final ValueChanged<bool>? onPreviewChanged;
   final void Function(ReaderPreferences, bool persist)? onPreferencesChanged;
+  final Future<void> Function(bool)? onStyleScopeChanged;
+  final Future<void> Function(String)? onReaderTypefaceChanged;
+  final Set<String> languages;
+  final Future<void> Function(Set<String>, {String? onlyLanguage})?
+  onHiddenLanguagesChanged;
 
   @override
   State<ReaderTools> createState() => _ReaderToolsState();
 }
 
 class _ReaderToolsState extends State<ReaderTools> {
+  static const _systemControls = MethodChannel(
+    'org.mewx.wenku8/reader_controls',
+  );
+  late final Future<bool> _floatingNavigation = () async {
+    if (!LocalPlatform.android) return false;
+    try {
+      return (await _systemControls.invokeMapMethod<String, Object?>(
+            'navigationCapabilities',
+          ))?['systemFloatingNavigation'] ==
+          true;
+    } catch (_) {
+      return false;
+    }
+  }();
+  ReaderPreferences get _readerPreferences =>
+      widget.state.readerPreferencesFor(widget.novel.id);
+  double get _fontSize => widget.state.readerFontSizeFor(widget.novel.id);
+  double get _lineHeight => widget.state.readerLineHeightFor(widget.novel.id);
+  bool _changingScope = false;
+  bool _changingLanguages = false;
+  bool _textDetails = false;
+  bool _backgroundExpanded = false, _backgroundBusy = false;
+  late Future<List<String>> _backgrounds = widget.state.backgrounds.list();
+  final _backgroundFiles = <String, Future<File?>>{};
   late String _tab =
       widget.initialTab ?? (widget.initialBookmarks ? 'bookmarks' : 'layout');
   bool _adding = false;
@@ -188,6 +236,235 @@ class _ReaderToolsState extends State<ReaderTools> {
   String? _storageError;
   Key? _activeAdjustment;
   String _marginEdge = '左右';
+  Future<void> _importBackground() async {
+    if (_backgroundBusy) return;
+    setState(() => _backgroundBusy = true);
+    final documents = BookDocuments();
+    try {
+      final selected = await documents.pickImage();
+      if (selected == null) return;
+      try {
+        final id = await widget.state.backgrounds.import(selected.path!);
+        if (!mounted) return;
+        _preferences(_readerPreferences.copyWith(backgroundImage: id));
+        setState(() {
+          _backgrounds = widget.state.backgrounds.list();
+        });
+      } finally {
+        await documents.releaseBooks([selected]);
+      }
+    } catch (e) {
+      if (mounted) {
+        showNovelFeedback(
+          context,
+          e is FormatException ? e.message : '背景导入未完成，请重试',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _backgroundBusy = false);
+    }
+  }
+
+  Future<void> _removeBackground() async {
+    final id = _readerPreferences.backgroundImage;
+    if (id == null || _backgroundBusy) return;
+    if (!await confirmNovelAction(
+      context,
+      title: '删除这张阅读背景？',
+      message: '使用它的书籍恢复纯色背景，原始图片不受影响。',
+      confirmLabel: '删除背景',
+      reduceMotion: widget.state.reduceMotion,
+    )) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _backgroundBusy = true);
+    try {
+      await widget.state.removeReaderBackground(id);
+      if (mounted) {
+        setState(() {
+          _backgrounds = widget.state.backgrounds.list();
+        });
+      }
+    } catch (_) {
+      if (mounted) showNovelFeedback(context, '背景删除未完成，请重试');
+    } finally {
+      if (mounted) setState(() => _backgroundBusy = false);
+    }
+  }
+
+  List<Widget> _backgroundOptions() => [
+    _adjustment(
+      GlassTextButton(
+        key: const ValueKey('reader-background-options'),
+        onPressed: () =>
+            setState(() => _backgroundExpanded = !_backgroundExpanded),
+        child: Row(
+          children: [
+            const Icon(CupertinoIcons.photo, size: 20),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: AppText(
+                '阅读背景',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Icon(
+              _backgroundExpanded
+                  ? CupertinoIcons.chevron_up
+                  : CupertinoIcons.chevron_down,
+              size: 14,
+            ),
+          ],
+        ),
+      ),
+    ),
+    AnimatedOptionSection(
+      expanded: _backgroundExpanded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _adjustment(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 8),
+                FutureBuilder<List<String>>(
+                  future: _backgrounds,
+                  builder: (context, snapshot) => SizedBox(
+                    height: 76,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: 1 + (snapshot.data?.length ?? 0),
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final id = index == 0
+                            ? null
+                            : snapshot.data![index - 1];
+                        return SizedBox(
+                          width: 64,
+                          child: GlassTextButton(
+                            key: ValueKey('reader-background-${id ?? 'plain'}'),
+                            selected: _readerPreferences.backgroundImage == id,
+                            onPressed: _backgroundBusy
+                                ? null
+                                : () => _preferences(
+                                    id == null
+                                        ? _readerPreferences.copyWith(
+                                            clearBackground: true,
+                                          )
+                                        : _readerPreferences.copyWith(
+                                            backgroundImage: id,
+                                          ),
+                                  ),
+                            child: id == null
+                                ? const AppText(
+                                    '纯色',
+                                    style: TextStyle(fontSize: 12),
+                                  )
+                                : FutureBuilder(
+                                    future: _backgroundFiles.putIfAbsent(
+                                      id,
+                                      () => widget.state.backgrounds.file(id),
+                                    ),
+                                    builder: (context, file) =>
+                                        file.data == null
+                                        ? const Icon(
+                                            CupertinoIcons.photo,
+                                            size: 20,
+                                          )
+                                        : ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                            child: Image.file(
+                                              file.data!,
+                                              width: 44,
+                                              height: 54,
+                                              fit: BoxFit.cover,
+                                              cacheWidth: 132,
+                                              errorBuilder: (_, _, _) =>
+                                                  const Icon(
+                                                    CupertinoIcons.photo,
+                                                    size: 20,
+                                                  ),
+                                            ),
+                                          ),
+                                  ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GlassTextButton(
+                        key: const ValueKey('reader-import-background'),
+                        onPressed: _backgroundBusy ? null : _importBackground,
+                        child: AppText(
+                          _backgroundBusy ? '正在处理图片' : '导入背景图片',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                    ),
+                    if (_readerPreferences.backgroundImage != null)
+                      GlassIconButton(
+                        icon: CupertinoIcons.trash,
+                        label: '删除当前背景',
+                        onPressed: _backgroundBusy ? null : _removeBackground,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          AnimatedOptionSection(
+            expanded: _readerPreferences.backgroundImage != null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _adjustment(
+                  ReaderChoicePicker<BoxFit>(
+                    name: 'reader-background-fit',
+                    label: '图片布局',
+                    value: _readerPreferences.backgroundFit,
+                    options: const {BoxFit.cover: '填满', BoxFit.contain: '完整'},
+                    onChanged: (fit) => _preferences(
+                      _readerPreferences.copyWith(backgroundFit: fit),
+                    ),
+                  ),
+                ),
+                _adjustment(
+                  ReaderValueSlider(
+                    sliderKey: const ValueKey('reader-background-opacity'),
+                    label: '背景浓度',
+                    value: _readerPreferences.backgroundOpacity,
+                    min: .05,
+                    max: 1,
+                    format: (v) => '${(v * 100).round()}%',
+                    onPreview: (v) => _preferences(
+                      _readerPreferences.copyWith(backgroundOpacity: v),
+                      persist: false,
+                    ),
+                    onCommitted: (v) => _preferences(
+                      _readerPreferences.copyWith(backgroundOpacity: v),
+                    ),
+                    onInteractionChanged: (v) => _preview(
+                      const ValueKey('reader-background-opacity'),
+                      v,
+                    ),
+                  ),
+                  const ValueKey('reader-background-opacity'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  ];
   double _marginValue(ReaderPreferences p) => switch (_marginEdge) {
     '左' => p.leftMargin,
     '右' => p.rightMargin,
@@ -196,7 +473,7 @@ class _ReaderToolsState extends State<ReaderTools> {
     _ => p.bindingMargin,
   };
   ReaderPreferences _withMargin(double v) {
-    final p = widget.state.readerPreferences;
+    final p = _readerPreferences;
     return switch (_marginEdge) {
       '左' => p.copyWith(marginLeft: v),
       '右' => p.copyWith(marginRight: v),
@@ -211,13 +488,104 @@ class _ReaderToolsState extends State<ReaderTools> {
       widget.onPreferencesChanged!(value, persist);
     } else {
       unawaited(
-        widget.state.setReaderPreferences(value, persist: persist).catchError((
-          Object _,
-        ) {
-          if (mounted) showNovelFeedback(context, '阅读偏好保存失败，请重试');
-        }),
+        widget.state
+            .setReaderPreferences(
+              value,
+              persist: persist,
+              bookId: widget.novel.id,
+            )
+            .catchError((Object _) {
+              if (mounted) showNovelFeedback(context, '阅读偏好保存失败，请重试');
+            }),
       );
     }
+  }
+
+  Future<void> _changeStyleScope(bool book) async {
+    if (_changingScope) return;
+    setState(() => _changingScope = true);
+    try {
+      if (widget.onStyleScopeChanged case final change?) {
+        await change(book);
+      } else {
+        await widget.state.setIndependentReaderStyle(widget.novel.id, book);
+      }
+    } catch (_) {
+      if (mounted) showNovelFeedback(context, '排版范围未保存，请重试');
+    } finally {
+      if (mounted) setState(() => _changingScope = false);
+    }
+  }
+
+  Future<void> _showLanguage(String? code) async {
+    if (_changingLanguages) return;
+    final next = <String>{
+      if (code != null)
+        for (final language in widget.languages)
+          if (language != code) language,
+    };
+    setState(() => _changingLanguages = true);
+    try {
+      if (widget.onHiddenLanguagesChanged case final change?) {
+        await change(next, onlyLanguage: code);
+      } else {
+        await widget.state.setHiddenReaderLanguages(
+          widget.novel.id,
+          next,
+          onlyLanguage: code,
+        );
+      }
+    } catch (_) {
+      if (mounted) showNovelFeedback(context, '语言显示设置未保存，请重试');
+    } finally {
+      if (mounted) setState(() => _changingLanguages = false);
+    }
+  }
+
+  Widget _languageOptions() {
+    final hidden = widget.state.hiddenReaderLanguagesFor(widget.novel.id);
+    final languages = widget.languages.toList();
+    final only = widget.state.onlyReaderLanguageFor(widget.novel.id);
+    final visible = languages
+        .where((code) => only == null ? !hidden.contains(code) : code == only)
+        .toList();
+    return Padding(
+      key: const ValueKey('reader-book-languages'),
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const AppText(
+            '本书语言',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              GlassTextButton(
+                key: const ValueKey('reader-language-all'),
+                selected: visible.length == languages.length,
+                onPressed: _changingLanguages
+                    ? null
+                    : () => _showLanguage(null),
+                child: const AppText('全部语言'),
+              ),
+              for (final code in languages)
+                GlassTextButton(
+                  key: ValueKey('reader-language-only-$code'),
+                  selected: visible.length == 1 && visible.single == code,
+                  onPressed: _changingLanguages
+                      ? null
+                      : () => _showLanguage(code),
+                  child: AppText('仅${readerLanguageLabel(code)}'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   void _preview(Key key, bool active) {
@@ -368,66 +736,99 @@ class _ReaderToolsState extends State<ReaderTools> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _adjustment(
+            GlassChoiceGroup<String>(
+              enabled: !_changingScope,
+              name: 'reader-style-scope',
+              label: '排版范围',
+              value: widget.state.independentReaderStyle(widget.novel.id)
+                  ? 'book'
+                  : 'shared',
+              options: const {'shared': '通用', 'book': '本书'},
+              optionName: (value) => value,
+              labelSize: 14,
+              optionSize: 12,
+              onChanged: (value) => _changeStyleScope(value == 'book'),
+            ),
+          ),
+          _adjustment(
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 ReaderChoicePicker<ReaderMode>(
                   name: 'reader-mode',
                   label: '阅读方式',
-                  value: widget.state.readerPreferences.mode,
+                  value: _readerPreferences.mode,
                   options: {
                     for (final mode in ReaderMode.values) mode: mode.label,
                   },
-                  onChanged: (mode) => _preferences(
-                    widget.state.readerPreferences.copyWith(mode: mode),
-                  ),
+                  onChanged: (mode) =>
+                      _preferences(_readerPreferences.copyWith(mode: mode)),
                 ),
                 AnimatedOptionSection(
-                  expanded:
-                      widget.state.readerPreferences.mode ==
-                      ReaderMode.vertical,
+                  expanded: _readerPreferences.mode == ReaderMode.vertical,
                   child: const AppText(
                     '文字由上往下，列由右往左；向右滑动翻到下一页。',
                     style: TextStyle(fontSize: 12, height: 1.6),
                   ),
                 ),
                 AnimatedOptionSection(
-                  expanded: widget.state.readerPreferences.mode.paginated,
+                  expanded: _readerPreferences.mode.paginated,
                   child: ReaderChoicePicker<ReaderPageEffect>(
                     name: 'reader-page-effect',
                     label: '翻页效果',
-                    value: widget.state.readerPreferences.pageEffect,
+                    value: _readerPreferences.pageEffect,
                     options: {
                       for (final effect in ReaderPageEffect.values)
                         effect: effect.label,
                     },
                     onChanged: (effect) => _preferences(
-                      widget.state.readerPreferences.copyWith(
-                        pageEffect: effect,
-                      ),
+                      _readerPreferences.copyWith(pageEffect: effect),
+                    ),
+                  ),
+                ),
+                AnimatedOptionSection(
+                  expanded:
+                      _readerPreferences.mode.paginated &&
+                      _readerPreferences.pageEffect != ReaderPageEffect.none,
+                  child: ReaderChoicePicker<ReaderPageSpeed>(
+                    name: 'reader-page-speed',
+                    label: '翻页速度',
+                    value: _readerPreferences.pageSpeed,
+                    options: {
+                      for (final speed in ReaderPageSpeed.values)
+                        speed: speed.label,
+                    },
+                    onChanged: (speed) => _preferences(
+                      _readerPreferences.copyWith(pageSpeed: speed),
                     ),
                   ),
                 ),
                 ReaderChoicePicker<ReaderPaper>(
                   name: 'reader-paper',
                   label: '阅读配色',
-                  value: widget.state.readerPreferences.paper,
+                  value: _readerPreferences.paper,
                   options: {
                     for (final paper in ReaderPaper.values) paper: paper.label,
                   },
-                  onChanged: (paper) => _preferences(
-                    widget.state.readerPreferences.copyWith(paper: paper),
-                  ),
+                  onChanged: (paper) =>
+                      _preferences(_readerPreferences.copyWith(paper: paper)),
                 ),
               ],
             ),
           ),
+          if (widget.languages.length > 1) _adjustment(_languageOptions()),
+          ..._backgroundOptions(),
           _adjustment(
             GlassTextButton(
               key: const ValueKey('reader-font-choice'),
               onPressed: () => pushNovelPage<void>(
                 context,
-                FontSettingsPage(state: widget.state, readerOnly: true),
+                FontSettingsPage(
+                  state: widget.state,
+                  readerOnly: true,
+                  bookId: widget.novel.id,
+                  onReaderTypefaceChanged: widget.onReaderTypefaceChanged,
+                ),
                 reduceMotion: widget.state.reduceMotion,
               ),
               child: Row(
@@ -449,6 +850,31 @@ class _ReaderToolsState extends State<ReaderTools> {
               ),
             ),
           ),
+          AnimatedOptionSection(
+            expanded: _readerPreferences.darkPaper(
+              Theme.of(context).brightness == Brightness.dark,
+            ),
+            child: _adjustment(
+              ReaderValueSlider(
+                sliderKey: const ValueKey('reader-night-text-brightness'),
+                label: '夜读文字亮度',
+                value: _readerPreferences.nightTextBrightness,
+                min: .35,
+                max: 1,
+                format: (v) => '${(v * 100).round()}%',
+                onPreview: (v) => _preferences(
+                  _readerPreferences.copyWith(nightTextBrightness: v),
+                  persist: false,
+                ),
+                onCommitted: (v) => _preferences(
+                  _readerPreferences.copyWith(nightTextBrightness: v),
+                ),
+                onInteractionChanged: (v) =>
+                    _preview(const ValueKey('reader-night-text-brightness'), v),
+              ),
+              const ValueKey('reader-night-text-brightness'),
+            ),
+          ),
           const SizedBox(height: 12),
           _adjustment(
             LanguageSettingMenu(
@@ -461,10 +887,11 @@ class _ReaderToolsState extends State<ReaderTools> {
             ReaderValueSlider(
               sliderKey: const ValueKey('reader-font-slider'),
               label: '字体大小',
-              value: widget.state.fontSize,
-              min: 15,
-              max: 27,
-              divisions: 12,
+              value: _fontSize,
+              min: minimumReaderFontSize,
+              max: maximumReaderFontSize,
+              divisions: (maximumReaderFontSize - minimumReaderFontSize)
+                  .round(),
               format: (value) => '${value.round()} pt',
               onCommitted: widget.onFontSize,
               onPreview: widget.onFontPreview,
@@ -477,10 +904,10 @@ class _ReaderToolsState extends State<ReaderTools> {
           _adjustment(
             ReaderValueSlider(
               sliderKey: const ValueKey('reader-line-height-slider'),
-              label: widget.state.readerPreferences.mode == ReaderMode.vertical
+              label: _readerPreferences.mode == ReaderMode.vertical
                   ? '列距'
                   : '行距',
-              value: widget.state.lineHeight,
+              value: _lineHeight,
               min: 1.3,
               max: 2.2,
               format: (value) => '${value.toStringAsFixed(2)} 倍',
@@ -515,7 +942,7 @@ class _ReaderToolsState extends State<ReaderTools> {
                   key: ValueKey('reader-margin-control-$_marginEdge'),
                   sliderKey: const ValueKey('reader-margin-slider'),
                   label: '页边距 · $_marginEdge',
-                  value: _marginValue(widget.state.readerPreferences),
+                  value: _marginValue(_readerPreferences),
                   min: 0,
                   max: 80,
                   divisions: 40,
@@ -534,22 +961,83 @@ class _ReaderToolsState extends State<ReaderTools> {
             ReaderValueSlider(
               sliderKey: const ValueKey('reader-paragraph-gap-slider'),
               label: '段落间距',
-              value: widget.state.readerPreferences.paragraphGap,
+              value: _readerPreferences.paragraphGap,
               min: 0,
               max: 32,
               divisions: 16,
               format: (v) => '${v.round()} px',
               onPreview: (v) => _preferences(
-                widget.state.readerPreferences.copyWith(paragraphGap: v),
+                _readerPreferences.copyWith(paragraphGap: v),
                 persist: false,
               ),
               onInteractionChanged: (v) =>
                   _preview(const ValueKey('reader-paragraph-gap-slider'), v),
-              onCommitted: (v) => _preferences(
-                widget.state.readerPreferences.copyWith(paragraphGap: v),
-              ),
+              onCommitted: (v) =>
+                  _preferences(_readerPreferences.copyWith(paragraphGap: v)),
             ),
             const ValueKey('reader-paragraph-gap-slider'),
+          ),
+          _adjustment(
+            GlassTextButton(
+              key: const ValueKey('reader-text-details'),
+              onPressed: () => setState(() => _textDetails = !_textDetails),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: AppText('文字细节', style: TextStyle(fontSize: 14)),
+                  ),
+                  Icon(
+                    _textDetails
+                        ? CupertinoIcons.chevron_up
+                        : CupertinoIcons.chevron_down,
+                    size: 14,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedOptionSection(
+            expanded: _textDetails,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _adjustment(
+                  ReaderChoicePicker<ReaderTextWeight>(
+                    name: 'reader-text-weight',
+                    label: '字重',
+                    value: _readerPreferences.textWeight,
+                    options: {
+                      for (final weight in ReaderTextWeight.values)
+                        weight: weight.label,
+                    },
+                    onChanged: (weight) => _preferences(
+                      _readerPreferences.copyWith(textWeight: weight),
+                    ),
+                  ),
+                ),
+                _adjustment(
+                  ReaderValueSlider(
+                    sliderKey: const ValueKey('reader-letter-spacing'),
+                    label: '字间距',
+                    value: _readerPreferences.letterSpacing,
+                    min: -.5,
+                    max: 3,
+                    divisions: 35,
+                    format: (v) => '${v.toStringAsFixed(1)} px',
+                    onPreview: (v) => _preferences(
+                      _readerPreferences.copyWith(letterSpacing: v),
+                      persist: false,
+                    ),
+                    onCommitted: (v) => _preferences(
+                      _readerPreferences.copyWith(letterSpacing: v),
+                    ),
+                    onInteractionChanged: (v) =>
+                        _preview(const ValueKey('reader-letter-spacing'), v),
+                  ),
+                  const ValueKey('reader-letter-spacing'),
+                ),
+              ],
+            ),
           ),
           _adjustment(
             Column(
@@ -559,20 +1047,16 @@ class _ReaderToolsState extends State<ReaderTools> {
                 _switch(
                   context,
                   '首行缩进',
-                  widget.state.readerPreferences.indent,
-                  (v) => _preferences(
-                    widget.state.readerPreferences.copyWith(indent: v),
-                  ),
+                  _readerPreferences.indent,
+                  (v) => _preferences(_readerPreferences.copyWith(indent: v)),
                 ),
                 _switch(
                   context,
-                  widget.state.readerPreferences.mode == ReaderMode.vertical
+                  _readerPreferences.mode == ReaderMode.vertical
                       ? '上下对齐'
                       : '两端对齐',
-                  widget.state.readerPreferences.justify,
-                  (v) => _preferences(
-                    widget.state.readerPreferences.copyWith(justify: v),
-                  ),
+                  _readerPreferences.justify,
+                  (v) => _preferences(_readerPreferences.copyWith(justify: v)),
                 ),
                 Align(
                   alignment: Alignment.centerRight,
@@ -724,6 +1208,16 @@ class _ReaderToolsState extends State<ReaderTools> {
                           ),
                         ),
                         GlassIconButton(
+                          icon: CupertinoIcons.folder,
+                          label: '分类书签 ${mark.id}',
+                          onPressed: () => organizeBookmark(
+                            context,
+                            widget.state,
+                            widget.novel.id,
+                            mark,
+                          ),
+                        ),
+                        GlassIconButton(
                           icon: CupertinoIcons.trash,
                           label: '删除书签 ${mark.id}',
                           onPressed: () => _remove(mark),
@@ -754,7 +1248,7 @@ class _ReaderToolsState extends State<ReaderTools> {
   Widget _behavior(BuildContext context) => AnimatedBuilder(
     animation: widget.state.readerSettingsChanges,
     builder: (context, _) {
-      final prefs = widget.state.readerPreferences;
+      final prefs = _readerPreferences;
       return Padding(
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
         child: Column(
@@ -775,6 +1269,68 @@ class _ReaderToolsState extends State<ReaderTools> {
                     '时间与电量保留在原状态栏位置',
                     style: TextStyle(fontSize: 12, height: 1.6),
                   ),
+                  FutureBuilder<bool>(
+                    future: _floatingNavigation,
+                    builder: (context, value) => value.data != true
+                        ? const SizedBox.shrink()
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const SizedBox(height: 8),
+                              const AppText(
+                                '系统悬浮球需在「系统和更新 → 系统导航方式 → 悬浮导航」中关闭。',
+                                style: TextStyle(fontSize: 12, height: 1.6),
+                              ),
+                              GlassTextButton(
+                                onPressed: () async {
+                                  try {
+                                    await _systemControls.invokeMethod<void>(
+                                      'navigationSettings',
+                                    );
+                                  } catch (_) {
+                                    if (context.mounted) {
+                                      showNovelFeedback(
+                                        context,
+                                        '请在手机设置中搜索「悬浮导航」',
+                                      );
+                                    }
+                                  }
+                                },
+                                child: const AppText('打开系统设置'),
+                              ),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            AnimatedOptionSection(
+              expanded: prefs.hideSystemStatus,
+              child: _adjustment(
+                ReaderValueSlider(
+                  sliderKey: const ValueKey('reader-status-inset'),
+                  label: '时间与电量留边',
+                  value: prefs.statusSideInset,
+                  min: 0,
+                  max: 96,
+                  divisions: 48,
+                  format: (v) => v == 0 ? '自动' : '+${v.round()}',
+                  onPreview: (v) => _preferences(
+                    prefs.copyWith(statusSideInset: v),
+                    persist: false,
+                  ),
+                  onCommitted: (v) =>
+                      _preferences(prefs.copyWith(statusSideInset: v)),
+                  onInteractionChanged: (v) =>
+                      _preview(const ValueKey('reader-status-inset'), v),
+                ),
+                const ValueKey('reader-status-inset'),
+              ),
+            ),
+            _adjustment(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                   if (LocalPlatform.android)
                     AnimatedBuilder(
                       animation: widget.state.readerBehaviorChanges,
@@ -803,19 +1359,70 @@ class _ReaderToolsState extends State<ReaderTools> {
                         Navigator.pop(context, const ReaderEnterFocus()),
                     child: const AppText('专注阅读 · 隐藏控件'),
                   ),
+                  Row(
+                    children: [
+                      const Expanded(child: AppText('控件显隐时正文重排')),
+                      AppControls.toggle(
+                        context,
+                        key: const ValueKey('reader-reflow-on-chrome'),
+                        value: prefs.reflowOnChrome,
+                        onChanged: (value) =>
+                            _preferences(prefs.copyWith(reflowOnChrome: value)),
+                      ),
+                    ],
+                  ),
+                  const AppText(
+                    '开启时正文为控件留出空间；关闭时控件覆盖正文。',
+                    style: TextStyle(fontSize: 12, height: 1.6),
+                  ),
                   const Divider(height: 24),
+                  Row(
+                    children: [
+                      const Expanded(child: AppText('章节入场动画')),
+                      AppControls.toggle(
+                        context,
+                        key: const ValueKey('reader-chapter-entrance'),
+                        value: prefs.chapterEntrance,
+                        onChanged: (value) => _preferences(
+                          prefs.copyWith(chapterEntrance: value),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const AppText(
+                    '只控制打开章节时的额外入场；跨章仍沿用翻页效果。',
+                    style: TextStyle(fontSize: 12, height: 1.6),
+                  ),
                   _switch(
                     context,
                     '分区点按翻页',
                     prefs.tapPaging,
                     (v) => _preferences(prefs.copyWith(tapPaging: v)),
                   ),
-                  const AppText(
-                    '常规布局点按中间显示控件；竖排左右翻页方向相反。',
-                    style: TextStyle(fontSize: 12, height: 1.6),
+                  AppText(
+                    prefs.tapPaging && prefs.tapBothSidesNext
+                        ? '左右两侧前进，中间显示控件；滑动翻页不变。'
+                        : '常规布局点按中间显示控件；竖排左右翻页方向相反。',
+                    style: const TextStyle(fontSize: 12, height: 1.6),
                   ),
                   AnimatedOptionSection(
                     expanded: prefs.tapPaging,
+                    child: Row(
+                      children: [
+                        const Expanded(child: AppText('左右点按均为下一页')),
+                        AppControls.toggle(
+                          context,
+                          key: const ValueKey('reader-tap-both-sides-next'),
+                          value: prefs.tapBothSidesNext,
+                          onChanged: (value) => _preferences(
+                            prefs.copyWith(tapBothSidesNext: value),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AnimatedOptionSection(
+                    expanded: prefs.tapPaging && !prefs.tapBothSidesNext,
                     child: Wrap(
                       spacing: 8,
                       children: [
@@ -841,6 +1448,7 @@ class _ReaderToolsState extends State<ReaderTools> {
                   AnimatedOptionSection(
                     expanded:
                         prefs.tapPaging &&
+                        !prefs.tapBothSidesNext &&
                         prefs.tapLayout != ReaderTapLayout.standard,
                     child: AppText(
                       '${prefs.tapLayout == ReaderTapLayout.rightHand ? '右' : '左'}半屏上部回退、下部前进，另一侧显示控件。',
@@ -915,17 +1523,17 @@ class _ReaderToolsState extends State<ReaderTools> {
                     sliderKey: const ValueKey('reader-brightness'),
                     label: '阅读亮度',
                     value: prefs.brightness ?? .7,
-                    min: .03,
+                    min: 0,
                     max: 1,
                     format: (v) => '${(v * 100).round()}%',
                     onPreview: (v) => _preferences(
-                      widget.state.readerPreferences.copyWith(brightness: v),
+                      _readerPreferences.copyWith(brightness: v),
                       persist: false,
                     ),
                     onInteractionChanged: (v) =>
                         _preview(const ValueKey('reader-brightness'), v),
                     onCommitted: (v) => _preferences(
-                      widget.state.readerPreferences.copyWith(brightness: v),
+                      _readerPreferences.copyWith(brightness: v),
                     ),
                   ),
                   const ValueKey('reader-brightness'),

@@ -6,6 +6,16 @@ import 'package:wenku8_flutter/catalog.dart';
 import 'package:wenku8_flutter/local_books.dart';
 import 'package:wenku8_flutter/local_library_preferences.dart';
 
+class _GroupReadCounter extends LocalLibraryPreferences {
+  _GroupReadCounter(super.preferences);
+  int groupCopies = 0;
+  @override
+  Map<String, String> get groups {
+    groupCopies++;
+    return super.groups;
+  }
+}
+
 Novel book(String title) => parseLocalBook(
   LocalBookInput(
     '$title.txt',
@@ -15,6 +25,43 @@ Novel book(String title) => parseLocalBook(
 ).novel;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'filtering does not copy every category for each visible book',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final view = _GroupReadCounter(await SharedPreferences.getInstance());
+      addTearDown(view.dispose);
+      await view.mergeOrganization({
+        'version': 1,
+        'groups': {
+          'fantasy': {'name': '幻想', 'at': 1, 'deleted': false},
+          'deleted': {'name': '旧分类', 'at': 2, 'deleted': true},
+        },
+        'assignments': {
+          '1': {'group': 'fantasy', 'at': 1},
+          '2': {'group': 'deleted', 'at': 1},
+        },
+      });
+      final originals = [
+        for (var i = 1; i <= 3; i++)
+          Novel(
+            id: i,
+            title: '$i',
+            author: '',
+            genre: '',
+            summary: '',
+            colors: const [],
+          ),
+      ];
+      view.groupCopies = 0;
+      expect(view.filter(originals).map((b) => b.id), [1, 2, 3]);
+      expect(view.filter(originals, query: '#幻想').map((b) => b.id), [1]);
+      expect(view.filter(originals, query: '#未分类').map((b) => b.id), [2, 3]);
+      expect(view.filter(originals, query: '#旧分类'), isEmpty);
+      expect(view.nameOf('deleted'), '全部书籍');
+      expect(view.groupCopies, 0);
+    },
+  );
   test(
     'shelf threshold, list preference, categories and deletion survive reload',
     () async {

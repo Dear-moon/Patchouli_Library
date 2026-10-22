@@ -19,6 +19,7 @@ import 'reader53_selection_test.dart' show selectionBook;
 import 'reader_modes_test.dart' show settleReader;
 import 'support/listening_fixture.dart';
 import 'support/visual_review.dart';
+import 'support/background_fixture.dart';
 
 Finder control(String label) => find
     .descendant(
@@ -71,7 +72,11 @@ void main() {
     'one reader settings entry owns four tabs and the bottom always opens the catalogue',
     (tester) async {
       phone(tester);
-      final state = await LibraryState.load(), boundary = GlobalKey();
+      final state = LibraryState(
+            await SharedPreferences.getInstance(),
+            backgrounds: EmptyReaderBackgrounds(),
+          ),
+          boundary = GlobalKey();
       addTearDown(state.dispose);
       await state.setDirectReading(true);
       final listening = ListeningController(
@@ -133,8 +138,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ReaderCatalogue), findsOneWidget);
       expect(find.byType(DetailPage), findsNothing);
-      await tester.tap(find.text('本章进度'));
-      await tester.pumpAndSettle();
+      expect(find.text('章节进度'), findsOneWidget);
       for (final label in ['回到章首', '跳至章末', '章内查找']) {
         expect(find.text(label), findsOneWidget);
       }

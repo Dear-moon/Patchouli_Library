@@ -348,25 +348,25 @@ void main() {
     },
   );
   test(
-    'retired vendor engines are neither queried nor synthesized, including cached audio',
+    'malformed engine names cannot be queried or reuse cached audio',
     () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(SpeechAudioCache.system, (call) async {
             if (call.method == 'engines') {
               return [
-                {'id': 'com.oplus.ttsaccessibilityengine'},
-                {'id': 'com.oppo.tts'},
-                {'id': 'com.heytap.speech'},
+                {'id': 'https://invalid.example'},
+                {'id': '../private'},
+                {'id': ''},
               ];
             }
-            fail('A retired engine must never be invoked');
+            fail('An invalid engine must never be invoked');
           });
       final voices = await cache.offlineVoices();
       expect(voices, isEmpty);
       const voice = SpeechVoice(
         id: 'old',
         label: 'old',
-        engine: 'com.oplus.ttsaccessibilityengine',
+        engine: 'https://invalid.example',
         source: ListeningSource.system,
         offline: true,
       );

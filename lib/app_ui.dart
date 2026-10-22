@@ -10,11 +10,13 @@ import 'package:flutter/services.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import 'archive_design.dart';
+import 'app_window_insets.dart';
 import 'catalog.dart';
 import 'local_book_media.dart';
 import 'cover_arrival.dart';
 import 'glass_optics.dart';
 import 'glass_palette.dart';
+import 'app_palette.dart';
 import 'glass_controls.dart';
 import 'app_language.dart';
 export 'app_language.dart';
@@ -54,6 +56,10 @@ class GlassAppearance extends InheritedWidget {
 
   static Color tintOf(BuildContext context, {required double opacity}) =>
       Theme.of(context).extension<GlassPalette>()?.tint ??
+      Theme.of(context).extension<AppTonalColors>()?.tint(
+        Theme.of(context).brightness,
+        opacity,
+      ) ??
       ArchiveDesign.glassTint(Theme.of(context).brightness, opacity: opacity);
 
   @override
@@ -80,9 +86,17 @@ SystemUiOverlayStyle novelSystemUiStyle(Brightness brightness) {
   );
 }
 
-ThemeData novelTheme(Brightness brightness, {String? fontFamily}) {
+ThemeData novelTheme(
+  Brightness brightness, {
+  String? fontFamily,
+  AppPalettePreferences palette = const AppPalettePreferences(),
+  SystemTonalColors? systemColors,
+}) {
   final dark = brightness == Brightness.dark;
-  final baseScheme = ColorScheme.fromSeed(
+  final original =
+      palette.source == AppPaletteSource.original ||
+      palette.source == AppPaletteSource.system && systemColors == null;
+  late final baseScheme = ColorScheme.fromSeed(
     seedColor: accent,
     brightness: brightness,
     dynamicSchemeVariant: DynamicSchemeVariant.monochrome,
@@ -92,7 +106,7 @@ ThemeData novelTheme(Brightness brightness, {String? fontFamily}) {
     onSurface: dark ? ArchiveDesign.darkInk : ink,
     onSurfaceVariant: dark ? ArchiveDesign.darkMuted : const Color(0xFF646B62),
   );
-  final scheme = dark
+  late final classicScheme = dark
       ? baseScheme.copyWith(
           surfaceDim: ArchiveDesign.darkBackground,
           surfaceBright: ArchiveDesign.darkRaisedHigh,
@@ -106,11 +120,23 @@ ThemeData novelTheme(Brightness brightness, {String? fontFamily}) {
           surfaceTint: Colors.transparent,
         )
       : baseScheme;
+  final scheme = original
+      ? classicScheme
+      : palette.source == AppPaletteSource.system
+      ? systemColors!.scheme(brightness)
+      : ColorScheme.fromSeed(
+          seedColor: palette.color,
+          brightness: brightness,
+          dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot,
+        ).copyWith(surfaceTint: Colors.transparent);
   return ThemeData(
     useMaterial3: true,
     brightness: brightness,
     colorScheme: scheme,
-    scaffoldBackgroundColor: dark ? ArchiveDesign.darkBackground : canvas,
+    scaffoldBackgroundColor: original
+        ? (dark ? ArchiveDesign.darkBackground : canvas)
+        : scheme.surface,
+    extensions: [AppTonalColors.forScheme(scheme, original: original)],
     cupertinoOverrideTheme: CupertinoThemeData(
       brightness: brightness,
       primaryColor: scheme.primary,
@@ -120,17 +146,21 @@ ThemeData novelTheme(Brightness brightness, {String? fontFamily}) {
     splashFactory: InkRipple.splashFactory,
     textTheme: ThemeData(brightness: brightness).textTheme.apply(
       fontFamily: fontFamily,
-      bodyColor: dark ? ArchiveDesign.darkInk : ink,
-      displayColor: dark ? ArchiveDesign.darkInk : ink,
+      bodyColor: scheme.onSurface,
+      displayColor: scheme.onSurface,
     ),
-    dividerColor: dark ? ArchiveDesign.darkOutline : hairline,
+    dividerColor: original
+        ? (dark ? ArchiveDesign.darkOutline : hairline)
+        : scheme.outlineVariant,
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surface,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(ArchiveDesign.panelRadius),
         borderSide: BorderSide(
-          color: dark ? ArchiveDesign.darkOutline : hairline,
+          color: original
+              ? (dark ? ArchiveDesign.darkOutline : hairline)
+              : scheme.outlineVariant,
         ),
       ),
     ),
@@ -152,6 +182,9 @@ abstract final class AppControls {
   static Color _accent(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     if (MediaQuery.highContrastOf(context)) return const Color(0xFF747474);
+    if (Theme.of(context).extension<AppTonalColors>() case final colors?) {
+      return colors.active;
+    }
     return Color.lerp(
       scheme.onSurface,
       scheme.surface,
@@ -160,6 +193,9 @@ abstract final class AppControls {
   }
 
   static Color _track(BuildContext context) {
+    if (Theme.of(context).extension<AppTonalColors>() case final colors?) {
+      return colors.track;
+    }
     final scheme = Theme.of(context).colorScheme;
     return Color.lerp(
       scheme.surface,
@@ -216,6 +252,7 @@ abstract final class AppControls {
       inactiveColor: _track(context),
       thumbColor:
           Theme.of(context).extension<GlassPalette>()?.thumb ??
+          Theme.of(context).extension<AppTonalColors>()?.thumb ??
           ArchiveDesign.milk,
       style: _material(context),
       reduceMotion: MediaQuery.disableAnimationsOf(context),
@@ -246,6 +283,7 @@ abstract final class AppControls {
       inactiveColor: _track(context),
       thumbColor:
           Theme.of(context).extension<GlassPalette>()?.thumb ??
+          Theme.of(context).extension<AppTonalColors>()?.thumb ??
           ArchiveDesign.milk,
       style: _material(context),
       reduceMotion: MediaQuery.disableAnimationsOf(context),
@@ -306,6 +344,7 @@ class Atmosphere extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final tonal = Theme.of(context).extension<AppTonalColors>();
     final content = headerBackground == null
         ? child
         : Stack(
@@ -323,7 +362,11 @@ class Atmosphere extends StatelessWidget {
         ? Stack(
             fit: StackFit.expand,
             children: [
-              const Positioned.fill(child: ArchiveBackdrop()),
+              Positioned.fill(
+                child: ArchiveBackdrop(
+                  filmColor: tonal?.milk ?? ArchiveDesign.milk,
+                ),
+              ),
               content,
             ],
           )
@@ -333,7 +376,9 @@ class Atmosphere extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: dark
+          colors: tonal != null
+              ? [tonal.pageStart, tonal.pageEnd]
+              : dark
               ? [ArchiveDesign.darkBackground, ArchiveDesign.darkSurface]
               : [ArchiveDesign.surface, ArchiveDesign.background],
         ),
@@ -427,10 +472,9 @@ class FrostedHeader extends StatelessWidget {
     final padding = MediaQuery.paddingOf(context);
     // SafeArea can clear MediaQuery.padding, but the physical status bar still
     // needs a blurred backdrop. Insets are for controls, not the blur's clip.
-    final view = View.of(context);
     final statusHeight = math.max(
       padding.top,
-      view.viewPadding.top / view.devicePixelRatio,
+      AppWindowInsets.viewPaddingOf(context).top,
     );
     final appearance = GlassAppearance.of(context);
     final highContrast = MediaQuery.highContrastOf(context);
@@ -754,9 +798,19 @@ class GlassIconButton extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.color,
-  });
+  }) : child = null;
 
-  final IconData icon;
+  /// Shares the standard hit area, glass and press response with icon actions.
+  const GlassIconButton.custom({
+    super.key,
+    required this.child,
+    required this.label,
+    required this.onPressed,
+  }) : icon = null,
+       color = null;
+
+  final IconData? icon;
+  final Widget? child;
   final String label;
   final VoidCallback? onPressed;
   final Color? color;
@@ -778,13 +832,17 @@ class GlassIconButton extends StatelessWidget {
           child: SizedBox(
             width: 46,
             height: 46,
-            child: Icon(
-              icon,
-              size: 21,
-              color:
-                  color ??
-                  (onPressed == null ? Theme.of(context).disabledColor : null),
-            ),
+            child:
+                child ??
+                Icon(
+                  icon,
+                  size: 21,
+                  color:
+                      color ??
+                      (onPressed == null
+                          ? Theme.of(context).disabledColor
+                          : null),
+                ),
           ),
         ),
       ),
@@ -810,7 +868,9 @@ class GlassPillButton extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final action = loading ? null : onPressed;
-    final color = scheme.onSurface.withValues(alpha: action == null ? .45 : 1);
+    final color =
+        (theme.extension<AppTonalColors>()?.action ?? scheme.onSurface)
+            .withValues(alpha: action == null ? .45 : 1);
     return Semantics(
       button: true,
       enabled: action != null,
@@ -901,7 +961,8 @@ class GlassTextButton extends StatelessWidget {
                   context,
                   opacity: GlassAppearance.of(context).opacity,
                 ),
-                Theme.of(context).colorScheme.onSurface,
+                Theme.of(context).extension<AppTonalColors>()?.action ??
+                    Theme.of(context).colorScheme.onSurface,
                 .10,
               )
             : null,
@@ -924,9 +985,14 @@ class GlassTextButton extends StatelessWidget {
                   fontSize: 14,
                   height: 1.4,
                   fontWeight: FontWeight.w500,
-                  color: Theme.of(context).colorScheme.onSurface.withValues(
-                    alpha: onPressed == null ? .45 : 1,
-                  ),
+                  color:
+                      ((selected == true
+                                  ? Theme.of(
+                                      context,
+                                    ).extension<AppTonalColors>()?.action
+                                  : null) ??
+                              Theme.of(context).colorScheme.onSurface)
+                          .withValues(alpha: onPressed == null ? .45 : 1),
                 ),
                 child: child,
               ),
@@ -1089,6 +1155,9 @@ class CoverHeroTag {
   int get hashCode => Object.hash(identityHashCode(source), bookId);
 }
 
+int novelCoverDecodeWidth(double width, double pixelRatio) =>
+    (width * pixelRatio).ceil().clamp(1, 1536);
+
 class NovelCover extends StatelessWidget {
   const NovelCover(
     this.novel, {
@@ -1097,12 +1166,14 @@ class NovelCover extends StatelessWidget {
     this.height = 164,
     this.heroTag,
     this.isDetailCover = false,
+    this.fadeIn = false,
   });
   final Novel novel;
   final double width;
   final double height;
   final Object? heroTag;
   final bool isDetailCover;
+  final bool fadeIn;
 
   @override
   Widget build(BuildContext context) {
@@ -1203,7 +1274,7 @@ class NovelCover extends StatelessWidget {
                 key: ValueKey('cover-bytes-${novel.id}'),
                 future: novel.coverUrl?.startsWith('wenku-local:') == true
                     ? LocalBookMedia.loadCover(novel.coverUrl!)
-                    : LegacyCover.bytes(novel.id),
+                    : LegacyCover.bytes(novel.id, url: novel.coverUrl),
                 initialData:
                     LocalBookMedia.peek(novel.coverUrl) ??
                     LegacyCover.peek(novel.id),
@@ -1214,9 +1285,11 @@ class NovelCover extends StatelessWidget {
                   }
                   return Image.memory(
                     bytes,
-                    cacheWidth: (width * MediaQuery.devicePixelRatioOf(context))
-                        .ceil()
-                        .clamp(1, 1536),
+                    key: ValueKey(('book-cover', novel.id, novel.coverUrl)),
+                    cacheWidth: novelCoverDecodeWidth(
+                      width,
+                      MediaQuery.devicePixelRatioOf(context),
+                    ),
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
                     errorBuilder: (context, error, stack) => fallback,
@@ -1226,6 +1299,7 @@ class NovelCover extends StatelessWidget {
                           ready: frame != null,
                           placeholder: placeholder,
                           recordArrival: recordArrival,
+                          fade: fadeIn,
                           // Transparent PNGs keep the same substrate when the
                           // skeleton leaves; only the decorative bones vanish.
                           child: ColoredBox(
@@ -1273,7 +1347,7 @@ class CoverGlow extends StatelessWidget {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final background = dark ? ArchiveDesign.darkBackground : Colors.white;
     return FutureBuilder(
-      future: LegacyCover.bytes(novel.id),
+      future: LegacyCover.bytes(novel.id, url: novel.coverUrl),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox.shrink();
         return ShaderMask(
@@ -1368,12 +1442,14 @@ class ContentNotice extends StatelessWidget {
     this.message,
     this.onRetry,
     this.actionLabel = '重试',
+    this.secondaryAction,
   });
   final IconData icon;
   final String title;
   final String? message;
   final VoidCallback? onRetry;
   final String actionLabel;
+  final Widget? secondaryAction;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -1409,6 +1485,7 @@ class ContentNotice extends StatelessWidget {
             const SizedBox(height: 16),
             GlassTextButton(onPressed: onRetry, child: AppText(actionLabel)),
           ],
+          ?secondaryAction,
         ],
       ),
     ),

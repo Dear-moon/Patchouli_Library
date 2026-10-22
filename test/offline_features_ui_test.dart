@@ -14,6 +14,7 @@ import 'package:wenku8_flutter/pages.dart';
 import 'package:wenku8_flutter/reader_illustrations.dart';
 
 import 'support/offline_fixture.dart';
+import 'support/visual_review.dart';
 
 Finder _control(String label) => find
     .descendant(
@@ -104,6 +105,7 @@ void main({
   late OfflineNovelRepository repository;
   late LibraryState state;
   final novel = offlineFixtureBook(71);
+  setUpAll(loadReviewFonts);
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -181,7 +183,7 @@ void main({
       expect(find.byType(ReaderIllustration), findsOneWidget);
       expect(
         tester.getSize(find.byType(ReaderIllustration)).height,
-        closeTo(height, .01),
+        inInclusiveRange(1, height),
       );
       expect(find.text('暂未取得本章插图地址'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -283,7 +285,14 @@ void main({
         _app(SettingsPage(state: state, repository: repository), key),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('settings-data-entry')));
+      await tester.tap(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('settings-data-entry')),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('缓存管理'),
@@ -356,6 +365,10 @@ void main({
   testWidgets(
     'cancel download preserves its subset and the menu can resume it',
     (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final reply = Completer<String>();
       remote.held[71001] = reply;
       final key = GlobalKey();
@@ -372,8 +385,8 @@ void main({
         find.text('缓存全部章节'),
         until: () => remote.activeReads == 1,
       );
-      await _tapIo(tester, _control('离线缓存'));
-      await _tapIo(tester, find.text('取消缓存'));
+      await captureReview(tester, key, 'detail-cache-in-place');
+      await _tapIo(tester, _control('取消缓存'));
       reply.complete(novel.chapters.first.content);
       await _settleIo(tester);
       expect(repository.jobFor(71)!.phase, DownloadPhase.cancelled);

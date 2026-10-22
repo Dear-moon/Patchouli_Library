@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'support/serif_fixture.dart';
+import 'support/font_store_fixture.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_typography.dart';
@@ -17,15 +19,22 @@ import 'package:wenku8_flutter/pages.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(prepareSerifFixture);
   setUp(() => SharedPreferences.setMockInitialValues({}));
   test(
     'typeface persists, validates in backups and identifies reading layout',
     () async {
-      final state = await LibraryState.load();
+      final state = LibraryState(
+        await SharedPreferences.getInstance(),
+        fonts: InstalledSerifFixture(),
+      );
       addTearDown(state.dispose);
       expect(state.appTypeface, AppTypeface.system);
       await state.setAppTypeface(AppTypeface.sourceHanSerif);
-      final reloaded = await LibraryState.load();
+      final reloaded = LibraryState(
+        await SharedPreferences.getInstance(),
+        fonts: InstalledSerifFixture(),
+      );
       addTearDown(reloaded.dispose);
       expect(reloaded.appTypeface, AppTypeface.sourceHanSerif);
       await state.savePosition(
@@ -68,7 +77,7 @@ void main() {
     },
   );
   test(
-    'all former offline selections fall back without synthesizing',
+    'installed system voice selections persist without synthesizing',
     () async {
       final voice = SpeechVoice(
         id: 'local',
@@ -80,17 +89,30 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('listening.voice.v1', jsonEncode(voice.toJson()));
       final store = ListeningStore(prefs);
-      expect(store.voice, defaultEdgeVoice);
-      await expectLater(store.saveVoice(voice), throwsA(isA<SpeechFailure>()));
+      expect(store.voice.toJson(), voice.toJson());
+      await store.saveVoice(voice);
+      expect(ListeningStore(prefs).voice.toJson(), voice.toJson());
     },
   );
-  test('bundled font and license assets are readable', () async {
-    for (final weight in ['Regular', 'Bold']) {
-      final bytes = await rootBundle.load(
-        'assets/fonts/SourceHanSerifCN-$weight.otf',
-      );
-      expect(ascii.decode(bytes.buffer.asUint8List(0, 4)), 'OTTO');
-    }
+  test('font fixture is valid but only its license is bundled', () async {
+    final bytes = await loadSerifFixture();
+    expect(ascii.decode(bytes.buffer.asUint8List(0, 4)), 'OTTO');
+    final tables = [
+      for (var i = 0; i < bytes.getUint16(4); i++)
+        ascii.decode(bytes.buffer.asUint8List(12 + i * 16, 4)),
+    ];
+    expect(tables, contains('fvar'));
+    final assets = (await AssetManifest.loadFromAssetBundle(
+      rootBundle,
+    )).listAssets();
+    expect(
+      assets.where(
+        (path) =>
+            RegExp(r'\.(otf|ttf)$').hasMatch(path) &&
+            path.startsWith('assets/fonts/'),
+      ),
+      isEmpty,
+    );
     expect(
       await rootBundle.loadString('assets/fonts/OFL-SourceHanSerif.txt'),
       contains('SIL OPEN FONT LICENSE'),
@@ -103,11 +125,13 @@ void main() {
   testWidgets(
     'switching the global typeface preserves the measured reader paragraph',
     (tester) async {
-      await (FontLoader('SourceHanSerifCN')..addFont(
-            rootBundle.load('assets/fonts/SourceHanSerifCN-Regular.otf'),
-          ))
-          .load();
-      final state = await LibraryState.load();
+      await (FontLoader(
+        'SourceHanSerifCN',
+      )..addFont(loadSerifFixture())).load();
+      final state = LibraryState(
+        await SharedPreferences.getInstance(),
+        fonts: InstalledSerifFixture(),
+      );
       final book = demoNovels.first.withChapters([
         NovelChapter(
           '字体测试',
@@ -163,7 +187,10 @@ void main() {
   testWidgets(
     'global font follows persisted switch and returns to the system',
     (tester) async {
-      final state = await LibraryState.load();
+      final state = LibraryState(
+        await SharedPreferences.getInstance(),
+        fonts: InstalledSerifFixture(),
+      );
       await tester.pumpWidget(
         NovelApp(state: state, repository: const DemoNovelRepository()),
       );

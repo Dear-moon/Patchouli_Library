@@ -8,6 +8,7 @@ import 'cloud_library_page.dart';
 import 'cloud_sources.dart';
 import 'library_state.dart';
 import 'local_books.dart';
+import 'local_document_reference.dart';
 import 'local_book_scanner.dart';
 import 'local_import_batch.dart';
 import 'local_import_review.dart';
@@ -93,17 +94,22 @@ class LocalBookImporter extends ChangeNotifier {
           ),
           GlassMenuItem(
             order: 1,
+            label: '复制到应用',
+            onPressed: () => Navigator.pop(menu, 'copy'),
+          ),
+          GlassMenuItem(
+            order: 2,
             label: '从网盘导入',
             onPressed: () => Navigator.pop(menu, 'cloud'),
           ),
           GlassMenuItem(
-            order: 2,
+            order: 3,
             label: '扫描本地文件夹',
             onPressed: () => Navigator.pop(menu, 'scan'),
           ),
           if (management)
             GlassMenuItem(
-              order: 3,
+              order: 4,
               label: '本地分类与同步',
               onPressed: () => Navigator.pop(menu, 'manage'),
             ),
@@ -131,7 +137,11 @@ class LocalBookImporter extends ChangeNotifier {
       );
       return;
     }
-    await run(context, fromCloud: action == 'cloud');
+    await run(
+      context,
+      fromCloud: action == 'cloud',
+      copyLocal: action == 'copy',
+    );
   }
 
   Future<void> run(
@@ -139,6 +149,9 @@ class LocalBookImporter extends ChangeNotifier {
     bool fromCloud = false,
     bool fromScan = false,
     bool automatic = false,
+    bool copyLocal = false,
+    List<BookDocumentSelection>? selectedBooks,
+    Future<void> Function(LocalImportReport report)? onImported,
   }) async {
     if (busy || _disposed || fromScan && _scanning) return;
     if (fromScan) {
@@ -157,7 +170,7 @@ class LocalBookImporter extends ChangeNotifier {
       if (stagingReleased) return;
       final cleanup = <String, BookDocumentSelection>{
         for (final item in [...selections, ...staged])
-          item.path ?? 'error:${item.name}': item,
+          item.path ?? item.token ?? 'error:${item.name}': item,
       };
       try {
         await documents.releaseBooks(cleanup.values);
@@ -172,22 +185,9 @@ class LocalBookImporter extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       organization = library.organization;
       final encoding = prefs.getString('localTxtEncoding') ?? 'auto';
+      final importOptions = organization.importOptions.effective;
       final fresh = <int>{};
-      Future<Novel> importFile(String name, String path) async {
-        String? decoded;
-        late Novel imported;
-        try {
-          if (name.toLowerCase().endsWith('.txt')) {
-            decoded = await documents.decodeTextFile(path, encoding: encoding);
-          }
-          imported = await books.importFile(name, path, decodedPath: decoded);
-        } finally {
-          if (decoded != null) {
-            await documents.releaseBooks([
-              BookDocumentSelection(name: 'decoded.txt', path: decoded),
-            ]);
-          }
-        }
+      Future<Novel> registerImported(Novel imported) async {
         final parent = books.seriesFor(imported.id);
         final book = parent == null ? imported : books.book(parent.id)!;
         if (parent != null) await reconcileLocalSeries(books, library);
@@ -195,42 +195,141 @@ class LocalBookImporter extends ChangeNotifier {
         final group = library.combinedShelf
             ? organization!.shelfSelected
             : organization!.selected;
-        if (group != LocalLibraryPreferences.all) {
+        if (group != LocalLibraryPreferences.all &&
+            LocalLibraryPreferences.categoryAuthor(group) == null) {
           await organization.assign(book.id, group);
         }
         if (parent == null) fresh.add(book.id);
         return book;
       }
 
+      Future<Novel> importFile(String name, String path) async {
+        String? decoded;
+        late Novel imported;
+        try {
+          if (name.toLowerCase().endsWith('.txt')) {
+            decoded = await documents.decodeTextFile(path, encoding: encoding);
+          }
+          imported = await books.importFile(
+            name,
+            path,
+            decodedPath: decoded,
+            options: importOptions,
+          );
+          if ((copyLocal || !organization!.linkLocalBooks) &&
+              books.isLinkedBook(imported.id)) {
+            if (!books.isLinkedText(imported.id)) {
+              await books.saveOriginalCopy(imported.id, path: path);
+            } else {
+              final reference = await documents.stagedTextReference(path);
+              try {
+                await books.saveLinkedCopy(imported.id, reference: reference);
+              } finally {
+                await books.textAccess.release(reference);
+              }
+            }
+          }
+        } finally {
+          if (decoded != null) {
+            final temporary = BookDocumentSelection(
+              name: 'decoded.txt',
+              path: decoded,
+            );
+            try {
+              await documents.releaseBooks([temporary]);
+            } catch (_) {
+              staged.add(temporary);
+            }
+          }
+        }
+        return registerImported(imported);
+      }
+
       Future<LocalImportReport> importPrepared(
         List<BookDocumentSelection> sources, {
         bool updateProgress = true,
+        bool releaseSources = false,
       }) async {
-        final prepared = <BookDocumentSelection>[];
-        for (final source in sources) {
-          final items = await documents.prepareBook(source);
-          prepared.addAll(items);
-          staged.addAll(
-            items.where(
-              (item) => item.path != null && item.path != source.path,
-            ),
+        final origins = <String, LocalDocumentSource>{};
+        try {
+          return await importLocalDocuments(
+            selections: sources,
+            documents: documents,
+            books: books,
+            importFile: importFile,
+            importSelection: (selected) async {
+              if (selected.originReference case final reference?) {
+                final original = origins[reference] ??= await books
+                    .documentAccess
+                    .inspect(reference);
+                String? decoded;
+                try {
+                  if (selected.name.toLowerCase().endsWith('.txt')) {
+                    decoded = await documents.decodeTextFile(
+                      selected.path!,
+                      encoding: encoding,
+                    );
+                  }
+                  return registerImported(
+                    await books.importDerivedDocument(
+                      selected.name,
+                      selected.path!,
+                      originalName: selected.originName!,
+                      original: original,
+                      options: importOptions,
+                      decodedPath: decoded,
+                      renewReference: selectedBooks != null,
+                    ),
+                  );
+                } finally {
+                  if (decoded != null) {
+                    final temporary = BookDocumentSelection(
+                      name: 'decoded.txt',
+                      path: decoded,
+                    );
+                    try {
+                      await documents.releaseBooks([temporary]);
+                    } catch (_) {
+                      staged.add(temporary);
+                    }
+                  }
+                }
+              }
+              if (selected.reference case final reference?) {
+                return registerImported(
+                  selected.name.toLowerCase().endsWith('.txt')
+                      ? await books.importLinkedText(
+                          selected.name,
+                          reference,
+                          encoding: encoding,
+                          options: importOptions,
+                          renewReference: selectedBooks != null,
+                        )
+                      : await books.importLinkedDocument(
+                          selected.name,
+                          reference,
+                          options: importOptions,
+                          renewReference: selectedBooks != null,
+                        ),
+                );
+              }
+              return importFile(selected.name, selected.path!);
+            },
+            releaseSources: releaseSources,
+            onCleanupFailed: staged.addAll,
+            onProgress: (done, total) {
+              if (updateProgress) {
+                progress = (done, total);
+                _changed();
+              }
+            },
           );
+        } finally {
+          for (final reference
+              in sources.map((s) => s.reference).whereType<String>().toSet()) {
+            await books.releaseUnusedOriginalReference(reference);
+          }
         }
-        if (updateProgress) {
-          progress = (0, prepared.length);
-          _changed();
-        }
-        return importLocalBatch(
-          selections: prepared,
-          books: books,
-          importFile: importFile,
-          onProgress: (done, total) {
-            if (updateProgress) {
-              progress = (done, total);
-              _changed();
-            }
-          },
-        );
       }
 
       if (!context.mounted || _disposed) return;
@@ -264,6 +363,7 @@ class LocalBookImporter extends ChangeNotifier {
           documents: documents,
           snapshot: snapshot,
           selectedTokens: selected,
+          linkText: organization.linkLocalBooks && !copyLocal,
           importSource: (source) async {
             try {
               return await importPrepared([source], updateProgress: false);
@@ -313,6 +413,7 @@ class LocalBookImporter extends ChangeNotifier {
                 added: (report?.added ?? 0) + batch.added,
                 existing: (report?.existing ?? 0) + batch.existing,
                 failures: [...?report?.failures, ...batch.failures],
+                notices: [...?report?.notices, ...batch.notices],
               );
               return (
                 imported: batch.added + batch.existing,
@@ -331,11 +432,15 @@ class LocalBookImporter extends ChangeNotifier {
           );
         }
       } else {
-        selections = await documents.pickBooks();
+        selections =
+            selectedBooks ??
+            (organization.linkLocalBooks && !copyLocal
+                ? await documents.pickForImport()
+                : await documents.pickCopiesForImport());
         if (selections.isEmpty || !context.mounted || _disposed) return;
         progress = (0, selections.length);
         _changed();
-        report = await importPrepared(selections);
+        report = await importPrepared(selections, releaseSources: true);
       }
       final completed = report;
       if (!context.mounted || _disposed || completed == null) return;
@@ -355,8 +460,13 @@ class LocalBookImporter extends ChangeNotifier {
         }
         return;
       }
+      if (onImported != null) {
+        await onImported(completed);
+        return;
+      }
       if (localImportGroups(books, completed.bookIds).isNotEmpty ||
-          completed.failures.isNotEmpty) {
+          completed.failures.isNotEmpty ||
+          completed.notices.isNotEmpty) {
         await pushNovelPage<void>(
           context,
           LocalImportReview(books: books, library: library, report: completed),

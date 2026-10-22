@@ -14,6 +14,7 @@ class CoverArrival extends StatefulWidget {
     required this.placeholder,
     required this.child,
     this.recordArrival = true,
+    this.fade = false,
   });
 
   final Uint8List bytes;
@@ -21,6 +22,7 @@ class CoverArrival extends StatefulWidget {
   final Widget placeholder;
   final Widget child;
   final bool recordArrival;
+  final bool fade;
 
   // Weak keys follow the byte cache lifetime; this is not another cover cache.
   static final _presented = Expando<bool>('presented-cover-frame');
@@ -131,11 +133,18 @@ class _CoverArrivalState extends State<CoverArrival>
       fit: StackFit.expand,
       children: [
         widget.placeholder,
-        ArchivePlaneTransition(
-          key: const ValueKey('cover-arrival-plane'),
-          animation: _clock!,
-          child: RepaintBoundary(child: widget.child),
-        ),
+        if (widget.fade)
+          FadeTransition(
+            key: const ValueKey('cover-arrival-fade'),
+            opacity: _clock!.drive(CurveTween(curve: Curves.easeOutCubic)),
+            child: RepaintBoundary(child: widget.child),
+          )
+        else
+          ArchivePlaneTransition(
+            key: const ValueKey('cover-arrival-plane'),
+            animation: _clock!,
+            child: RepaintBoundary(child: widget.child),
+          ),
       ],
     );
   }

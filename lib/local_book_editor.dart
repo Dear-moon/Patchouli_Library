@@ -8,6 +8,8 @@ import 'local_library_preferences.dart';
 import 'local_series_editor.dart';
 import 'local_book_removal.dart';
 import 'app_interactions.dart';
+import 'book_documents.dart';
+import 'local_text_recovery.dart';
 
 enum LocalBookEditResult { saved, hidden, deleted, regrouped }
 
@@ -17,22 +19,103 @@ class LocalBookEditor extends StatefulWidget {
     required this.book,
     required this.books,
     required this.library,
+    this.documents,
   });
   final Novel book;
   final LocalBookStore books;
   final LibraryState library;
+  final BookDocuments? documents;
   @override
   State<LocalBookEditor> createState() => _LocalBookEditorState();
 }
 
 class _LocalBookEditorState extends State<LocalBookEditor> {
   late final _title = TextEditingController(text: widget.book.title),
-      _author = TextEditingController(text: widget.book.author),
-      _summary = TextEditingController(text: widget.book.summary);
+      _author = TextEditingController(text: widget.book.author);
   LocalLibraryPreferences? _groups;
   String _group = LocalLibraryPreferences.unfiled;
   bool _busy = false;
   String? _error;
+  bool _coverChanged = false;
+  Future<void> _chooseCover() async {
+    final volumes = widget.books.volumeCoverChoices(widget.book.id);
+    if (volumes.isEmpty) return _cover();
+    final choice = await showJellySheet<int>(
+      context: context,
+      reduceMotion: widget.library.reduceMotion,
+      heightFactor: .72,
+      builder: (sheet) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+        children: [
+          const ArchiveSection(title: '更换封面', code: 'LOCAL / COVER'),
+          const SizedBox(height: 16),
+          GlassTextButton(
+            key: const ValueKey('local-cover-pick-image'),
+            onPressed: () => Navigator.pop(sheet, -1),
+            child: const AppText('从图片选择'),
+          ),
+          const SizedBox(height: 16),
+          const AppText('使用分卷封面'),
+          const SizedBox(height: 12),
+          for (final volume in volumes)
+            GlassTextButton(
+              key: ValueKey('local-cover-volume-${volume.id}'),
+              onPressed: () => Navigator.pop(sheet, volume.id),
+              child: Row(
+                children: [
+                  NovelCover(volume, width: 48, height: 68),
+                  const SizedBox(width: 16),
+                  Expanded(child: AppText(volume.title)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (mounted && choice != null) {
+      await _cover(volume: choice == -1 ? null : choice);
+    }
+  }
+
+  Future<void> _cover({bool restore = false, int? volume}) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final documents = widget.documents ?? BookDocuments();
+    try {
+      if (restore) {
+        await widget.books.restoreCover(widget.book.id);
+      } else if (volume != null) {
+        await widget.books.setVolumeCover(widget.book.id, volume);
+      } else {
+        final selected = await documents.pickImage();
+        if (selected == null) return;
+        try {
+          await widget.books.setCover(widget.book.id, selected.path!);
+        } finally {
+          await documents.releaseBooks([selected]);
+        }
+      }
+      _coverChanged = true;
+      final book = widget.books.book(widget.book.id)!;
+      await widget.library.setShelfMembership(
+        book.id,
+        widget.library.contains(book.id),
+        novel: book,
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _error = e is FormatException ? e.message : '封面保存未完成，请重试',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -56,7 +139,6 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
   void dispose() {
     _title.dispose();
     _author.dispose();
-    _summary.dispose();
     super.dispose();
   }
 
@@ -102,7 +184,7 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
         widget.book.id,
         title: _title.text,
         author: _author.text,
-        summary: _summary.text,
+        summary: widget.book.summary,
       );
       await groups.assign(updated.id, _group);
       await widget.library.setShelfMembership(
@@ -193,7 +275,7 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
           maxLines: lines,
           maxLength: limit,
           padding: const EdgeInsets.all(15),
-          style: TextStyle(
+          style: Theme.of(context).textTheme.bodyMedium!.copyWith(
             fontSize: 16,
             height: 1.6,
             color: Theme.of(context).colorScheme.onSurface,
@@ -209,8 +291,11 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
     ),
   );
   @override
-  Widget build(BuildContext context) => PopScope<void>(
-    canPop: !_busy,
+  Widget build(BuildContext context) => PopScope<LocalBookEditResult>(
+    canPop: !_busy && !_coverChanged,
+    onPopInvokedWithResult: (didPop, result) {
+      if (!didPop && !_busy) Navigator.pop(context, LocalBookEditResult.saved);
+    },
     child: Scaffold(
       body: Atmosphere(
         child: GlassHeaderLayout(
@@ -218,7 +303,12 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
             leading: GlassIconButton(
               icon: CupertinoIcons.back,
               label: '返回详情',
-              onPressed: _busy ? null : () => Navigator.maybePop(context),
+              onPressed: _busy
+                  ? null
+                  : () => Navigator.pop(
+                      context,
+                      _coverChanged ? LocalBookEditResult.saved : null,
+                    ),
             ),
             title: const ArchiveRouteTitle(
               title: '书籍配置',
@@ -235,6 +325,57 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
               MediaQuery.paddingOf(context).bottom + 32,
             ),
             children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  NovelCover(
+                    widget.books.book(widget.book.id) ?? widget.book,
+                    width: 80,
+                    height: 112,
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        GlassTextButton(
+                          key: const ValueKey('local-edit-cover'),
+                          onPressed: _busy ? null : _chooseCover,
+                          child: const AppText('更换封面'),
+                        ),
+                        if (widget.books.hasCustomCover(widget.book.id))
+                          GlassTextButton(
+                            key: const ValueKey('local-restore-cover'),
+                            onPressed: _busy
+                                ? null
+                                : () => _cover(restore: true),
+                            child: const AppText(
+                              '恢复原书封面',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              for (final original in widget.books.linkedOriginals(
+                widget.book.id,
+              )) ...[
+                AppText(
+                  '关联原文件 · ${original.title}',
+                  style: const TextStyle(fontSize: 14, height: 1.6),
+                ),
+                LocalTextRecovery(
+                  books: widget.books,
+                  bookId: original.id,
+                  documents: widget.documents,
+                  allowCopy: true,
+                  onChanged: () => setState(() {}),
+                ),
+                const SizedBox(height: 20),
+              ],
               _field('书名', _title, limit: 160),
               _field('作者', _author, limit: 160),
               Row(
@@ -264,7 +405,6 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
                 ),
               ),
               const SizedBox(height: 22),
-              _field('简介', _summary, lines: 5, limit: 4000),
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16),

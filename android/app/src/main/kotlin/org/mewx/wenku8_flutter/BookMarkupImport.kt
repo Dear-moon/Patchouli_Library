@@ -4,7 +4,6 @@ import java.io.File
 import java.io.InputStream
 import java.net.URI
 import java.util.Base64
-import java.util.zip.ZipFile
 import javax.xml.parsers.SAXParserFactory
 import org.xml.sax.Attributes
 import org.xml.sax.helpers.DefaultHandler
@@ -15,8 +14,11 @@ import org.commonmark.parser.Parser
 import org.commonmark.renderer.html.HtmlRenderer
 
 internal class BookMarkupImport(private val root: File,
-    private val pdf: ((File, BookEpubWriter) -> Unit)? = null) {
+    private val pdf: ((BookDocumentInput, BookEpubWriter) -> Unit)? = null) {
     fun convert(name: String, source: File, resource: ((String) -> InputStream?)? = null): Map<String, String> {
+        return convert(name, BookDocumentInput(source), resource)
+    }
+    fun convert(name: String, source: BookDocumentInput, resource: ((String) -> InputStream?)? = null): Map<String, String> {
         val work = File.createTempFile("document-", ".work", root).apply { check(delete() && mkdir()) }
         val output = File.createTempFile("import-", ".source", root)
         try {
@@ -25,6 +27,13 @@ internal class BookMarkupImport(private val root: File,
             when (name.substringAfterLast('.').lowercase()) {
                 "fb2" -> fb2(source, writer, work)
                 "docx" -> docx(source, writer)
+                "doc" -> {
+                    val rtf = source.inputStream().use { input ->
+                        val header = ByteArray(5)
+                        input.read(header) == 5 && header.toString(Charsets.US_ASCII) == "{\\rtf"
+                    }
+                    if (rtf) BookRtfImport.read(source, writer) else BookDocImport.read(source, writer)
+                }
                 "html", "htm", "xhtml" -> {
                     var tags = 0
                     source.inputStream().use { input ->
@@ -34,7 +43,7 @@ internal class BookMarkupImport(private val root: File,
                             require(tags <= 200000) { "HTML 结构过于复杂，请转换为 EPUB 后导入" }
                         }
                     }
-                    html(Jsoup.parse(source, null), writer, resource)
+                    source.inputStream().use { html(Jsoup.parse(it, null, ""), writer, resource) }
                 }
                 "md", "markdown" -> {
                     val normalized = File(work, "decoded.txt")
@@ -126,7 +135,7 @@ internal class BookMarkupImport(private val root: File,
         }
         visit(document.body()); flush()
     }
-    private fun fb2(source: File, writer: BookEpubWriter, work: File) {
+    private fun fb2(source: BookDocumentInput, writer: BookEpubWriter, work: File) {
         var body = false; var title = false; var p = false; var meta = ""; var binary: File? = null
         var binaryKey = ""; var binaryType = ""; var encoded: java.io.Writer? = null; var binarySize = 0L
         val text = StringBuilder()
@@ -176,9 +185,9 @@ internal class BookMarkupImport(private val root: File,
             }) }
         } finally { encoded?.close(); binary?.delete() }
     }
-    private fun docx(source: File, writer: BookEpubWriter) {
-        ZipFile(source).use { zip ->
-            val entries = zip.entries().toList(); var expanded = 0L
+    private fun docx(source: BookDocumentInput, writer: BookEpubWriter) {
+        source.zip().use { zip ->
+            val entries = zip.entries; var expanded = 0L
             require(entries.size <= 12000) { "DOCX 内文件过多" }
             for (entry in entries) {
                 require(entry.size >= 0 && entry.size <= 40L * 1024 * 1024 && expanded + entry.size <= 1024L * 1024 * 1024) { "DOCX 解压后超过大小限制" }

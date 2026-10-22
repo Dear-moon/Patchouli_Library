@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:tategaki/tategaki.dart'
@@ -8,6 +9,17 @@ import 'reader_content.dart';
 import 'reader_text.dart';
 import 'reader_preferences.dart';
 import 'local_image_layout.dart';
+import 'reader_rich_content.dart';
+
+// A vertical typographic substitution only. Source text, selection offsets,
+// copied quotations and bookmarks retain the original characters.
+String _verticalCluster(String source) => switch (source) {
+  '“' => '「',
+  '”' => '」',
+  '‘' => '『',
+  '’' => '』',
+  _ => source,
+};
 
 class ReaderTextAnchor {
   const ReaderTextAnchor(this.paragraph, this.offset);
@@ -23,11 +35,13 @@ class ReaderPageFragment {
     required this.rect,
     this.indent = false,
     this.image = false,
+    this.rule = false,
   });
   final int paragraph, start, end;
   final String text;
   final Rect rect;
   final bool indent, image;
+  final bool rule;
 }
 
 class ReaderVerticalGlyph {
@@ -40,11 +54,19 @@ class ReaderVerticalGlyph {
     required this.sourceEnd,
     required this.rect,
     required this.rotation,
+    this.ruby = '',
+    this.note,
+    this.emphasis = 0,
+    this.opacity = 1,
   });
   final String text;
   final int start, end, paragraph, sourceStart, sourceEnd;
   final Rect rect;
   final double rotation;
+  final String ruby;
+  final String? note;
+  final int emphasis;
+  final double opacity;
 }
 
 class ReaderLeaf {
@@ -52,20 +74,49 @@ class ReaderLeaf {
     List<ReaderPageFragment> fragments, {
     this.text = '',
     List<ReaderVerticalGlyph> glyphs = const [],
+    this.vertical = false,
   }) : fragments = List.unmodifiable(fragments),
-       glyphs = List.unmodifiable(glyphs);
+       _glyphs = List.unmodifiable(glyphs),
+       _columns = const [],
+       _glyphCache = null;
+  ReaderLeaf._vertical(
+    List<ReaderPageFragment> fragments,
+    this.text,
+    List<_VerticalColumn> columns,
+    this._glyphCache,
+  ) : vertical = true,
+      fragments = List.unmodifiable(fragments),
+      _columns = List.unmodifiable(columns),
+      _glyphs = const [];
   final List<ReaderPageFragment> fragments;
+  final bool vertical;
   final String text;
-  final List<ReaderVerticalGlyph> glyphs;
+  final List<ReaderVerticalGlyph> _glyphs;
+  final List<_VerticalColumn> _columns;
+  final _ReaderVerticalPageCache? _glyphCache;
+  List<ReaderVerticalGlyph> get glyphs => _glyphCache?.forPage(this) ?? _glyphs;
   ReaderTextAnchor get anchor => fragments.isEmpty
       ? const ReaderTextAnchor(0, 0)
       : ReaderTextAnchor(fragments.first.paragraph, fragments.first.start);
 }
 
 class ReaderPagination {
-  ReaderPagination(this.pages, this.size);
+  ReaderPagination(this.pages, this.size) : _glyphCache = null;
+  ReaderPagination._measured(this.pages, this.size, this._glyphCache);
   final List<ReaderLeaf> pages;
   final Size size;
+  final _ReaderVerticalPageCache? _glyphCache;
+  @visibleForTesting
+  int get debugGlyphPageBuilds => _glyphCache?.pageBuilds ?? 0;
+  @visibleForTesting
+  int get debugResidentGlyphPages => _glyphCache?._pages.length ?? 0;
+  @visibleForTesting
+  int get debugResidentGlyphCount =>
+      _glyphCache?._pages.values.fold<int>(
+        0,
+        (count, glyphs) => count + glyphs.length,
+      ) ??
+      0;
   int pageFor(ReaderTextAnchor anchor) {
     var nearest = 0;
     for (var p = 0; p < pages.length; p++) {
@@ -85,22 +136,126 @@ class ReaderPagination {
 }
 
 class _HorizontalMetrics {
-  _HorizontalMetrics(this.lines, this.starts);
-  final List<ui.LineMetrics> lines;
-  final List<int> starts;
+  _HorizontalMetrics(List<ui.LineMetrics> lines, List<int> starts)
+    : heights = Float64List(lines.length),
+      starts = Uint32List.fromList(starts) {
+    for (var i = 0; i < lines.length; i++) {
+      heights[i] = lines[i].height;
+    }
+  }
+  // Repacking only needs exact line heights and source boundaries. Do not keep
+  // every native line descriptor's baseline, width, ascent and other fields.
+  final Float64List heights;
+  final Uint32List starts;
 }
 
 class _VerticalMetrics {
   _VerticalMetrics(this.clusters, this.offsets, this.advances, this.rotations);
   final List<String> clusters;
-  final List<int> offsets;
+  final Uint32List offsets;
+  // Repeated glyphs share their boxed advances/rotations from the metric map.
+  // Tight reference lists are smaller than duplicating a double per position
+  // on pointer-compressed Android runtimes, and retain the same exact values.
   final List<double> advances, rotations;
+}
+
+class _VerticalColumn {
+  const _VerticalColumn({
+    required this.metrics,
+    required this.paragraph,
+    required this.first,
+    required this.end,
+    required this.pageStart,
+    required this.left,
+    required this.indent,
+    required this.font,
+    required this.extra,
+    required this.format,
+  });
+  final _VerticalMetrics metrics;
+  final int paragraph, first, end, pageStart;
+  final double left, indent, font, extra;
+  final ReaderRichParagraph format;
+}
+
+/// Keep complete page boundaries for progress, seeking and bookmarks, but build
+/// per-character drawing objects only when a leaf is used. Six leaves cover the
+/// current and neighbouring two-page spreads; reading a long chapter does not
+/// accumulate every visited page's glyph rectangles.
+class _ReaderVerticalPageCache {
+  final _pages = <ReaderLeaf, List<ReaderVerticalGlyph>>{};
+  int pageBuilds = 0;
+
+  List<ReaderVerticalGlyph> forPage(ReaderLeaf page) {
+    final cached = _pages.remove(page);
+    if (cached != null) {
+      _pages[page] = cached;
+      return cached;
+    }
+    final glyphs = <ReaderVerticalGlyph>[];
+    for (final column in page._columns) {
+      final metrics = column.metrics;
+      final sourceStart = metrics.offsets[column.first];
+      var y = column.indent;
+      for (var c = column.first; c < column.end; c++) {
+        if (metrics.clusters[c] == '\n') continue;
+        glyphs.add(
+          ReaderVerticalGlyph(
+            text: _verticalCluster(metrics.clusters[c]),
+            start: column.pageStart + metrics.offsets[c] - sourceStart,
+            end: column.pageStart + metrics.offsets[c + 1] - sourceStart,
+            paragraph: column.paragraph,
+            sourceStart: metrics.offsets[c],
+            sourceEnd: metrics.offsets[c + 1],
+            rect: Rect.fromLTWH(
+              column.left,
+              y,
+              column.font,
+              metrics.advances[c],
+            ),
+            rotation: metrics.rotations[c],
+            emphasis: column.format.emphasisAt(metrics.offsets[c]),
+            opacity: column.format.opacity,
+            ruby: column.format.ruby
+                .where(
+                  (r) =>
+                      r.start < metrics.offsets[c + 1] &&
+                      r.end > metrics.offsets[c],
+                )
+                .map(
+                  (r) => ReaderRichParagraph.rubyPart(
+                    r,
+                    metrics.offsets[c],
+                    metrics.offsets[c + 1],
+                  ),
+                )
+                .join(),
+            note: column.format.references
+                .where(
+                  (r) =>
+                      r.start < metrics.offsets[c + 1] &&
+                      r.end > metrics.offsets[c],
+                )
+                .firstOrNull
+                ?.id,
+          ),
+        );
+        y += metrics.advances[c] + column.extra;
+      }
+    }
+    final result = List<ReaderVerticalGlyph>.unmodifiable(glyphs);
+    _pages[page] = result;
+    if (_pages.length > 6) _pages.remove(_pages.keys.first);
+    pageBuilds++;
+    return result;
+  }
 }
 
 class _ReaderMeasurements {
   final horizontal = <int, _HorizontalMetrics>{};
   final vertical = <int, _VerticalMetrics>{};
-  final glyphs = <String, ({double advance, double rotation})>{};
+  final glyphs = <(String, int), ({double advance, double rotation})>{};
+  final complexGraphemes = <String, String>{};
 }
 
 /// A height change re-packs measured lines/columns; it must not shape an entire
@@ -134,7 +289,7 @@ Future<ReaderPagination?> paginateReader({
 }) async {
   final pages = <ReaderLeaf>[];
   var fragments = <ReaderPageFragment>[];
-  var glyphs = <ReaderVerticalGlyph>[];
+  var columns = <_VerticalColumn>[];
   var pageText = StringBuffer();
   var previousParagraph = -1;
   var y = 0.0;
@@ -145,7 +300,14 @@ Future<ReaderPagination?> paginateReader({
     textScaler: scaler,
     textAlign: preferences.justify ? TextAlign.justify : TextAlign.start,
   );
-  final vertical = preferences.mode == ReaderMode.vertical;
+  final baseVertical = preferences.mode == ReaderMode.vertical;
+  var vertical = baseVertical;
+  var forcePageBreak = false;
+  ReaderRichParagraph? previousFormat;
+  final glyphCache =
+      baseVertical || content.formats.values.any((f) => f.writing == 'vertical')
+      ? _ReaderVerticalPageCache()
+      : null;
   final font = scaler.scale(style.fontSize ?? 19);
   final columnWidth = font * (style.height ?? 1.72);
   final verticalStyle = style.copyWith(
@@ -156,20 +318,29 @@ Future<ReaderPagination?> paginateReader({
   final measured =
       cache?._for((
         content,
-        size.width,
-        style,
+        !baseVertical ||
+                content.formats.values.any((f) => f.writing == 'horizontal')
+            ? size.width
+            : null,
+        vertical ? verticalStyle : style,
         preferences.mode,
-        preferences.indent,
-        preferences.justify,
+        vertical ? null : preferences.indent,
+        vertical ? null : preferences.justify,
+        vertical ? preferences.letterSpacing : null,
         scaler.scale(style.fontSize ?? 19),
       )) ??
       _ReaderMeasurements();
   final glyphMetrics = measured.glyphs;
   void flush() {
     if (fragments.isEmpty) return;
-    pages.add(ReaderLeaf(fragments, text: pageText.toString(), glyphs: glyphs));
+    final text = pageText.toString();
+    pages.add(
+      columns.isEmpty
+          ? ReaderLeaf(fragments, text: text, vertical: vertical)
+          : ReaderLeaf._vertical(fragments, text, columns, glyphCache),
+    );
     fragments = [];
-    glyphs = [];
+    columns = [];
     pageText = StringBuffer();
     previousParagraph = -1;
     y = 0;
@@ -180,6 +351,67 @@ Future<ReaderPagination?> paginateReader({
     for (final index in content.order) {
       if (!current()) return null;
       final text = content.paragraphs[index];
+      final format = content.formats[index] ?? const ReaderRichParagraph();
+      if (forcePageBreak || format.breakBefore) {
+        flush();
+        previousFormat = null;
+      }
+      forcePageBreak = format.breakAfter;
+      final nextVertical = switch (format.writing) {
+        'vertical' => true,
+        'horizontal' => false,
+        _ => baseVertical,
+      };
+      if (nextVertical != vertical) {
+        flush();
+        vertical = nextVertical;
+        previousFormat = null;
+      }
+      final gap = format.gapBefore(
+        previousFormat,
+        font: font,
+        lineHeight: style.height ?? 1.72,
+        width: vertical ? size.height : size.width,
+        defaultGap: preferences.paragraphGap,
+      );
+      previousFormat = format;
+      if (vertical) {
+        right -= math.min(gap, math.max(0.0, size.width - columnWidth));
+      } else {
+        y += math.min(
+          gap,
+          math.max(
+            0.0,
+            size.height - font * math.max(style.height ?? 1.72, 2.15),
+          ),
+        );
+      }
+      if (format.rule) {
+        final extent = font * 1.25;
+        if ((!vertical && y + extent > size.height ||
+                vertical && right < extent) &&
+            fragments.isNotEmpty) {
+          flush();
+        }
+        fragments.add(
+          ReaderPageFragment(
+            paragraph: index,
+            start: 0,
+            end: text.length,
+            text: text,
+            rect: vertical
+                ? Rect.fromLTWH(right - extent, 0, extent, size.height)
+                : Rect.fromLTWH(0, y, size.width, extent),
+            rule: true,
+          ),
+        );
+        if (vertical) {
+          right -= extent;
+        } else {
+          y += extent;
+        }
+        continue;
+      }
       final imageUrl = readerIllustrationUrl(text);
       if (imageUrl?.startsWith('wenku-local:') == true &&
           localImageSizes.containsKey(imageUrl)) {
@@ -198,7 +430,11 @@ Future<ReaderPagination?> paginateReader({
               end: text.length,
               text: text,
               rect: Rect.fromLTWH(
-                (size.width - imageSize.width) / 2,
+                switch (format.alignment) {
+                  'left' || 'start' => 0,
+                  'right' || 'end' => size.width - imageSize.width,
+                  _ => (size.width - imageSize.width) / 2,
+                },
                 y,
                 imageSize.width,
                 imageSize.height,
@@ -206,7 +442,7 @@ Future<ReaderPagination?> paginateReader({
               image: true,
             ),
           );
-          y += imageSize.height + preferences.paragraphGap;
+          y += imageSize.height;
         } else {
           final width = math.max(
             math.min(columnWidth, size.width),
@@ -228,7 +464,7 @@ Future<ReaderPagination?> paginateReader({
               image: true,
             ),
           );
-          right -= width + preferences.paragraphGap;
+          right -= width;
         }
         continue;
       }
@@ -249,54 +485,98 @@ Future<ReaderPagination?> paginateReader({
       }
       if (text.isEmpty) continue;
       if (!vertical) {
-        final prefix = preferences.indent ? readerIndentPlaceholder : '';
+        final indent = preferences.indent && format.allowsIndent;
+        final prefix = indent ? readerIndentPlaceholder : '';
         final display = '$prefix$text';
         var metrics = measured.horizontal[index];
         if (metrics == null) {
           if (cache != null) cache.paragraphMeasurements++;
-          painter.text = readerParagraphSpan(
-            children: [TextSpan(text: text)],
-            style: style,
-            indent: preferences.indent,
+          final paragraphStyle = format.textStyle(style);
+          final span = readerParagraphSpan(
+            children: format.spans(text),
+            style: paragraphStyle,
+            indent: indent,
           );
-          painter.setPlaceholderDimensions(
-            readerIndentDimensions(preferences.indent, font),
+          final builder = ui.ParagraphBuilder(
+            paragraphStyle.getParagraphStyle(
+              textDirection: TextDirection.ltr,
+              textAlign: format.textAlign(
+                preferences.justify ? TextAlign.justify : TextAlign.start,
+              ),
+              textScaler: scaler,
+            ),
           );
-          painter.layout(maxWidth: size.width);
-          final lines = painter.computeLineMetrics();
-          final starts = <int>[];
-          for (final line in lines) {
-            final position = painter.getPositionForOffset(
-              Offset(0, line.baseline - line.ascent / 2),
+          span.build(
+            builder,
+            textScaler: scaler,
+            dimensions: readerIndentDimensions(indent, font),
+          );
+          final paragraph = builder.build();
+          try {
+            paragraph.layout(ui.ParagraphConstraints(width: size.width));
+            final lines = paragraph.computeLineMetrics();
+            final starts = <int>[0];
+            // getLineBoundary copies the whole native line-metrics vector on
+            // every query. Search the native logical line index instead: this
+            // also handles bidi text and oversized graphemes without a visual
+            // left-edge hit being mistaken for a source-text boundary.
+            for (var line = 1; line < lines.length; line++) {
+              var low = starts.last, high = display.length;
+              while (low < high) {
+                final middle = (low + high) ~/ 2;
+                final at = paragraph.getLineNumberAt(middle);
+                if (at != null && at < line) {
+                  low = middle + 1;
+                } else {
+                  high = middle;
+                }
+              }
+              starts.add(low);
+              if (clock.elapsedMilliseconds >= 4) {
+                await Future<void>.delayed(Duration.zero);
+                if (!current()) return null;
+                clock.reset();
+              }
+            }
+            starts.add(display.length);
+            metrics = measured.horizontal[index] = _HorizontalMetrics(
+              lines,
+              starts,
             );
-            starts.add(painter.getLineBoundary(position).start);
+          } finally {
+            paragraph.dispose();
           }
-          starts.add(display.length);
-          metrics = measured.horizontal[index] = _HorizontalMetrics(
-            lines,
-            starts,
-          );
         }
-        final lines = metrics.lines, starts = metrics.starts;
-        final breakLine = pageBreak?.paragraph == index
-            ? pageBreak!.offset == 0
-                  ? 0
-                  : starts.indexOf(pageBreak.offset + prefix.length)
-            : -1;
+        final heights = metrics.heights, starts = metrics.starts;
+        // A typography change can move the source anchor into the middle of
+        // a newly shaped line. Keep that line at top, rather than silently
+        // ignoring the break and jumping back an entire page.
+        var breakLine = -1;
+        if (pageBreak?.paragraph == index) {
+          final target = pageBreak!.offset + prefix.length;
+          var low = 0, high = heights.length;
+          while (low < high) {
+            final middle = (low + high) ~/ 2;
+            if (starts[middle] <= target) {
+              low = middle + 1;
+            } else {
+              high = middle;
+            }
+          }
+          breakLine = (low - 1).clamp(0, heights.length - 1);
+        }
         var line = 0;
-        while (line < lines.length) {
+        while (line < heights.length) {
           if (line == breakLine) flush();
-          if (y + lines[line].height > size.height + .1 &&
-              fragments.isNotEmpty) {
+          if (y + heights[line] > size.height + .1 && fragments.isNotEmpty) {
             flush();
           }
           final first = line;
           var height = 0.0;
-          while (line < lines.length &&
+          while (line < heights.length &&
               (line == first || line != breakLine) &&
-              (height == 0 ||
-                  y + height + lines[line].height <= size.height + .1)) {
-            height += lines[line++].height;
+              (height == 0 || y + height + heights[line] <= size.height + .1)) {
+            height += heights[line++];
           }
           final start = (starts[first] - prefix.length).clamp(0, text.length);
           final end = (starts[line] - prefix.length).clamp(start, text.length);
@@ -308,39 +588,71 @@ Future<ReaderPagination?> paginateReader({
                 end: end,
                 text: text.substring(start, end),
                 rect: Rect.fromLTWH(0, y, size.width, height),
-                indent: start == 0 && preferences.indent,
+                indent: start == 0 && indent,
               ),
             );
             y += height;
           }
-          if (line < lines.length) flush();
+          if (line < heights.length) flush();
         }
-        y += preferences.paragraphGap;
       } else {
         var metrics = measured.vertical[index];
+        final paragraphColumnWidth = format.ruby.isEmpty
+            ? columnWidth
+            : math.max(columnWidth, font * 1.6);
         if (metrics == null) {
           if (cache != null) cache.paragraphMeasurements++;
-          final clusters = text.characters.toList(growable: false);
-          final offsets = <int>[0];
-          final advances = <double>[];
-          final rotations = <double>[];
+          // Simple characters already use the runtime's single-character
+          // strings. Share only complex graphemes, within this layout cache.
+          final clusters = text.characters
+              .map(
+                (cluster) => cluster.length == 1
+                    ? cluster
+                    : measured.complexGraphemes.putIfAbsent(
+                        cluster,
+                        () => cluster,
+                      ),
+              )
+              .toList(growable: false);
+          final offsets = Uint32List(clusters.length + 1);
+          final advances = List<double>.filled(clusters.length, 0);
+          final rotations = List<double>.filled(clusters.length, 0);
           painter.textScaler = TextScaler.noScaling;
+          var c = 0;
           for (final cluster in clusters) {
-            offsets.add(offsets.last + cluster.length);
-            final metric = glyphMetrics.putIfAbsent(cluster, () {
+            offsets[c + 1] = offsets[c] + cluster.length;
+            final emphasis = format.emphasisAt(offsets[c]);
+            final metric = glyphMetrics.putIfAbsent((cluster, emphasis), () {
+              final display = _verticalCluster(cluster);
               final rotation = RotationRules.getRotationAngle(
-                cluster,
-                CharacterClassifier.classify(cluster),
+                display,
+                CharacterClassifier.classify(display),
                 true,
               );
-              if (rotation == 0) return (advance: font + 1, rotation: rotation);
-              painter.text = TextSpan(text: cluster, style: verticalStyle);
+              if (rotation == 0) {
+                return (
+                  advance:
+                      font + 1 + scaler.scale(preferences.letterSpacing - .1),
+                  rotation: rotation,
+                );
+              }
+              painter.text = TextSpan(
+                text: display,
+                style: ReaderRichParagraph.emphasized(verticalStyle, emphasis),
+              );
               painter.layout();
-              return (advance: painter.width + 1, rotation: rotation);
+              return (
+                advance:
+                    painter.width +
+                    1 +
+                    scaler.scale(preferences.letterSpacing - .1),
+                rotation: rotation,
+              );
             });
-            rotations.add(metric.rotation);
-            advances.add(metric.advance);
-            if (advances.length % 128 == 0 && clock.elapsedMilliseconds >= 4) {
+            rotations[c] = metric.rotation;
+            advances[c] = metric.advance;
+            c++;
+            if (c % 128 == 0 && clock.elapsedMilliseconds >= 4) {
               await Future<void>.delayed(Duration.zero);
               if (!current()) return null;
               clock.reset();
@@ -354,15 +666,19 @@ Future<ReaderPagination?> paginateReader({
           );
         }
         final clusters = metrics.clusters, offsets = metrics.offsets;
-        final advances = metrics.advances, rotations = metrics.rotations;
+        final advances = metrics.advances;
         var first = 0;
         final breakCluster = pageBreak?.paragraph == index
             ? offsets.indexOf(pageBreak!.offset)
             : -1;
         while (first < clusters.length) {
           if (first == breakCluster) flush();
-          if (right < columnWidth - .1 && fragments.isNotEmpty) flush();
-          final indent = first == 0 && preferences.indent ? font * 2 : 0.0;
+          if (right < paragraphColumnWidth - .1 && fragments.isNotEmpty) {
+            flush();
+          }
+          final indent = first == 0 && preferences.indent && format.allowsIndent
+              ? font * 2
+              : 0.0;
           var height = indent;
           var end = first;
           while (end < clusters.length &&
@@ -395,40 +711,49 @@ Future<ReaderPagination?> paginateReader({
           final pageStart = pageText.length;
           pageText.write(text.substring(sourceStart, sourceEnd));
           previousParagraph = index;
-          final width = math.min(columnWidth, size.width);
+          final width = math.min(paragraphColumnWidth, size.width);
           final left = right - width;
           final used = advances
               .getRange(first, end)
               .fold(0.0, (sum, value) => sum + value);
           final extra =
-              preferences.justify &&
+              format.textAlign(
+                        preferences.justify
+                            ? TextAlign.justify
+                            : TextAlign.start,
+                      ) ==
+                      TextAlign.justify &&
                   end < clusters.length &&
                   end - first > 1 &&
                   clusters[end - 1] != '\n'
               ? math.max(0.0, (size.height - indent - used) / (end - first - 1))
               : 0.0;
-          var glyphY = indent;
+          final alignmentOffset = switch (format.alignment) {
+            'right' || 'end' => math.max(0.0, size.height - indent - used),
+            'center' => math.max(0.0, size.height - indent - used) / 2,
+            _ => 0.0,
+          };
+          var glyphY = indent + alignmentOffset;
           for (var c = first; c < end; c++) {
             if (clusters[c] == '\n') continue;
-            glyphs.add(
-              ReaderVerticalGlyph(
-                text: clusters[c],
-                start: pageStart + offsets[c] - sourceStart,
-                end: pageStart + offsets[c + 1] - sourceStart,
-                paragraph: index,
-                sourceStart: offsets[c],
-                sourceEnd: offsets[c + 1],
-                rect: Rect.fromLTWH(
-                  left + (width - font) / 2,
-                  glyphY,
-                  font,
-                  advances[c],
-                ),
-                rotation: rotations[c],
-              ),
-            );
             glyphY += advances[c] + extra;
           }
+          columns.add(
+            _VerticalColumn(
+              metrics: metrics,
+              paragraph: index,
+              first: first,
+              end: end,
+              pageStart: pageStart,
+              left:
+                  left +
+                  (width - font - (format.ruby.isEmpty ? 0 : font * .52)) / 2,
+              indent: indent + alignmentOffset,
+              font: font,
+              extra: extra,
+              format: format,
+            ),
+          );
           fragments.add(
             ReaderPageFragment(
               paragraph: index,
@@ -446,7 +771,6 @@ Future<ReaderPagination?> paginateReader({
             clock.reset();
           }
         }
-        right -= preferences.paragraphGap;
         painter.textScaler = scaler;
       }
       if (clock.elapsedMilliseconds >= 4) {
@@ -456,7 +780,9 @@ Future<ReaderPagination?> paginateReader({
     }
     flush();
     if (pages.isEmpty) pages.add(ReaderLeaf(const []));
-    return current() ? ReaderPagination(List.unmodifiable(pages), size) : null;
+    return current()
+        ? ReaderPagination._measured(List.unmodifiable(pages), size, glyphCache)
+        : null;
   } finally {
     painter.dispose();
   }

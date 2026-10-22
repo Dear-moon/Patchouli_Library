@@ -6,6 +6,7 @@ import 'reader_pagination.dart';
 import 'reader_reflow.dart';
 import 'reader_speech_highlight.dart';
 import 'reader_turn_motion.dart';
+import 'reader_rich_content.dart';
 
 /// Adjacent pages use the same glyphs. Share their shaped paragraphs instead of
 /// paying for hundreds of native TextPainter layouts at every page boundary.
@@ -13,24 +14,37 @@ import 'reader_turn_motion.dart';
 class ReaderGlyphCache {
   ReaderGlyphCache({this.capacity = 1024});
   final int capacity;
-  final _painters = <String, TextPainter>{};
+  final _painters = <(String, int, double), TextPainter>{};
   TextStyle? _style;
   int debugShapeCount = 0;
 
-  TextPainter painter(String text, TextStyle style) {
+  TextPainter painter(
+    String text,
+    TextStyle style, {
+    int emphasis = 0,
+    double opacity = 1,
+  }) {
     if (_style != style) {
       clear();
       _style = style;
     }
-    final cached = _painters.remove(text);
+    final key = (text, emphasis, opacity);
+    final cached = _painters.remove(key);
     if (cached != null) {
-      _painters[text] = cached;
+      _painters[key] = cached;
       return cached;
     }
     final painter = TextPainter(
       text: TextSpan(
         text: text,
-        style: style.copyWith(height: 1, letterSpacing: 0),
+        style: ReaderRichParagraph.emphasized(
+          style.copyWith(
+            height: 1,
+            letterSpacing: 0,
+            color: style.color?.withValues(alpha: style.color!.a * opacity),
+          ),
+          emphasis,
+        ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
@@ -38,7 +52,7 @@ class ReaderGlyphCache {
       debugShapeCount++;
       return true;
     }());
-    _painters[text] = painter;
+    _painters[key] = painter;
     if (_painters.length > capacity) {
       _painters.remove(_painters.keys.first)!.dispose();
     }
@@ -246,8 +260,8 @@ class RenderReaderVerticalText extends RenderBox
         column
             .skip(1)
             .fold(
-              column.first.rect,
-              (bounds, g) => bounds.expandToInclude(g.rect),
+              _inkRect(column.first),
+              (bounds, g) => bounds.expandToInclude(_inkRect(g)),
             ),
     ];
   }
@@ -257,6 +271,15 @@ class RenderReaderVerticalText extends RenderBox
       _cache.painter(text, _style);
     }
   }
+
+  Rect _inkRect(ReaderVerticalGlyph glyph) => glyph.ruby.isEmpty
+      ? glyph.rect
+      : Rect.fromLTRB(
+          glyph.rect.left,
+          glyph.rect.top,
+          glyph.rect.right + (_style.fontSize ?? 19) * .55,
+          glyph.rect.bottom,
+        );
 
   @visibleForTesting
   int get debugTurnColumnCount => _turnColumns.length;
@@ -447,7 +470,6 @@ class RenderReaderVerticalText extends RenderBox
     return nearest;
   }
 
-  TextPainter _painter(String text) => _cache.painter(text, _style);
   @override
   void paint(PaintingContext context, Offset offset) {
     final canvas = context.canvas;
@@ -603,7 +625,12 @@ class RenderReaderVerticalText extends RenderBox
       debugGlyphPaintCalls++;
       return true;
     }());
-    final painter = _painter(glyph.text);
+    final painter = _cache.painter(
+      glyph.text,
+      _style,
+      emphasis: glyph.emphasis,
+      opacity: glyph.opacity,
+    );
     var centre = rect.center;
     if ('，。、'.contains(glyph.text)) {
       centre += Offset(rect.width * .22, -rect.width * .22);
@@ -619,6 +646,34 @@ class RenderReaderVerticalText extends RenderBox
     if (scale != 1) canvas.scale(scale);
     painter.paint(canvas, Offset(-painter.width / 2, -painter.height / 2));
     canvas.restore();
+    if (glyph.ruby.isNotEmpty) {
+      final letters = glyph.ruby.characters.toList();
+      final step = rect.height / letters.length;
+      for (var i = 0; i < letters.length; i++) {
+        final label = TextPainter(
+          textDirection: TextDirection.ltr,
+          text: TextSpan(
+            text: letters[i],
+            style: _style.copyWith(
+              color: _style.color?.withValues(
+                alpha: _style.color!.a * glyph.opacity,
+              ),
+              fontSize: (_style.fontSize ?? 19) * .48,
+              height: 1,
+              letterSpacing: 0,
+            ),
+          ),
+        )..layout();
+        label.paint(
+          canvas,
+          Offset(
+            rect.right + 1,
+            rect.top + step * i + (step - label.height) / 2,
+          ),
+        );
+        label.dispose();
+      }
+    }
   }
 
   ReaderVerticalGlyph? _glyphFor(int position, {bool end = false}) {

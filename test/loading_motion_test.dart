@@ -82,7 +82,7 @@ void main() {
     },
   );
 
-  testWidgets('library loading is a static skeleton without a loader', (
+  testWidgets('library loading waves books without a separate spinner', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -96,8 +96,8 @@ void main() {
     expect(find.byType(CupertinoActivityIndicator), findsNothing);
     final semantics = tester.ensureSemantics();
     expect(find.bySemanticsLabel('正在翻开文库'), findsOneWidget);
-    await tester.pumpAndSettle();
-    expect(tester.binding.transientCallbackCount, 0);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.binding.transientCallbackCount, greaterThan(0));
     expect(find.byType(FrostedHeader), findsOneWidget);
     repository.books.complete(demoNovels);
     await tester.pumpAndSettle();
@@ -113,6 +113,9 @@ void main() {
   ) async {
     SharedPreferences.setMockInitialValues({});
     final state = await LibraryState.load();
+    await state.setReaderPreferences(
+      state.readerPreferences.copyWith(chapterEntrance: true),
+    );
     final repository = _PendingContent();
     await tester.pumpWidget(
       MaterialApp(

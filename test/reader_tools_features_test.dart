@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support/reader_panels.dart';
+import 'support/background_fixture.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_ui.dart';
 import 'package:wenku8_flutter/library_state.dart';
@@ -35,20 +36,36 @@ ScrollableState _article(WidgetTester tester) => tester.state<ScrollableState>(
       .first,
 );
 
-void _expectBookmarkCentred(WidgetTester tester, ReadingPosition saved) {
+void _expectBookmarkVisible(WidgetTester tester, ReadingPosition saved) {
   final paragraph = find.byKey(ValueKey('paragraph-${saved.paragraphIndex}'));
   expect(paragraph, findsOneWidget);
-  final rect = tester.getRect(paragraph);
+  final rect = tester.getRect(
+    find.descendant(of: paragraph, matching: find.byType(RichText)).first,
+  );
   final viewport = tester.getRect(find.byKey(const ValueKey('reader-scroll')));
   final media = MediaQuery.of(tester.element(paragraph));
+  final prefs = tester
+      .widget<ReaderPage>(find.byType(ReaderPage))
+      .state
+      .readerPreferences;
   final top =
-      media.viewPadding.top + FrostedHeader.toolbarHeight + 12 - viewport.top;
+      ((prefs.reflowOnChrome || prefs.hideSystemStatus
+                  ? 12.0
+                  : FrostedHeader.toolbarHeight + 12) -
+              prefs.marginTop)
+          .clamp(0.0, double.infinity);
   final bottom =
       _article(tester).position.viewportDimension - media.padding.bottom - 96;
   final point = rect.height <= bottom - top
       ? rect.center.dy
       : rect.top + rect.height * saved.paragraphFraction;
-  expect(point, closeTo(viewport.top + (top + bottom) / 2, 1));
+  // Rich EPUB blocks can include publisher spacing around their ink. Check the
+  // bookmarked text in the unobscured viewport, not the old wrapper's centre.
+  expect(point, inInclusiveRange(viewport.top + top, viewport.top + bottom));
+  if (rect.height <= bottom - top) {
+    expect(rect.top, greaterThanOrEqualTo(viewport.top + top));
+    expect(rect.bottom, lessThanOrEqualTo(viewport.top + bottom));
+  }
 }
 
 Future<void> _io(WidgetTester tester) async {
@@ -76,7 +93,10 @@ void main({
       'readerChromeHintSeen': true,
       'reduceMotion': true,
     });
-    state = await LibraryState.load();
+    state = LibraryState(
+      await SharedPreferences.getInstance(),
+      backgrounds: EmptyReaderBackgrounds(),
+    );
     remote = OfflineFixtureRepository();
     boundary = GlobalKey();
   });
@@ -127,7 +147,7 @@ void main({
   }
 
   testWidgets(
-    'page-effect choices wrap at large text, persist and do not repaginate',
+    'page-effect and speed choices wrap at large text, persist and do not repaginate',
     (tester) async {
       tester.view.physicalSize = const Size(320, 740);
       tester.view.devicePixelRatio = 1;
@@ -160,6 +180,22 @@ void main({
         expect(controller.debugLayoutGeneration, generation);
         expect(tester.takeException(), isNull);
       }
+      for (final speed in ReaderPageSpeed.values) {
+        final button = find.byKey(ValueKey('reader-page-speed-${speed.name}'));
+        await tester.ensureVisible(button);
+        await tester.pumpAndSettle();
+        await tester.tap(button);
+        await _io(tester);
+        expect(state.readerPreferences.pageSpeed, speed);
+        expect(controller.debugLayoutGeneration, generation);
+        expect(tester.takeException(), isNull);
+      }
+      await tester.ensureVisible(find.text('翻页速度'));
+      await tester.pumpAndSettle();
+      await captureReview(tester, boundary, 'reader-page-speed-compact-dark');
+      final restored = await LibraryState.load();
+      expect(restored.readerPreferences.pageSpeed, ReaderPageSpeed.quick);
+      restored.dispose();
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -367,7 +403,7 @@ void main({
             .first,
       );
       await tester.pumpAndSettle();
-      _expectBookmarkCentred(tester, mark.position);
+      _expectBookmarkVisible(tester, mark.position);
       final landing = _article(tester).position.pixels;
       expect(landing, lessThan(position));
       expect(remote.calls.length, requests);
@@ -416,7 +452,7 @@ void main({
       );
       await tester.pumpAndSettle();
       expect(state.positionFor(71)!.chapterId, mark.position.chapterId);
-      _expectBookmarkCentred(tester, mark.position);
+      _expectBookmarkVisible(tester, mark.position);
       expect(tester.takeException(), isNull);
     },
   );
@@ -434,7 +470,7 @@ void main({
   );
 
   testWidgets(
-    'bookmark stays centred after larger typography and includes safe insets',
+    'bookmark stays visible after larger typography and includes safe insets',
     (tester) async {
       tester.view.physicalSize = const Size(390, 760);
       tester.view.devicePixelRatio = 1;
@@ -468,7 +504,7 @@ void main({
             .first,
       );
       await tester.pumpAndSettle();
-      _expectBookmarkCentred(tester, mark.position);
+      _expectBookmarkVisible(tester, mark.position);
       expect(find.byType(ReaderLandingHighlight), findsOneWidget);
       await shot(tester, 'reader-bookmark-centred-large');
       expect(tester.takeException(), isNull);

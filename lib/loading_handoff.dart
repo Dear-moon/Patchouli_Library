@@ -13,12 +13,16 @@ class LoadingHandoff extends StatefulWidget {
     this.end = 1,
     this.axis = Axis.vertical,
     this.travel = Offset.zero,
+    this.crossfade = false,
   });
   final Animation<double> animation;
   final Widget placeholder, child;
   final double start, end;
   final Axis axis;
   final Offset travel;
+
+  /// Replace ink in place when the placeholder already has the final geometry.
+  final bool crossfade;
 
   @override
   State<LoadingHandoff> createState() => _LoadingHandoffState();
@@ -54,28 +58,43 @@ class _LoadingHandoffState extends State<LoadingHandoff> {
   }
 
   @override
-  Widget build(BuildContext context) => Stack(
-    fit: StackFit.passthrough,
-    children: [
-      if (widget.animation.value < widget.end &&
-          !MediaQuery.disableAnimationsOf(context))
-        Positioned.fill(
-          child: IgnorePointer(
-            child: ExcludeSemantics(
-              child: _SkeletonRemainder(
-                animation: widget.animation,
-                start: widget.start,
-                end: widget.end,
-                axis: widget.axis,
-                travel: widget.travel,
-                child: RepaintBoundary(child: widget.placeholder),
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return widget.child;
+    final opacity = widget.animation.drive(
+      CurveTween(
+        curve: Interval(widget.start, widget.end, curve: Curves.easeOutCubic),
+      ),
+    );
+    return Stack(
+      fit: StackFit.passthrough,
+      children: [
+        if (widget.animation.value < widget.end &&
+            !MediaQuery.disableAnimationsOf(context))
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ExcludeSemantics(
+                child: widget.crossfade
+                    ? FadeTransition(
+                        opacity: ReverseAnimation(opacity),
+                        child: RepaintBoundary(child: widget.placeholder),
+                      )
+                    : _SkeletonRemainder(
+                        animation: widget.animation,
+                        start: widget.start,
+                        end: widget.end,
+                        axis: widget.axis,
+                        travel: widget.travel,
+                        child: RepaintBoundary(child: widget.placeholder),
+                      ),
               ),
             ),
           ),
-        ),
-      widget.child,
-    ],
-  );
+        widget.crossfade
+            ? FadeTransition(opacity: opacity, child: widget.child)
+            : widget.child,
+      ],
+    );
+  }
 }
 
 class _SkeletonRemainder extends SingleChildRenderObjectWidget {

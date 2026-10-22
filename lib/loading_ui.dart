@@ -1,10 +1,14 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'archive_design.dart';
+import 'app_palette.dart';
 import 'archive_shelf_geometry.dart';
+import 'archive_shelf_loading.dart';
 import 'book_collection_layout.dart';
+import 'performance_preferences.dart';
 
 enum SkeletonLayout {
   library,
@@ -20,6 +24,34 @@ enum SkeletonLayout {
   inline,
   button,
   cover,
+}
+
+/// Feedback for an existing page being updated, not a substitute for its data.
+class RefreshProgress extends StatelessWidget {
+  const RefreshProgress({super.key, this.label = '正在刷新'});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = Theme.of(context).colorScheme.onSurface;
+    return Semantics(
+      label: label,
+      liveRegion: true,
+      child: IgnorePointer(
+        child: Center(
+          child: RepaintBoundary(
+            child: LinearProgressIndicator(
+              value: MediaQuery.disableAnimationsOf(context) ? .5 : null,
+              minHeight: 2,
+              borderRadius: BorderRadius.circular(2),
+              color: ink.withValues(alpha: .45),
+              backgroundColor: ink.withValues(alpha: .06),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Static placeholders: no shimmer, repeating ticker, filter or loading mascot.
@@ -50,6 +82,13 @@ class LoadingSkeleton extends StatelessWidget {
                 top: topInset,
                 ink: Theme.of(context).colorScheme.onSurface,
                 dark: Theme.of(context).brightness == Brightness.dark,
+                base: Theme.of(context).brightness == Brightness.dark
+                    ? Theme.of(
+                            context,
+                          ).extension<AppTonalColors>()?.glassSurface ??
+                          ArchiveDesign.darkSurface
+                    : Theme.of(context).extension<AppTonalColors>()?.milk ??
+                          ArchiveDesign.milk,
               ),
               child: const SizedBox.expand(),
             ),
@@ -66,11 +105,13 @@ class _SkeletonPainter extends CustomPainter {
     required this.top,
     required this.ink,
     required this.dark,
+    required this.base,
   });
   final SkeletonLayout layout;
   final double top;
   final Color ink;
   final bool dark;
+  final Color base;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -215,6 +256,7 @@ class _SkeletonPainter extends CustomPainter {
       _ArchiveShelfSkeletonPainter(
         dark: dark,
         ink: ink,
+        base: base,
       ).paint(canvas, Size(bankWidth, rowHeight));
       canvas.restore();
       y += rowHeight + 16;
@@ -245,6 +287,7 @@ class _SkeletonPainter extends CustomPainter {
       layout != oldDelegate.layout ||
       top != oldDelegate.top ||
       ink != oldDelegate.ink ||
+      base != oldDelegate.base ||
       dark != oldDelegate.dark;
 }
 
@@ -289,10 +332,39 @@ class LibrarySkeleton extends StatelessWidget {
   );
 }
 
-/// A static parallel file bank, with the same solids, crest and allocated space
-/// as the loaded carousel. No legacy featured-card panel, shimmer or ticker.
-class ArchiveShelfSkeleton extends StatelessWidget {
+/// The loading wave uses the same solids and frame clock as the arriving bank.
+/// Other skeletons stay static, and reduced-motion keeps this bank still too.
+class ArchiveShelfSkeleton extends StatefulWidget {
   const ArchiveShelfSkeleton({super.key});
+  @override
+  State<ArchiveShelfSkeleton> createState() => _ArchiveShelfSkeletonState();
+}
+
+class _ArchiveShelfSkeletonState extends State<ArchiveShelfSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final _wave = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1700),
+  );
+  bool _animated = false;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animated =
+        !MediaQuery.disableAnimationsOf(context) &&
+        PerformanceScope.of(context).motion &&
+        PerformanceScope.of(context).shelf3d &&
+        TickerMode.valuesOf(context).enabled;
+    if (_animated && !_wave.isAnimating) _wave.repeat();
+    if (!_animated) _wave.stop();
+  }
+
+  @override
+  void dispose() {
+    _wave.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => IgnorePointer(
     child: ExcludeSemantics(
@@ -313,8 +385,18 @@ class ArchiveShelfSkeleton extends StatelessWidget {
                     child: CustomPaint(
                       key: const ValueKey('archive-shelf-skeleton'),
                       painter: _ArchiveShelfSkeletonPainter(
+                        wave: _animated ? _wave : null,
                         dark: Theme.of(context).brightness == Brightness.dark,
                         ink: Theme.of(context).colorScheme.onSurface,
+                        base: Theme.of(context).brightness == Brightness.dark
+                            ? Theme.of(
+                                    context,
+                                  ).extension<AppTonalColors>()?.glassSurface ??
+                                  ArchiveDesign.darkSurface
+                            : Theme.of(
+                                    context,
+                                  ).extension<AppTonalColors>()?.milk ??
+                                  ArchiveDesign.milk,
                       ),
                       child: SizedBox(
                         width: double.infinity,
@@ -343,9 +425,16 @@ class ArchiveShelfSkeleton extends StatelessWidget {
 }
 
 class _ArchiveShelfSkeletonPainter extends CustomPainter {
-  const _ArchiveShelfSkeletonPainter({required this.dark, required this.ink});
+  const _ArchiveShelfSkeletonPainter({
+    required this.dark,
+    required this.ink,
+    required this.base,
+    this.wave,
+  }) : super(repaint: wave);
   final bool dark;
   final Color ink;
+  final Color base;
+  final Listenable? wave;
   @override
   void paint(Canvas canvas, Size size) {
     final g = ArchiveShelfGeometry.coverFor(size.width);
@@ -357,7 +446,6 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
         ArchiveShelfGeometry.footprint(spine, g) / 2 +
         ArchiveShelfGeometry.pullDistance(g) * ArchiveShelfGeometry.depthX;
     final edge = (size.width / pitch / 2).ceil() + 5;
-    final base = dark ? ArchiveDesign.darkSurface : ArchiveDesign.milk;
     final rule = Paint()
       ..color = ink.withValues(alpha: .12)
       ..style = PaintingStyle.stroke
@@ -372,7 +460,17 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
           : 0.0;
       final origin =
           ArchiveShelfGeometry.origin(g, h, weight) +
-          Offset(centre + i * pitch, ArchiveShelfGeometry.railY(i.toDouble()));
+          Offset(
+            centre + i * pitch,
+            ArchiveShelfGeometry.railY(i.toDouble()) +
+                (wave == null
+                    ? 0
+                    : archiveLoadingLift(
+                        i.toDouble(),
+                        SchedulerBinding.instance.currentSystemFrameTimeStamp,
+                        1,
+                      )),
+          );
       final front = Offset(spine, spine * .1);
       final depth = Offset(
         g * ArchiveShelfGeometry.depthX,
@@ -429,7 +527,10 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ArchiveShelfSkeletonPainter oldDelegate) =>
-      dark != oldDelegate.dark || ink != oldDelegate.ink;
+      dark != oldDelegate.dark ||
+      ink != oldDelegate.ink ||
+      base != oldDelegate.base ||
+      wave != oldDelegate.wave;
 }
 
 class SearchSkeleton extends StatelessWidget {

@@ -9,12 +9,15 @@ import 'package:flutter/material.dart';
 import 'app_ui.dart';
 import 'app_search_field.dart';
 import 'reader_content.dart';
+import 'reader_rich_content.dart';
+import 'reader_annotations.dart';
 
 class ReaderMatch {
-  const ReaderMatch(this.paragraph, this.start, this.end);
+  const ReaderMatch(this.paragraph, this.start, this.end, {this.chapter});
   final int paragraph;
   final int start;
   final int end;
+  final int? chapter;
 }
 
 class ReaderFindResult {
@@ -61,8 +64,9 @@ Future<ReaderFindResult> findInReader(
 }
 
 class ReaderFindPanel extends StatefulWidget {
-  const ReaderFindPanel({super.key, required this.content});
+  const ReaderFindPanel({super.key, required this.content, this.onBookSearch});
   final ReaderContent content;
+  final VoidCallback? onBookSearch;
   @override
   State<ReaderFindPanel> createState() => _ReaderFindPanelState();
 }
@@ -133,6 +137,11 @@ class _ReaderFindPanelState extends State<ReaderFindPanel> {
                     code: 'READER / TEXT QUERY',
                   ),
                 ),
+                if (widget.onBookSearch != null)
+                  GlassTextButton(
+                    onPressed: widget.onBookSearch,
+                    child: const AppText('整书查找'),
+                  ),
                 GlassIconButton(
                   icon: CupertinoIcons.xmark,
                   label: '关闭章内查找',
@@ -256,6 +265,8 @@ class ReaderHighlightText extends StatelessWidget {
     this.indent = false,
     this.textAlign = TextAlign.start,
     this.sourceStart = 0,
+    this.format,
+    this.onNote,
   });
   final int index;
   final String text;
@@ -264,6 +275,20 @@ class ReaderHighlightText extends StatelessWidget {
   final bool indent;
   final TextAlign textAlign;
   final int sourceStart;
+  final ReaderRichParagraph? format;
+  final ValueChanged<String>? onNote;
+  Widget _annotate(BuildContext context, Widget text) => format == null
+      ? text
+      : ReaderAnnotations(
+          format: format!,
+          style: format!.textStyle(
+            DefaultTextStyle.of(context).style.merge(style),
+          ),
+          scaler: MediaQuery.textScalerOf(context),
+          prefix: indent ? readerIndentLength : 0,
+          onNote: onNote ?? (_) {},
+          child: text,
+        );
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<ReaderMatch?>(
     valueListenable: match,
@@ -272,39 +297,59 @@ class ReaderHighlightText extends StatelessWidget {
           selected.paragraph != index ||
           selected.end <= sourceStart ||
           selected.start >= sourceStart + text.length) {
-        return Text.rich(
-          readerParagraphSpan(
-            children: [TextSpan(text: text)],
-            style: style,
-            indent: indent,
+        return _annotate(
+          context,
+          Text.rich(
+            readerParagraphSpan(
+              children: format?.spans(text) ?? [TextSpan(text: text)],
+              style: format?.textStyle(style) ?? style,
+              indent: indent,
+            ),
+            key: ValueKey('paragraph-$index'),
+            style: format?.textStyle(style) ?? style,
+            textAlign: format?.textAlign(textAlign) ?? textAlign,
           ),
-          key: ValueKey('paragraph-$index'),
-          style: style,
-          textAlign: textAlign,
         );
       }
       final start = (selected.start - sourceStart).clamp(0, text.length);
       final end = (selected.end - sourceStart).clamp(start, text.length);
-      return Text.rich(
-        readerParagraphSpan(
-          style: style,
-          indent: indent,
-          children: [
-            TextSpan(text: text.substring(0, start)),
-            TextSpan(
-              text: text.substring(start, end),
-              style: TextStyle(
-                backgroundColor: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withValues(alpha: .14),
+      return _annotate(
+        context,
+        Text.rich(
+          readerParagraphSpan(
+            style: format?.textStyle(style) ?? style,
+            indent: indent,
+            children: [
+              TextSpan(
+                children:
+                    format?.slice(0, start).spans(text.substring(0, start)) ??
+                    [TextSpan(text: text.substring(0, start))],
               ),
-            ),
-            TextSpan(text: text.substring(end)),
-          ],
+              TextSpan(
+                children:
+                    format
+                        ?.slice(start, end)
+                        .spans(text.substring(start, end)) ??
+                    [TextSpan(text: text.substring(start, end))],
+                style: TextStyle(
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: .14),
+                ),
+              ),
+              TextSpan(
+                children:
+                    format
+                        ?.slice(end, text.length)
+                        .spans(text.substring(end)) ??
+                    [TextSpan(text: text.substring(end))],
+              ),
+            ],
+          ),
+          key: ValueKey('paragraph-$index'),
+          style: format?.textStyle(style) ?? style,
+          textAlign: format?.textAlign(textAlign) ?? textAlign,
         ),
-        key: ValueKey('paragraph-$index'),
-        style: style,
-        textAlign: textAlign,
       );
     },
   );

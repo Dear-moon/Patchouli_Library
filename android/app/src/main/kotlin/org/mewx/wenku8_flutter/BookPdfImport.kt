@@ -29,9 +29,12 @@ internal class BookPdfImport(private val context: Context, private val root: Fil
         }
     }
     fun read(source: File, writer: BookEpubWriter) {
+        read(BookDocumentInput(source), writer)
+    }
+    fun read(source: BookDocumentInput, writer: BookEpubWriter) {
         PDFBoxResourceLoader.init(context.applicationContext)
         val memory = MemoryUsageSetting.setupTempFileOnly().setTempDir(root)
-        PDDocument.load(source, memory).use { document ->
+        source.inputStream().use { input -> PDDocument.load(input, memory).use { document ->
             require(!document.isEncrypted && document.currentAccessPermission.canExtractContent()) { "不支持加密或禁止内容提取的 PDF" }
             require(document.numberOfPages in 1..10000) { "PDF 页数无效或超过 10000 页" }
             document.documentInformation.title?.trim()?.takeIf { it.isNotEmpty() }?.let { writer.title = it.take(2048) }
@@ -70,6 +73,6 @@ internal class BookPdfImport(private val context: Context, private val root: Fil
                     }
                 }
             } finally { imageFile.delete() }
-        }
+        } }
     }
 }

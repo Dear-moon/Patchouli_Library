@@ -19,8 +19,11 @@ The project provides presentation, local library and reader source.
 The licenses of included third-party components remain applicable; this notice
 does not change their source or attribution requirements.
 
-Source Han Serif CN Regular and Bold: Copyright Adobe, SIL Open Font License
-1.1. Official unmodified font files and notice: assets/fonts/.
+Optional unmodified font downloads, not bundled in the APK: Source Han Serif
+CN 2.003 and Source Han Sans CN 2.005, Adobe; LXGW WenKai GB Screen 1.530,
+LXGW and Klee Project Authors; Zhuque Fangsong 0.212 technical preview,
+TrionesType and Alegreya authors; Iansui 1.020, But Ko and Klee Project Authors.
+Each retains SIL Open Font License 1.1; original notices: assets/fonts/.
 
 Edge read-aloud v2 protocol adaptation: rany2/edge-tts,
 Copyright (c) 2025- rany <rany@riseup.net>, LGPL version 3.
@@ -44,3 +47,10 @@ OpenCC 1.1.9 dictionaries: BYVoid and contributors, Apache License 2.0.
 Unmodified dictionaries and provenance: assets/opencc/.
 Full license: assets/licenses/opencc.txt. The Dart display converter is
 implemented in this project; the OpenCC native engine is not included.
+
+juniversalchardet 2.0.4: Copyright 2016-2017 Alberto Fernandez,
+2006-2007 Kohei Taketa (Java port), 2001 Netscape Communications Corporation.
+Upstream MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later alternatives retained;
+this GPL 3 application uses the GPL 2.0-or-later option. Unmodified source,
+build files and notices: third_party/juniversalchardet-2.0.4/.
+Apache POI HWPF 5.5.1 and document dependency notices: assets/licenses/poi.txt.

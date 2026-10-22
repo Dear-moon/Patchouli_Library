@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -12,6 +13,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.Locale
 
 /** Public Android TTS only. File synthesis never plays sound or invokes private voice-assistant APIs. */
 class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
@@ -57,10 +59,11 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         when (call.method) {
             "engines" -> {
                 val services = context.packageManager.queryIntentServices(Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE), 0)
-                result.success(services.filter { SpeechLocalePolicy.supportsEngine(it.serviceInfo.packageName) }.map { info ->
+                val engines = services.filter { SpeechLocalePolicy.supportsEngine(it.serviceInfo.packageName) }.map { info ->
                     val name = info.serviceInfo.packageName
                     mapOf("id" to name, "name" to info.loadLabel(context.packageManager).toString())
-                }.distinctBy { it["id"] })
+                }.distinctBy { it["id"] }
+                result.success(if (engines.isEmpty()) engines else listOf(mapOf("id" to "@default", "name" to "系统默认")) + engines)
             }
             "voices" -> withEngine(call.argument<String>("engine"), result) { tts ->
                 val epoch = initEpoch
@@ -84,7 +87,7 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     context.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     result.success(null)
                 } catch (_: Exception) {
-                    result.error("TTS_SETTINGS", "请在手机设置搜索文字转语音，安装中文语音数据后重新检测", null)
+                    result.error("TTS_SETTINGS", "请在手机设置搜索文字转语音，安装相应语言数据后重新检测", null)
                 }
             }
             "synthesize" -> synthesize(call, result)
@@ -110,13 +113,18 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private fun withEngine(id: String?, result: MethodChannel.Result, action: (TextToSpeech) -> Unit) {
         if (!SpeechLocalePolicy.supportsEngine(id) || closed) { result.error("TTS_ENGINE", "请选择受支持的系统语音引擎", null); return }
+        // Follow a changed system default without recreating the engine for each
+        // paragraph. Only the public TTS setting and exported service are used.
         @Suppress("DEPRECATION")
-        val installed = context.packageManager.queryIntentServices(Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE), 0)
-            .any { it.serviceInfo.packageName == id }
+        val services = context.packageManager.queryIntentServices(Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE), 0)
+        @Suppress("DEPRECATION")
+        val configured = if (id == "@default") runCatching { Settings.Secure.getString(context.contentResolver, Settings.Secure.TTS_DEFAULT_SYNTH) }.getOrNull() else id
+        val resolved = if (id == "@default") configured?.takeIf { name -> services.any { it.serviceInfo.packageName == name } } ?: "@default" else id
+        val installed = if (resolved == "@default") services.isNotEmpty() else services.any { it.serviceInfo.packageName == resolved }
         if (!installed) { result.error("TTS_ENGINE", "该系统语音引擎尚未安装，请重新检测", null); return }
         if (job != null) { result.error("TTS_BUSY", "系统语音正在准备上一段", null); return }
-        if (engine == id && !initializing && session != null) { action(session!!); return }
-        if (initializing && engine != id) { result.error("TTS_BUSY", "系统语音引擎正在切换", null); return }
+        if (engine == resolved && !initializing && session != null) { action(session!!); return }
+        if (initializing && engine != resolved) { result.error("TTS_BUSY", "系统语音引擎正在切换", null); return }
         waiters.add { tts, error ->
             if (tts == null) result.error("TTS_INIT", error ?: "语音引擎尚未就绪", null)
             else try { action(tts) } catch (_: Exception) { result.error("TTS_VOICE", "读取系统音色失败，可重新检测", null) }
@@ -124,7 +132,7 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         if (initializing) return
         shutdownSession()
         session = null
-        engine = id
+        engine = resolved
         initializing = true
         val epoch = ++initEpoch
         initTimeout = Runnable {
@@ -137,7 +145,7 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             if (!initializing || closed || epoch != initEpoch) return@post
             if (status == TextToSpeech.SUCCESS) completeInit(session, null)
             else { shutdownSession(); session = null; completeInit(null, "系统语音引擎初始化失败") }
-        } }, id)
+        } }, resolved.takeUnless { it == "@default" })
     }
     private fun completeInit(tts: TextToSpeech?, error: String?) {
         initTimeout?.let(main::removeCallbacks)
@@ -152,6 +160,11 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val requestId = call.argument<String>("requestId").orEmpty()
         val text = call.argument<String>("text").orEmpty()
         val voiceName = call.argument<String>("voice").orEmpty()
+        val localeTag = call.argument<String>("locale")
+        val requestedLocale = SpeechLocalePolicy.requestedLocale(localeTag)
+        if (localeTag != null && requestedLocale == null) {
+            result.error("TTS_INPUT", "朗读语言无效", null); return
+        }
         val path = call.argument<String>("path").orEmpty()
         val file = try { File(path).canonicalFile } catch (_: Exception) { null }
         if (!requestId.matches(Regex("[a-f0-9]{32}")) || text.isBlank() || text.length > minOf(TextToSpeech.getMaxSpeechInputLength(), 3500) ||
@@ -189,14 +202,28 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             speechWorker.execute {
                 try {
                     if (epoch != synthEpoch || closed) return@execute
-                    val voice = tts.voices.orEmpty().firstOrNull { it.name == voiceName }
-                    if (voice == null || voice.isNetworkConnectionRequired || SpeechLocalePolicy.chineseTag(voice.locale) == null ||
-                        voice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) {
-                        main.post { guarded.error("TTS_OFFLINE", "该音色没有可用的离线中文语音数据，请重新检测或安装语音数据", null) }
-                        return@execute
+                    if (voiceName == "@default") {
+                        if (tts.setLanguage(requestedLocale ?: Locale.SIMPLIFIED_CHINESE) < TextToSpeech.LANG_AVAILABLE) {
+                            main.post { guarded.error(if (requestedLocale == null) "TTS_VOICE" else "TTS_LANGUAGE_UNAVAILABLE", "该引擎尚未安装对应语言的语音数据", null) }; return@execute
+                        }
+                    } else {
+                        val voice = tts.voices.orEmpty().firstOrNull { it.name == voiceName }
+                        if (voice == null || voice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) ||
+                            (requestedLocale != null && !SpeechLocalePolicy.matches(requestedLocale, voice.locale))) {
+                            main.post { guarded.error(if (requestedLocale == null) "TTS_VOICE" else "TTS_LANGUAGE_UNAVAILABLE", "该音色尚未安装或不支持对应语言", null) }; return@execute
+                        }
+                        if (tts.setVoice(voice) != TextToSpeech.SUCCESS) {
+                            main.post { guarded.error("TTS_VOICE", "该系统音色暂未就绪", null) }; return@execute
+                        }
                     }
-                    if (tts.setVoice(voice) != TextToSpeech.SUCCESS) {
-                        main.post { guarded.error("TTS_VOICE", "该系统音色暂未就绪", null) }; return@execute
+                    // Engines may silently substitute their default language.
+                    // Tagged multilingual paragraphs must never be read by it.
+                    if (requestedLocale != null) {
+                        val actual = tts.voice
+                        if (actual == null || !SpeechLocalePolicy.matches(requestedLocale, actual.locale) ||
+                            actual.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) {
+                            main.post { guarded.error("TTS_LANGUAGE_UNAVAILABLE", "没有对应语言的语音模型，已跳过该语言", null) }; return@execute
+                        }
                     }
                     tts.setSpeechRate(1f)
                     tts.setPitch(1f)
@@ -209,11 +236,14 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                             override fun onStart(utteranceId: String?) = Unit
                             override fun onDone(utteranceId: String?) { main.post { finishJob(utteranceId, null) } }
                             @Deprecated("Legacy engine callback")
-                            override fun onError(utteranceId: String?) { main.post { finishJob(utteranceId, "这一段离线语音合成失败", "TTS_CONTENT") } }
+                            override fun onError(utteranceId: String?) { main.post { finishJob(utteranceId, "这一段系统语音合成失败", "TTS_CONTENT") } }
                             override fun onError(utteranceId: String?, errorCode: Int) {
-                                val code = if (errorCode == TextToSpeech.ERROR_SYNTHESIS || errorCode == TextToSpeech.ERROR_INVALID_REQUEST || errorCode == TextToSpeech.ERROR)
-                                    "TTS_CONTENT" else "TTS_SYNTH"
-                                main.post { finishJob(utteranceId, "离线语音合成失败（$errorCode）", code) }
+                                val code = when (errorCode) {
+                                    TextToSpeech.ERROR_NOT_INSTALLED_YET -> "TTS_LANGUAGE_UNAVAILABLE"
+                                    TextToSpeech.ERROR_SYNTHESIS, TextToSpeech.ERROR_INVALID_REQUEST, TextToSpeech.ERROR -> "TTS_CONTENT"
+                                    else -> "TTS_SYNTH"
+                                }
+                                main.post { finishJob(utteranceId, "系统语音合成失败（$errorCode）", code) }
                             }
                             override fun onStop(utteranceId: String?, interrupted: Boolean) { main.post { finishJob(utteranceId, "合成已取消", "TTS_CANCELLED") } }
                         })
@@ -221,11 +251,11 @@ class SystemSpeechPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                             if (epoch != synthEpoch || closed) return@execute
                             try {
                                 if (tts.synthesizeToFile(text, Bundle(), file, requestId) != TextToSpeech.SUCCESS)
-                                    main.post { finishJob(requestId, "系统引擎未接受这一段离线合成请求", "TTS_CONTENT") }
-                            } catch (_: Exception) { main.post { finishJob(requestId, "离线语音合成失败") } }
+                                    main.post { finishJob(requestId, "系统引擎未接受这一段合成请求", "TTS_CONTENT") }
+                            } catch (_: Exception) { main.post { finishJob(requestId, "系统语音合成失败") } }
                         }
                     }
-                } catch (_: Exception) { main.post { guarded.error("TTS_SYNTH", "离线语音合成失败，请重试", null) } }
+                } catch (_: Exception) { main.post { guarded.error("TTS_SYNTH", "系统语音合成失败，请重试", null) } }
             }
         }
     }

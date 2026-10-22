@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_ui.dart';
+import 'app_window_insets.dart';
 import 'app_licenses.dart';
 import 'catalog.dart';
 import 'legacy_wenku_repository.dart';
@@ -31,6 +32,13 @@ import 'updates/update_page.dart';
 import 'wenku_account.dart';
 import 'wenku_features.dart';
 import 'wenku_shelf_sync.dart';
+import 'lan_reading_sync.dart';
+import 'lan_handoff_widgets.dart';
+import 'reader_handoff_navigation.dart';
+import 'reader_appearance.dart';
+import 'reader_illustrations.dart';
+import 'app_palette.dart';
+import 'book_open_monitor.dart';
 
 Future<void> main() async {
   final binding = WidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +47,10 @@ Future<void> main() async {
   // Do not hold the first frame while Android is applying window insets.
   unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
   final state = await LibraryState.load();
+  if (state.appPalette.source == AppPaletteSource.system ||
+      !state.appPalette.themedIcon) {
+    await state.refreshSystemPalette();
+  }
   if (chineseLocale(
         state.language.locale ?? binding.platformDispatcher.locale,
       ).countryCode !=
@@ -68,12 +80,18 @@ Future<void> main() async {
           network: network,
         )
       : const DemoNovelRepository();
+  if (repository is OfflineNovelRepository) {
+    ReaderIllustrationCache.shared.offlineReader =
+        repository.cache.readIllustration;
+  }
   if (repository is OfflineNovelRepository && repository.local != null) {
     await reconcileLocalSeries(repository.local!, state);
   }
   final features = account != null
       ? WenkuFeatures(
           account: account,
+          // The authenticated novellist response already contains book metadata.
+          // Reuse its adapter, pagination and the existing account session.
           publications: remote,
           shelfSync: WenkuShelfSync(
             account: account,
@@ -147,6 +165,8 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
   ListeningController? get listening => widget.listening;
   AppUpdates? get updates => widget.updates;
   final _updateNavigation = AppUpdateNavigation();
+  final _navigator = GlobalKey<NavigatorState>();
+  final _readerHandoff = ReaderHandoffNavigation();
   late String _lastTypeface = state.appFontId;
   Locale _systemLocale = chineseLocale(
     WidgetsBinding.instance.platformDispatcher.locale,
@@ -155,6 +175,128 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    state.settingsChanges.addListener(_orientationChanged);
+    _orientationChanged();
+    unawaited(_prepareLanSync());
+  }
+
+  bool? _portraitApplied;
+  void _orientationChanged() {
+    if (kIsWeb ||
+        ![
+          TargetPlatform.android,
+          TargetPlatform.iOS,
+        ].contains(defaultTargetPlatform)) {
+      return;
+    }
+    final force = state.forcePortrait;
+    if (_portraitApplied == force) return;
+    _portraitApplied = force;
+    unawaited(
+      SystemChrome.setPreferredOrientations(
+        force ? [DeviceOrientation.portraitUp] : [],
+      ),
+    );
+  }
+
+  @override
+  void didUpdateWidget(NovelApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state != state) {
+      oldWidget.state.settingsChanges.removeListener(_orientationChanged);
+      state.settingsChanges.addListener(_orientationChanged);
+      _portraitApplied = null;
+      _orientationChanged();
+    }
+  }
+
+  LanReadingSync? _lanSync;
+  Future<void> _openLocalBook(Novel book) async {
+    final position =
+        state.positionFor(book.id) ??
+        ReadingPosition(
+          chapter: 0,
+          chapterId: book.chapters.firstOrNull?.id ?? 0,
+          offset: 0,
+          fraction: 0,
+          fontSize: state.readerFontSizeFor(book.id),
+          width: 0,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+    await _readerHandoff.open(
+      bookId: book.id,
+      position: position,
+      page: ReaderPage(
+        novel: book,
+        state: state,
+        repository: repository,
+        initialChapter: position.chapter,
+        initialPosition: position,
+        directEntry: true,
+      ),
+      reduceMotion: state.reduceMotion,
+    );
+  }
+
+  Future<void> _continueNearbyBook(LanHandoffReceipt receipt) async {
+    final context = _navigator.currentState?.overlay?.context;
+    if (context == null || !context.mounted) {
+      throw const FormatException('阅读器暂未准备好，请重试');
+    }
+    final book = _lanSync?.books?.book(receipt.book.id);
+    if (book == null) {
+      throw const FormatException('这本书已从本机移除，请重新接收');
+    }
+    await _readerHandoff.open(
+      bookId: book.id,
+      position: receipt.position,
+      page: ReaderPage(
+        novel: book,
+        state: state,
+        repository: repository,
+        initialChapter: receipt.position.chapter,
+        initialPosition: receipt.position,
+        directEntry: true,
+      ),
+      reduceMotion: state.reduceMotion,
+    );
+    if (identical(_lanSync?.handoff.received, receipt)) {
+      _lanSync?.handoff.dismissReceipt();
+    }
+  }
+
+  Widget _nearbyNotice(Widget notice) => AnimatedBuilder(
+    animation: _readerHandoff,
+    child: notice,
+    builder: (context, child) {
+      final id = _readerHandoff.currentBookId;
+      return id == null
+          ? child!
+          : ReaderAppearance(
+              state: state,
+              appTheme: Theme.of(context),
+              bookId: id,
+              child: child!,
+            );
+    },
+  );
+
+  Future<void> _prepareLanSync() async {
+    if (defaultTargetPlatform != TargetPlatform.android ||
+        repository is! OfflineNovelRepository) {
+      return;
+    }
+    final sync = LanReadingSync(
+      state: state,
+      preferences: await SharedPreferences.getInstance(),
+      books: (repository as OfflineNovelRepository).local,
+    );
+    if (!mounted) {
+      sync.dispose();
+      return;
+    }
+    setState(() => _lanSync = sync);
+    await sync.initialize();
   }
 
   @override
@@ -171,19 +313,47 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
 
   int _localeRequest = 0;
 
-  static final _themes = <(TargetPlatform, Brightness, String), ThemeData>{};
+  Object? _themeKey;
+  final _themes = <Brightness, ThemeData>{};
+  ThemeData _theme(Brightness brightness) {
+    final key = (
+      defaultTargetPlatform,
+      state.appFontId,
+      state.appPalette.source,
+      state.appPalette.seed,
+      state.systemTonalColors?.signature,
+    );
+    if (_themeKey != key) {
+      _themeKey = key;
+      _themes.clear();
+    }
+    return _themes.putIfAbsent(
+      brightness,
+      () => novelTheme(
+        brightness,
+        fontFamily: state.appFontFamily,
+        palette: state.appPalette,
+        systemColors: state.systemTonalColors,
+      ),
+    );
+  }
 
-  ThemeData _theme(Brightness brightness) => _themes.putIfAbsent((
-    defaultTargetPlatform,
-    brightness,
-    state.appFontId,
-  ), () => novelTheme(brightness, fontFamily: state.appFontFamily));
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    if (lifecycle == AppLifecycleState.resumed &&
+        state.appPalette.source == AppPaletteSource.system) {
+      unawaited(state.refreshSystemPalette());
+    }
+  }
 
   @override
   void dispose() {
+    state.settingsChanges.removeListener(_orientationChanged);
     WidgetsBinding.instance.removeObserver(this);
     features?.shelfSync?.dispose();
     _updateNavigation.dispose();
+    _readerHandoff.dispose();
+    _lanSync?.dispose();
     super.dispose();
   }
 
@@ -195,6 +365,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
         final typefaceChanged = _lastTypeface != state.appFontId;
         _lastTypeface = state.appFontId;
         return MaterialApp(
+          navigatorKey: _navigator,
           title: '轻小说文库',
           locale: state.language.locale ?? _systemLocale,
           supportedLocales: const [
@@ -205,7 +376,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
           localeResolutionCallback: (locale, _) =>
               chineseLocale(state.language.locale ?? locale),
-          navigatorObservers: [_updateNavigation],
+          navigatorObservers: [_updateNavigation, _readerHandoff],
           debugShowCheckedModeBanner: false,
           scrollBehavior: const NovelScrollBehavior(),
           theme: _theme(Brightness.light),
@@ -218,43 +389,60 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
               ? Duration.zero
               : NovelMotion.enter,
           themeAnimationCurve: NovelMotion.ease,
-          builder: (context, child) {
-            final media = MediaQuery.of(context);
-            final content = PerformanceScope(
-              preferences: state.performance,
-              child: MediaQuery(
-                data: media.copyWith(
-                  disableAnimations:
-                      media.disableAnimations || state.effectiveReduceMotion,
-                ),
-                child: AnnotatedRegion<SystemUiOverlayStyle>(
-                  value: novelSystemUiStyle(Theme.of(context).brightness),
-                  child: AnimatedBuilder(
-                    animation: state.glassChanges,
-                    child: child,
-                    builder: (context, child) => GlassAppearance(
-                      blur: state.glassBlur,
-                      opacity: state.glassOpacity,
-                      child: ListeningScope(
-                        controller: listening,
-                        child: WenkuFeaturesScope(
-                          features: features,
-                          child: child!,
+          builder: (context, child) => AppWindowInsets(
+            child: Builder(
+              builder: (context) {
+                final media = MediaQuery.of(context);
+                final content = PerformanceScope(
+                  preferences: state.performance,
+                  child: MediaQuery(
+                    data: media.copyWith(
+                      disableAnimations:
+                          media.disableAnimations ||
+                          state.effectiveReduceMotion,
+                    ),
+                    child: AnnotatedRegion<SystemUiOverlayStyle>(
+                      value: novelSystemUiStyle(Theme.of(context).brightness),
+                      child: AnimatedBuilder(
+                        animation: state.glassChanges,
+                        child: child,
+                        builder: (context, child) => GlassAppearance(
+                          blur: state.glassBlur,
+                          opacity: state.glassOpacity,
+                          child: ListeningScope(
+                            controller: listening,
+                            child: LanSyncScope(
+                              sync: _lanSync,
+                              child: WenkuFeaturesScope(
+                                features: features,
+                                child: ReaderHandoffScope(
+                                  navigation: _readerHandoff,
+                                  child: LanHandoffMonitor(
+                                    handoff: _lanSync?.handoff,
+                                    onContinue: _continueNearbyBook,
+                                    reduceMotion: state.effectiveReduceMotion,
+                                    noticeWrapper: _nearbyNotice,
+                                    child: child!,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            );
-            return updates == null
-                ? content
-                : AppUpdateMonitor(
-                    updates: updates!,
-                    navigation: _updateNavigation,
-                    child: content,
-                  );
-          },
+                );
+                return updates == null
+                    ? content
+                    : AppUpdateMonitor(
+                        updates: updates!,
+                        navigation: _updateNavigation,
+                        child: content,
+                      );
+              },
+            ),
+          ),
           home: Builder(
             builder: (context) {
               // A newly attached Android surface can report a zero-sized view.
@@ -262,13 +450,24 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
               if (MediaQuery.sizeOf(context).isEmpty) {
                 return const SizedBox.shrink();
               }
-              return RepaintBoundary(
+              final home = RepaintBoundary(
                 child: HomeShell(
                   state: state,
                   repository: repository,
                   network: widget.network,
                 ),
               );
+              final repo = repository;
+              return defaultTargetPlatform == TargetPlatform.android &&
+                      repo is OfflineNovelRepository &&
+                      repo.local != null
+                  ? BookOpenMonitor(
+                      books: repo.local!,
+                      library: state,
+                      onOpen: _openLocalBook,
+                      child: home,
+                    )
+                  : home;
             },
           ),
         );

@@ -7,8 +7,10 @@ import 'book_collection_layout.dart';
 import 'catalog.dart';
 import 'feature_pages.dart';
 import 'library_state.dart';
+import 'book_categories.dart';
 import 'local_book_removal.dart';
 import 'local_books.dart';
+import 'local_maintenance_page.dart';
 
 Future<void> openLocalBookBatch(
   BuildContext context, {
@@ -51,6 +53,42 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
   void _toggle(int id) => setState(() {
     _selected.contains(id) ? _selected.remove(id) : _selected.add(id);
   });
+
+  Future<void> _move(Set<int> ids) async {
+    if (_busy || ids.isEmpty) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final organization = widget.library.organization;
+      final group = await chooseBookCategory(
+        context,
+        organization,
+        bookIds: ids,
+        reduceMotion: widget.library.reduceMotion,
+      );
+      if (group == null || !mounted) return;
+      await organization.assignMany(ids, group);
+      if (!mounted) return;
+      setState(() => _selected.removeAll(ids));
+      showNovelFeedback(
+        context,
+        '已将 ${ids.length} 本书移至「${organization.nameOf(group)}」',
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = error is FormatException
+              ? '${error.message}，选择已保留'
+              : '分类保存失败，选择已保留，请重试',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   Future<void> _remove(Set<int> ids) async {
     if (_busy || ids.isEmpty) return;
@@ -101,6 +139,7 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
     animation: Listenable.merge([
       widget.books,
       widget.library.shelfViewChanges,
+      widget.library.organization,
     ]),
     builder: (context, _) {
       final all = widget.books.books
@@ -124,6 +163,22 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
           code: 'LOCAL / ORGANIZE',
           canPop: !_busy,
           actions: [
+            GlassIconButton(
+              key: const ValueKey('local-batch-maintenance'),
+              icon: CupertinoIcons.wand_stars,
+              label: '修复与整理',
+              onPressed: _busy || selected.isEmpty
+                  ? null
+                  : () => pushNovelPage<void>(
+                      context,
+                      LocalMaintenancePage(
+                        books: widget.books,
+                        library: widget.library,
+                        selected: selected,
+                      ),
+                      reduceMotion: widget.library.reduceMotion,
+                    ),
+            ),
             GlassTextButton(
               key: const ValueKey('local-batch-all'),
               compact: true,
@@ -206,7 +261,16 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
                                   children: [
                                     NovelCover(book, width: 40, height: 56),
                                     const SizedBox(width: 12),
-                                    Expanded(child: _BookLabel(book)),
+                                    Expanded(
+                                      child: _BookLabel(
+                                        book,
+                                        category: widget.library.organization
+                                            .nameOf(
+                                              widget.library.organization
+                                                  .groupOf(book.id),
+                                            ),
+                                      ),
+                                    ),
                                     const SizedBox(width: 8),
                                     Icon(
                                       chosen
@@ -229,22 +293,36 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
                 top: false,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: GlassPillButton(
-                      key: const ValueKey('local-batch-remove'),
-                      icon: CupertinoIcons.trash,
-                      label: switch (_progress) {
-                        (final done, final total) => '正在处理 $done/$total',
-                        null =>
-                          selected.isEmpty
-                              ? '请选择书籍'
-                              : '移除 ${selected.length} 本书',
-                      },
-                      onPressed: _busy || selected.isEmpty
-                          ? null
-                          : () => _remove(selected),
-                    ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: GlassPillButton(
+                          key: const ValueKey('local-batch-category'),
+                          icon: CupertinoIcons.folder,
+                          label: '移动分类',
+                          onPressed: _busy || selected.isEmpty
+                              ? null
+                              : () => _move(selected),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: GlassPillButton(
+                          key: const ValueKey('local-batch-remove'),
+                          icon: CupertinoIcons.trash,
+                          label: switch (_progress) {
+                            (final done, final total) => '正在处理 $done/$total',
+                            null =>
+                              selected.isEmpty
+                                  ? '请选择书籍'
+                                  : '移除 ${selected.length} 本书',
+                          },
+                          onPressed: _busy || selected.isEmpty
+                              ? null
+                              : () => _remove(selected),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -257,8 +335,9 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
 }
 
 class _BookLabel extends StatelessWidget {
-  const _BookLabel(this.book);
+  const _BookLabel(this.book, {required this.category});
   final Novel book;
+  final String category;
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -282,6 +361,16 @@ class _BookLabel extends StatelessWidget {
           style: const TextStyle(fontSize: 12),
         ),
       ],
+      const SizedBox(height: 4),
+      AppText(
+        category,
+        style: TextStyle(
+          fontSize: 11,
+          color: CupertinoTheme.of(
+            context,
+          ).textTheme.textStyle.color?.withValues(alpha: .6),
+        ),
+      ),
     ],
   );
 }

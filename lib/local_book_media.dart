@@ -1,10 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute;
+import 'local_epub_media.dart';
 
 /// Portable, narrowly scoped references; imported books never access arbitrary
 /// file:// paths or send their illustration paths to the remote API.
 class LocalBookMedia {
   static Directory? root;
+  static Future<Uint8List>? Function(int id, String name)? externalImage;
   static final _pending = <String, Future<Uint8List>>{};
   static final _covers = <String, Uint8List>{};
   static final _coverFutures = <String, Future<Uint8List>>{};
@@ -23,7 +26,7 @@ class LocalBookMedia {
       !uri.hasQuery &&
       !uri.hasFragment &&
       RegExp(
-        r'^/(cover|img-[0-9]+)\.(png|jpg|jpeg|webp|gif)$',
+        r'^/(cover|cover-custom-[0-9]+|img-[0-9]+)\.(png|jpg|jpeg|webp|gif)$',
       ).hasMatch(uri.path);
 
   static Future<Uint8List> load(String source) async {
@@ -63,11 +66,25 @@ class LocalBookMedia {
   static Future<Uint8List> _read(String source) async {
     final uri = Uri.parse(source);
     if (root == null || !valid(uri)) throw const FormatException('本地插图地址无效');
-    final file = File('${root!.path}/${uri.host}${uri.path}');
-    if (await file.length() > 8 * 1024 * 1024) {
-      throw const FormatException('本地插图过大');
+    final directory = '${root!.path}/${uri.host}';
+    final file = File('$directory${uri.path}');
+    final Uint8List bytes;
+    if (await file.exists()) {
+      if (await file.length() > 8 * 1024 * 1024) {
+        throw const FormatException('本地插图过大');
+      }
+      bytes = await file.readAsBytes();
+    } else {
+      bytes =
+          await (externalImage?.call(
+                int.parse(uri.host),
+                uri.path.substring(1),
+              ) ??
+              compute(readLocalEpubImage, (
+                directory: directory,
+                name: uri.path.substring(1),
+              )));
     }
-    final bytes = await file.readAsBytes();
     if (uri.path.startsWith('/cover.')) {
       _rememberCover(source, bytes);
     }

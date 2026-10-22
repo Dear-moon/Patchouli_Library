@@ -19,7 +19,7 @@ void main({
   setUpAll(loadReviewFonts);
   for (final mode in [ReaderMode.paged, ReaderMode.vertical]) {
     testWidgets(
-      '${mode.name} reflow keeps the current page and reveals only the extension',
+      '${mode.name} reflow preserves source position and animates canonical pages',
       (tester) async {
         if (configureView) {
           tester.view.physicalSize = const Size(348, 754);
@@ -37,6 +37,7 @@ void main({
         final content = ReaderContent(fixture.paragraphs);
         final boundary = GlobalKey();
         const style = TextStyle(
+          fontFamily: 'Roboto',
           fontSize: 19,
           height: 1.72,
           color: Colors.black,
@@ -91,6 +92,7 @@ void main({
         controller.seek(.4);
         await fixture.settleReader(tester);
         final old = controller.debugLeaf!, oldSize = controller.pageSize!;
+        final oldFrame = tester.getSize(find.byType(PageView));
         final generation = controller.debugLayoutGeneration;
         final oldOrigin = tester.getTopLeft(find.byType(PageView));
         padding.value = const EdgeInsets.fromLTRB(24, 40, 24, 32);
@@ -108,8 +110,9 @@ void main({
         expect(find.byType(ReaderSkeleton), findsNothing);
         final morphFinder = find.byType(ReaderIncrementalViewport);
         var morph = tester.widget<ReaderIncrementalViewport>(morphFinder);
-        expect(morph.fromSize, Size(oldSize.width + 48, oldSize.height));
-        expect(morph.toSize.height, greaterThan(oldSize.height));
+        expect(morph.fromSize, oldFrame);
+        expect(morph.toSize, oldFrame);
+        expect(controller.pageSize!.height, greaterThan(oldSize.height));
         expect(
           tester.getTopLeft(morphFinder) + morph.viewportAt(0).topLeft,
           oldOrigin,
@@ -119,21 +122,30 @@ void main({
         morph = tester.widget<ReaderIncrementalViewport>(morphFinder);
         if (morph.animation.value < 1) {
           expect(morph.animation.value, greaterThan(0));
-          expect(
-            morph.viewportAt(morph.animation.value).height,
-            inExclusiveRange(oldSize.height, morph.toSize.height),
-          );
+          expect(morph.viewportAt(morph.animation.value).size, oldFrame);
           if (mode == ReaderMode.vertical) {
             final next = controller.debugLeaf!;
             final before = {
               for (final g in old.glyphs)
                 (g.paragraph, g.sourceStart, g.sourceEnd): g,
             };
-            final first = next.glyphs.first;
             expect(
-              first.rect,
-              before[(first.paragraph, first.sourceStart, first.sourceEnd)]!
-                  .rect,
+              next.glyphs.any(
+                (g) => before.containsKey((
+                  g.paragraph,
+                  g.sourceStart,
+                  g.sourceEnd,
+                )),
+              ),
+              isTrue,
+            );
+            expect(
+              tester
+                  .widget<ReaderReflowScope>(
+                    find.byType(ReaderReflowScope).first,
+                  )
+                  .previous,
+              same(old),
             );
             final render = tester.renderObject<RenderReaderVerticalText>(
               find.byType(ReaderVerticalText).first,
@@ -150,6 +162,11 @@ void main({
               isNot(Offset.zero),
             );
           }
+          await captureReview(
+            tester,
+            boundary,
+            '${mode.name}-incremental-extension',
+          );
           await capture?.call(
             tester,
             boundary,
@@ -158,6 +175,11 @@ void main({
         }
         await fixture.settleReader(tester);
         expect(controller.debugLayoutGeneration, generation + 1);
+        await captureReview(
+          tester,
+          boundary,
+          '${mode.name}-incremental-complete',
+        );
         await capture?.call(
           tester,
           boundary,

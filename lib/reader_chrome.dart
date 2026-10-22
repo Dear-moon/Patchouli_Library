@@ -2,7 +2,8 @@ import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 
 import 'app_ui.dart';
-import 'native_effects.dart' show NativeGlassGroup;
+import 'app_window_insets.dart';
+import 'native_effects.dart' show NativeGlassGroup, NativeScrollEdgeGroup;
 
 /// Scroll-edge treatment, mounted only while the reader controls are visible.
 class ReaderEdgeBlur extends StatelessWidget {
@@ -19,10 +20,9 @@ class ReaderEdgeBlur extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final view = View.of(context);
     final top = math.max(
       MediaQuery.paddingOf(context).top,
-      view.viewPadding.top / view.devicePixelRatio,
+      AppWindowInsets.viewPaddingOf(context).top,
     );
     final blur = GlassAppearance.of(context).blur;
     final topHeight =
@@ -37,34 +37,43 @@ class ReaderEdgeBlur extends StatelessWidget {
         final strength = Curves.easeInOut.transform(animation.value);
         if (strength == 0) return const SizedBox.shrink();
         return IgnorePointer(
-          child: Stack(
-            children: [
-              if (!highContrast)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: topHeight,
-                  child: ProgressiveBlur(
-                    maxSigma: blur * strength,
-                    plateauHeight: top,
+          // A shared backdrop can be reused as a whole filtered result when
+          // a GPU reduces both shrinking Gaussian kernels to identity. Their
+          // independent dstIn feathers then erase the destination for a frame.
+          // Keep the exact live radii and ramp, but give each moving edge its
+          // own input; the fully visible, scrolling reader still shares input.
+          child: NativeScrollEdgeGroup(
+            key: const ValueKey('reader-edge-input'),
+            enabled: animation.value == 1,
+            child: Stack(
+              children: [
+                if (!highContrast)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: topHeight,
+                    child: ProgressiveBlur(
+                      maxSigma: blur * strength,
+                      plateauHeight: top,
+                    ),
                   ),
-                ),
-              if (blurBottom)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  height:
-                      MediaQuery.viewPaddingOf(context).bottom +
-                      (compact ? 32 : 52),
-                  child: ProgressiveBlur(
-                    maxSigma: math.min(3, blur * .16) * strength,
-                    plateauHeight: MediaQuery.viewPaddingOf(context).bottom,
-                    fromBottom: true,
+                if (blurBottom)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height:
+                        MediaQuery.viewPaddingOf(context).bottom +
+                        (compact ? 32 : 52),
+                    child: ProgressiveBlur(
+                      maxSigma: math.min(3, blur * .16) * strength,
+                      plateauHeight: MediaQuery.viewPaddingOf(context).bottom,
+                      fromBottom: true,
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -112,6 +121,43 @@ class ReaderChromeLayer extends StatelessWidget {
         ),
       ),
     ),
+  );
+}
+
+/// The location line is plain text/paper, not live glass. Its small alpha layer
+/// can dissolve while the header glides in, without filtering the article or
+/// changing the backdrop origin of any glass controls.
+class ReaderLocationLayer extends StatelessWidget {
+  const ReaderLocationLayer({
+    super.key,
+    required this.chrome,
+    required this.child,
+  });
+  final Animation<double> chrome;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: chrome,
+    child: child,
+    builder: (context, child) {
+      final visible = 1 - Curves.easeInOutCubic.transform(chrome.value);
+      return Offstage(
+        offstage: visible == 0,
+        child: IgnorePointer(
+          child: ExcludeSemantics(
+            excluding: visible < .95,
+            child: Opacity(
+              opacity: visible,
+              child: Transform.translate(
+                offset: Offset(0, -6 * (1 - visible)),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      );
+    },
   );
 }
 

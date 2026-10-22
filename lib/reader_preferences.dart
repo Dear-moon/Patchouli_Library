@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'archive_design.dart';
+import 'personal_images.dart' show validBackgroundId;
+
+const minimumReaderFontSize = 10.0;
+const maximumReaderFontSize = 27.0;
 
 enum ReaderPaper {
   system('跟随外观'),
@@ -50,6 +54,30 @@ enum ReaderPageEffect {
   };
 }
 
+enum ReaderPageSpeed {
+  relaxed('舒缓', 1.35),
+  normal('标准', 1),
+  quick('利落', .7);
+
+  const ReaderPageSpeed(this.label, this.durationScale);
+  final String label;
+  final double durationScale;
+
+  Duration durationFor(ReaderPageEffect effect) => Duration(
+    microseconds: (effect.duration.inMicroseconds * durationScale).round(),
+  );
+}
+
+enum ReaderTextWeight {
+  regular('常规', FontWeight.w400),
+  medium('适中', FontWeight.w500),
+  bold('加粗', FontWeight.w600);
+
+  const ReaderTextWeight(this.label, this.weight);
+  final String label;
+  final FontWeight weight;
+}
+
 /// Reader-only settings: changing paper never changes the rest of the app.
 class ReaderPreferences {
   const ReaderPreferences({
@@ -63,6 +91,7 @@ class ReaderPreferences {
     this.indent = false,
     this.justify = false,
     this.tapPaging = false,
+    this.tapBothSidesNext = false,
     this.volumePaging = false,
     this.brightness,
     this.autoScrollSpeed = 24,
@@ -70,7 +99,17 @@ class ReaderPreferences {
     this.tapLayout = ReaderTapLayout.standard,
     this.edgeBrightness = false,
     this.pageEffect = ReaderPageEffect.staggered,
+    this.pageSpeed = ReaderPageSpeed.normal,
     this.hideSystemStatus = false,
+    this.reflowOnChrome = true,
+    this.chapterEntrance = false,
+    this.nightTextBrightness = .82,
+    this.letterSpacing = .1,
+    this.textWeight = ReaderTextWeight.regular,
+    this.statusSideInset = 0,
+    this.backgroundImage,
+    this.backgroundOpacity = .18,
+    this.backgroundFit = BoxFit.cover,
   });
   final ReaderPaper paper;
   final double margin, paragraphGap, autoScrollSpeed;
@@ -80,24 +119,40 @@ class ReaderPreferences {
   double get leftMargin => marginLeft ?? margin;
   double get rightMargin => marginRight ?? margin;
   double get bindingMargin => (leftMargin + rightMargin) / 2;
-  final bool indent, justify, tapPaging, volumePaging;
+  final bool indent, justify, tapPaging, tapBothSidesNext, volumePaging;
   final double? brightness;
   final ReaderMode mode;
   final ReaderTapLayout tapLayout;
   final bool edgeBrightness;
   final ReaderPageEffect pageEffect;
+  final ReaderPageSpeed pageSpeed;
   final bool hideSystemStatus;
-  String get layoutKey =>
-      leftMargin == 26 &&
-          rightMargin == 26 &&
-          marginTop == 8 &&
-          marginBottom == 8 &&
-          paragraphGap == 12 &&
-          !indent &&
-          !justify &&
-          mode == ReaderMode.scroll
-      ? ''
-      : '${leftMargin == rightMargin && marginTop == 8 && marginBottom == 8 ? '$leftMargin' : '$leftMargin,$marginTop,$rightMargin,$marginBottom'}:$paragraphGap:$indent:$justify${mode == ReaderMode.scroll ? '' : ':${mode.name}'}';
+  final bool reflowOnChrome;
+  final bool chapterEntrance;
+  final double nightTextBrightness;
+  final double letterSpacing;
+  final ReaderTextWeight textWeight;
+  final double statusSideInset;
+  final String? backgroundImage;
+  final double backgroundOpacity;
+  final BoxFit backgroundFit;
+  String get layoutKey {
+    final base =
+        leftMargin == 26 &&
+            rightMargin == 26 &&
+            marginTop == 8 &&
+            marginBottom == 8 &&
+            paragraphGap == 12 &&
+            !indent &&
+            !justify &&
+            mode == ReaderMode.scroll
+        ? ''
+        : '${leftMargin == rightMargin && marginTop == 8 && marginBottom == 8 ? '$leftMargin' : '$leftMargin,$marginTop,$rightMargin,$marginBottom'}:$paragraphGap:$indent:$justify${mode == ReaderMode.scroll ? '' : ':${mode.name}'}';
+    return letterSpacing == .1 && textWeight == ReaderTextWeight.regular
+        ? base
+        : '$base:text=$letterSpacing,${textWeight.name}';
+  }
+
   Color background(bool dark) => switch (paper) {
     ReaderPaper.system =>
       dark ? ArchiveDesign.darkBackground : const Color(0xFFF7F7F2),
@@ -106,10 +161,19 @@ class ReaderPreferences {
     ReaderPaper.sage => const Color(0xFFE4EBDD),
     ReaderPaper.night => ArchiveDesign.darkBackground,
   };
-  Color foreground(bool dark) =>
+  Color controlForeground(bool dark) =>
       paper == ReaderPaper.night || paper == ReaderPaper.system && dark
       ? ArchiveDesign.darkInk
       : const Color(0xFF30352F);
+  bool darkPaper(bool dark) =>
+      paper == ReaderPaper.night || paper == ReaderPaper.system && dark;
+  Color foreground(bool dark) => darkPaper(dark)
+      ? Color.lerp(
+          background(dark),
+          controlForeground(dark),
+          nightTextBrightness,
+        )!
+      : controlForeground(dark);
   Map<String, Object?> toJson() => {
     'paper': paper.name,
     'margin': margin,
@@ -121,6 +185,7 @@ class ReaderPreferences {
     'indent': indent,
     'justify': justify,
     'tapPaging': tapPaging,
+    'tapBothSidesNext': tapBothSidesNext,
     'volumePaging': volumePaging,
     'brightness': brightness,
     'autoScrollSpeed': autoScrollSpeed,
@@ -128,7 +193,17 @@ class ReaderPreferences {
     'tapLayout': tapLayout.name,
     'edgeBrightness': edgeBrightness,
     'pageEffect': pageEffect.name,
+    'pageSpeed': pageSpeed.name,
     'hideSystemStatus': hideSystemStatus,
+    'reflowOnChrome': reflowOnChrome,
+    'chapterEntrance': chapterEntrance,
+    'nightTextBrightness': nightTextBrightness,
+    'letterSpacing': letterSpacing,
+    'textWeight': textWeight.name,
+    'statusSideInset': statusSideInset,
+    if (backgroundImage != null) 'backgroundImage': backgroundImage,
+    'backgroundOpacity': backgroundOpacity,
+    'backgroundFit': backgroundFit.name,
   };
   factory ReaderPreferences.fromJson(Map<String, dynamic> json) {
     double number(String key, double min, double max, double fallback) {
@@ -144,13 +219,20 @@ class ReaderPreferences {
       'indent',
       'justify',
       'tapPaging',
+      'tapBothSidesNext',
       'volumePaging',
       'edgeBrightness',
       'hideSystemStatus',
+      'reflowOnChrome',
+      'chapterEntrance',
     ]) {
       if (json[key] != null && json[key] is! bool) {
         throw const FormatException('阅读偏好格式有误');
       }
+    }
+    if (json['backgroundImage'] != null &&
+        !validBackgroundId(json['backgroundImage'])) {
+      throw const FormatException('阅读背景记录有误');
     }
     return ReaderPreferences(
       paper: ReaderPaper.values.firstWhere(
@@ -169,18 +251,33 @@ class ReaderPreferences {
       indent: json['indent'] == true,
       justify: json['justify'] == true,
       tapPaging: json['tapPaging'] == true,
+      tapBothSidesNext: json['tapBothSidesNext'] == true,
       volumePaging: json['volumePaging'] == true,
       brightness: json['brightness'] == null
           ? null
-          : number('brightness', .03, 1, 1),
+          : number('brightness', 0, 1, 1),
+      nightTextBrightness: number('nightTextBrightness', .35, 1, .82),
+      letterSpacing: number('letterSpacing', -.5, 3, .1),
+      textWeight: ReaderTextWeight.values.byName(
+        json['textWeight'] ?? 'regular',
+      ),
+      statusSideInset: number('statusSideInset', 0, 96, 0),
+      backgroundImage: json['backgroundImage'] as String?,
+      backgroundOpacity: number('backgroundOpacity', .05, 1, .18),
+      backgroundFit: (json['backgroundFit'] ?? 'cover') == 'contain'
+          ? BoxFit.contain
+          : BoxFit.cover,
       autoScrollSpeed: number('autoScrollSpeed', 8, 80, 24),
       mode: ReaderMode.values.byName(json['mode'] ?? 'scroll'),
       tapLayout: ReaderTapLayout.values.byName(json['tapLayout'] ?? 'standard'),
       edgeBrightness: json['edgeBrightness'] == true,
       hideSystemStatus: json['hideSystemStatus'] == true,
+      reflowOnChrome: json['reflowOnChrome'] != false,
+      chapterEntrance: json['chapterEntrance'] == true,
       pageEffect: ReaderPageEffect.values.byName(
         json['pageEffect'] ?? 'staggered',
       ),
+      pageSpeed: ReaderPageSpeed.values.byName(json['pageSpeed'] ?? 'normal'),
     );
   }
   static ReaderPreferences fromRecord(Object? record) {
@@ -202,6 +299,7 @@ class ReaderPreferences {
     bool? indent,
     bool? justify,
     bool? tapPaging,
+    bool? tapBothSidesNext,
     bool? volumePaging,
     double? brightness,
     bool systemBrightness = false,
@@ -210,7 +308,18 @@ class ReaderPreferences {
     ReaderTapLayout? tapLayout,
     bool? edgeBrightness,
     ReaderPageEffect? pageEffect,
+    ReaderPageSpeed? pageSpeed,
     bool? hideSystemStatus,
+    bool? reflowOnChrome,
+    bool? chapterEntrance,
+    double? nightTextBrightness,
+    double? letterSpacing,
+    ReaderTextWeight? textWeight,
+    double? statusSideInset,
+    String? backgroundImage,
+    bool clearBackground = false,
+    double? backgroundOpacity,
+    BoxFit? backgroundFit,
   }) => ReaderPreferences(
     paper: paper ?? this.paper,
     margin: margin ?? this.margin,
@@ -222,6 +331,7 @@ class ReaderPreferences {
     indent: indent ?? this.indent,
     justify: justify ?? this.justify,
     tapPaging: tapPaging ?? this.tapPaging,
+    tapBothSidesNext: tapBothSidesNext ?? this.tapBothSidesNext,
     volumePaging: volumePaging ?? this.volumePaging,
     brightness: systemBrightness ? null : brightness ?? this.brightness,
     autoScrollSpeed: autoScrollSpeed ?? this.autoScrollSpeed,
@@ -229,6 +339,52 @@ class ReaderPreferences {
     tapLayout: tapLayout ?? this.tapLayout,
     edgeBrightness: edgeBrightness ?? this.edgeBrightness,
     pageEffect: pageEffect ?? this.pageEffect,
+    pageSpeed: pageSpeed ?? this.pageSpeed,
     hideSystemStatus: hideSystemStatus ?? this.hideSystemStatus,
+    reflowOnChrome: reflowOnChrome ?? this.reflowOnChrome,
+    chapterEntrance: chapterEntrance ?? this.chapterEntrance,
+    nightTextBrightness: nightTextBrightness ?? this.nightTextBrightness,
+    letterSpacing: letterSpacing ?? this.letterSpacing,
+    textWeight: textWeight ?? this.textWeight,
+    statusSideInset: statusSideInset ?? this.statusSideInset,
+    backgroundImage: clearBackground
+        ? null
+        : backgroundImage ?? this.backgroundImage,
+    backgroundOpacity: backgroundOpacity ?? this.backgroundOpacity,
+    backgroundFit: backgroundFit ?? this.backgroundFit,
+  );
+
+  /// A book can keep its typography while interaction and device settings
+  /// continue to follow the shared reader. Explicit null margins stay null.
+  ReaderPreferences withLayoutOf(ReaderPreferences layout) => ReaderPreferences(
+    paper: layout.paper,
+    margin: layout.margin,
+    marginLeft: layout.marginLeft,
+    marginRight: layout.marginRight,
+    marginTop: layout.marginTop,
+    marginBottom: layout.marginBottom,
+    paragraphGap: layout.paragraphGap,
+    indent: layout.indent,
+    justify: layout.justify,
+    mode: layout.mode,
+    nightTextBrightness: layout.nightTextBrightness,
+    letterSpacing: layout.letterSpacing,
+    textWeight: layout.textWeight,
+    backgroundImage: layout.backgroundImage,
+    backgroundOpacity: layout.backgroundOpacity,
+    backgroundFit: layout.backgroundFit,
+    tapPaging: tapPaging,
+    tapBothSidesNext: tapBothSidesNext,
+    volumePaging: volumePaging,
+    brightness: brightness,
+    autoScrollSpeed: autoScrollSpeed,
+    tapLayout: tapLayout,
+    edgeBrightness: edgeBrightness,
+    pageEffect: pageEffect,
+    pageSpeed: pageSpeed,
+    hideSystemStatus: hideSystemStatus,
+    reflowOnChrome: reflowOnChrome,
+    chapterEntrance: chapterEntrance,
+    statusSideInset: statusSideInset,
   );
 }

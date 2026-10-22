@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.4.6+163
+version: 0.4.7+183
 
 environment:
   sdk: ^3.11.3
@@ -37,6 +37,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   shared_preferences: ^2.5.5
+  material_color_utilities: ^0.13.0
   path_provider: ^2.1.6
   xml: ^7.0.1
   audio_service: ^0.18.19
@@ -50,6 +51,8 @@ dependencies:
   csslib: ^1.0.2
   tategaki: ^0.6.4
   characters: ^1.4.1
+  cryptography: ^2.9.0
+  diff_match_patch: ^0.4.1
   flutter_markdown_plus: ^1.0.12
   markdown: ^7.3.0
   url_launcher: ^6.3.3
@@ -68,6 +71,7 @@ dev_dependencies:
     sdk: flutter
   shared_preferences_platform_interface: ^2.4.1
   path_provider_platform_interface: ^2.1.3
+  vm_service: 15.3.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -82,6 +86,10 @@ flutter:
   assets:
     - assets/branding/app-icon.png
     - assets/fonts/OFL-SourceHanSerif.txt
+    - assets/fonts/OFL-SourceHanSans.txt
+    - assets/fonts/OFL-LXGWWenKaiScreen.txt
+    - assets/fonts/OFL-ZhuqueFangsong.txt
+    - assets/fonts/OFL-Iansui.txt
     - assets/licenses/GPL-3.0.txt
     - assets/licenses/edge-tts.txt
     - assets/licenses/libmobi.txt
@@ -89,17 +97,13 @@ flutter:
     - assets/licenses/commonmark.txt
     - assets/licenses/pdfbox.txt
     - assets/licenses/pdfbox-notice.txt
+    - assets/licenses/poi.txt
     - assets/licenses/bouncycastle.txt
     - assets/licenses/desugar-jdk.txt
     - assets/licenses/opencc.txt
+    - assets/licenses/juniversalchardet.txt
+    - assets/licenses/cronet.txt
     - assets/opencc/
-  fonts:
-    - family: SourceHanSerifCN
-      fonts:
-        - asset: assets/fonts/SourceHanSerifCN-Regular.otf
-          weight: 400
-        - asset: assets/fonts/SourceHanSerifCN-Bold.otf
-          weight: 700
   shaders:
     - shaders/continuous_blur.frag
     - shaders/analytic_glass.frag

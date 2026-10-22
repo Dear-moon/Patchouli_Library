@@ -110,7 +110,8 @@ void main() {
       expect(hk, contains('軟件'));
       expect(tw, contains('裡面'));
       expect(tw, contains('軟體'));
-      const marker = '<!--image-->https://images.example.invalid/书籍/1.jpg<!--image-->';
+      const marker =
+          '<!--image-->https://images.example.invalid/书籍/1.jpg<!--image-->';
       final content = ReaderContent([source, marker]);
       final localized = content.localized(const Locale('zh', 'TW'));
       expect(localized.paragraphs.first.length, source.length);

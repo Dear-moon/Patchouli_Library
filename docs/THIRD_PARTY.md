@@ -6,9 +6,9 @@
 
 此工程用于界面、阅读器、本地书库与相关模型开发。构建和导出方式见 [构建指南](RELEASING.md)。
 
-## 内置字体：Adobe 思源宋体 CN
+## 可下载字体
 
-使用 Adobe 官方发布的 CN 子集 Regular / Bold 原始字体，未提取或分发 OPPO 系统字体。
+字体按需下载，不随 APK 预装，支持删除。思源宋体 CN 2.003、思源黑体 CN 2.005、霞鹜文楷屏幕版 GB 1.530、朱雀仿宋 0.212（技术预览版）与芫荽 1.020 均使用作者发布的未修改文件，保留 SIL OFL 1.1。未提取或分发 OPPO 系统字体。各字体版权、固定来源与许可见 [字体来源记录](../assets/fonts/README.md)。
 
 - [官方仓库](https://github.com/adobe-fonts/source-han-serif)
 - [SIL Open Font License 1.1 原文与版权声明](../assets/fonts/OFL-SourceHanSerif.txt)
@@ -36,7 +36,13 @@ Android 文档转换使用 [jsoup 1.23.2](https://jsoup.org/)（MIT，Jonathan H
 
 OpenJDK 兼容库通过 Gradle 依赖引入，源码与构建脚本见 [google/desugar_jdk_libs](https://github.com/google/desugar_jdk_libs)。Classpath Exception 与原始许可随 `assets/licenses/` 保留。
 
-依赖版本锁定于 `pubspec.lock`。Flutter、Cupertino Icons、音频与存储插件保留各自许可；Flutter 构建生成的许可集合可在 **设置 → 关于轻小说文库 → 开源许可与字体授权** 查看。该页面也包括上面的内置字体与协议适配声明。
+旧 Word DOC 在 Android 本机使用 [Apache POI HWPF 5.5.1](https://poi.apache.org/components/document/) 转换，未接入在线转换服务。Apache POI 及其文档依赖的原许可与声明保存在 [`assets/licenses/poi.txt`](../assets/licenses/poi.txt)，注册到应用开源许可页。
+
+旧编码 TXT 检测使用 [juniversalchardet 2.0.4](https://github.com/albfernandez/juniversalchardet/tree/v2.0.4)。保留 MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later 三选一许可，本应用选择 GPL 2.0-or-later 条款并以 GPL 3 分发。完整未修改源码、构建与测试在 `third_party/juniversalchardet-2.0.4/`；[来源记录](../third_party/JUNIVERSALCHARDET.md)与[原许可](../assets/licenses/juniversalchardet.txt)随应用提供。
+
+局域网续读使用 `cryptography` 2.9.0（Apache-2.0），仅在用户开启并配对后交换阅读位置、书签和分类，不使用外部服务器。旧 EPUB 定位迁移使用 `diff_match_patch` 0.4.1（Apache-2.0），仅在本机计算定位映射。系统朗读通过 Android 公开 TextToSpeech 服务发现与文件合成接口连接已安装引擎。
+
+依赖版本锁定于 `pubspec.lock`。Flutter、Cupertino Icons、音频与存储插件保留各自许可；Flutter 构建生成的许可集合可在 **设置 → 关于轻小说文库 → 开源许可与字体授权** 查看。该页面也包括可下载字体与协议适配声明。
 
 液态玻璃基于 [liquid_glass_easy 5.0.0](https://pub.dev/packages/liquid_glass_easy/versions/5.0.0)，作者 Ahmed Gamil，使用 MIT License。源码和原许可保留于 [`third_party/liquid_glass_easy`](../third_party/liquid_glass_easy)；本地 GPU 性能修改单独记录在 [`PATCHES.md`](../third_party/liquid_glass_easy/PATCHES.md)。应用保留原作者署名，版权与许可随源码及 Flutter 的开源许可集合分发。
 

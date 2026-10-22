@@ -74,6 +74,47 @@ void main({
     expect(tabletop.pages.every((rect) => rect.bottom <= 680), true);
   });
 
+  test(
+    'a flat crease never restricts a compact inner screen to half a page',
+    () {
+      for (final width in [600.0, 668.0, 972.0]) {
+        for (final state in [
+          DisplayFeatureState.postureFlat,
+          DisplayFeatureState.unknown,
+        ]) {
+          final normal = ReaderBookLayout.resolve(
+            viewport: Size(width, 800),
+            margin: 26,
+          );
+          final folded = ReaderBookLayout.resolve(
+            viewport: Size(width, 800),
+            margin: 26,
+            features: [
+              DisplayFeature(
+                bounds: Rect.fromLTWH(width / 2, 0, 0, 900),
+                type: DisplayFeatureType.fold,
+                state: state,
+              ),
+            ],
+          );
+          expect(folded.pages, normal.pages);
+        }
+      }
+      final halfOpen = ReaderBookLayout.resolve(
+        viewport: const Size(600, 800),
+        margin: 26,
+        features: const [
+          DisplayFeature(
+            bounds: Rect.fromLTWH(300, 0, 0, 900),
+            type: DisplayFeatureType.fold,
+            state: DisplayFeatureState.postureHalfOpened,
+          ),
+        ],
+      );
+      expect(halfOpen.pageSize.width, lessThan(300));
+    },
+  );
+
   ReaderPagedController controller(WidgetTester tester) =>
       tester.widget<ReaderPagedView>(find.byType(ReaderPagedView)).controller;
 
@@ -94,6 +135,43 @@ void main({
   }
 
   for (final mode in [ReaderMode.paged, ReaderMode.vertical]) {
+    testWidgets('${mode.name} fills an unfolded compact display', (
+      tester,
+    ) async {
+      window(tester, const Size(650, 800));
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetViewPadding);
+      final state = await fixture.library(mode);
+      addTearDown(state.dispose);
+      final boundary = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundary,
+          child: fixture.app(
+            state,
+            features: const [
+              DisplayFeature(
+                bounds: Rect.fromLTWH(325, 0, 0, 800),
+                type: DisplayFeatureType.fold,
+                state: DisplayFeatureState.postureFlat,
+              ),
+            ],
+          ),
+        ),
+      );
+      await fixture.settleReader(tester);
+      final paged = controller(tester);
+      expect(paged.pagesPerSpread, 1);
+      expect(paged.pageSize!.width, greaterThan(550));
+      await shot(tester, boundary, 'book-${mode.name}-compact-flat-fold');
+      expect(paged.pageBy(1), true);
+      await fixture.settleReader(tester);
+      expect(paged.page, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
     testWidgets('${mode.name} opens as a book and turns a complete spread', (
       tester,
     ) async {
@@ -148,7 +226,21 @@ void main({
       expect(paged.page, paged.pageCount - 1);
       expect(paged.visiblePages.last, paged.pageCount - 1);
       expect(paged.fraction, 1);
-      expect(paged.pageBy(1), false);
+      expect(
+        paged.pageBy(1),
+        true,
+        reason: 'The next chapter follows the same page-turn path.',
+      );
+      await fixture.settleReader(tester);
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(state.positionFor(fixture.book.id)!.chapter, 1);
+      paged.seek(1);
+      await fixture.settleReader(tester);
+      expect(
+        paged.pageBy(1),
+        false,
+        reason: 'Only the final chapter is the book boundary.',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
@@ -214,16 +306,14 @@ void main({
           expect(tester.binding.transientCallbackCount, 0);
         }
         final generation = paged.debugLayoutGeneration;
-        final anchor = paged.debugFirstVisibleAnchor!;
+        final anchor = paged.anchor!;
+        final shownStart = paged.debugFirstVisibleAnchor!;
         await tester.tapAt(const Offset(512, 320));
         await fixture.settleReader(tester);
         expect(paged.pagesPerSpread, 2);
         expect(paged.debugLayoutGeneration, generation + 1);
         expect(
-          (
-            paged.debugFirstVisibleAnchor!.paragraph,
-            paged.debugFirstVisibleAnchor!.offset,
-          ),
+          (paged.anchor!.paragraph, paged.anchor!.offset),
           (anchor.paragraph, anchor.offset),
         );
         expect(
@@ -231,6 +321,26 @@ void main({
           findsNothing,
         );
         await shot(tester, boundary, 'book-${mode.name}-hidden-chrome');
+        expect(
+          paged.visiblePages
+              .expand((index) => paged.debugPagination!.pages[index].fragments)
+              .any(
+                (fragment) =>
+                    fragment.paragraph == anchor.paragraph &&
+                    fragment.start <= anchor.offset &&
+                    anchor.offset < fragment.end,
+              ),
+          isTrue,
+        );
+        await tester.tapAt(const Offset(512, 320));
+        await fixture.settleReader(tester);
+        expect(
+          (
+            paged.debugFirstVisibleAnchor!.paragraph,
+            paged.debugFirstVisibleAnchor!.offset,
+          ),
+          (shownStart.paragraph, shownStart.offset),
+        );
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },

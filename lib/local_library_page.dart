@@ -16,6 +16,7 @@ import 'cloud_sources.dart';
 import 'library_state.dart';
 import 'library_toolbar.dart';
 import 'library_reflow.dart';
+import 'local_import_settings_page.dart';
 import 'local_books.dart';
 import 'local_book_importer.dart';
 import 'local_library_preferences.dart';
@@ -120,7 +121,6 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
   BookSync? _sync;
   LocalLibraryPreferences? _organization;
   String? _error;
-  String _encoding = 'auto';
   bool _importing = false;
   (int, int)? _importProgress;
   bool? _routeCurrent;
@@ -216,7 +216,6 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
       setState(() {
         _organization = organization;
         _sync = sync;
-        _encoding = prefs.getString('localTxtEncoding') ?? 'auto';
       });
       _controller.changed();
       await Future.wait([sync.load(), _cloudSources.load()]);
@@ -350,6 +349,9 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
   Future<void> _categories() => showBookCategories(
     context,
     _organization!,
+    books: widget.books.books.where(
+      (book) => widget.state.localBookVisible(book.id),
+    ),
     reduceMotion: widget.state.reduceMotion,
   );
 
@@ -387,7 +389,7 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
 
   Future<void> _settings() async {
     final organization = _organization!;
-    await showJellySheet<void>(
+    final action = await showJellySheet<String>(
       context: context,
       reduceMotion: widget.state.reduceMotion,
       heightFactor: .72,
@@ -401,46 +403,19 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
             children: [
               const ArchiveSection(title: '书库设置', code: 'LOCAL / SETTINGS'),
               const SizedBox(height: 18),
-              const AppText(
-                'TXT 编码',
-                style: TextStyle(fontWeight: FontWeight.w600),
+              GlassTextButton(
+                key: const ValueKey('local-import-settings'),
+                onPressed: () => Navigator.pop(sheet, 'import'),
+                child: const AppText('导入与目录'),
               ),
-              for (final entry in {
-                'auto': '自动识别',
-                'UTF-8': 'UTF-8',
-                'GB18030': 'GB18030 / GBK',
-                'UTF-16LE': 'UTF-16 LE',
-              }.entries)
-                GlassTextButton(
-                  onPressed: () => _save(() async {
-                    await organization.setEncoding(entry.key);
-                    if (mounted) setState(() => _encoding = entry.key);
-                  }),
-                  child: AppText(
-                    '${_encoding == entry.key ? '✓  ' : ''}${entry.value}',
-                  ),
-                ),
-              const Divider(height: 32),
               GlassTextButton(
                 key: const ValueKey('local-removed-books'),
-                onPressed: () {
-                  Navigator.pop(sheet);
-                  pushNovelPage<void>(
-                    this.context,
-                    RemovedLocalBooksPage(
-                      books: widget.books,
-                      library: widget.state,
-                    ),
-                    reduceMotion: widget.state.reduceMotion,
-                  );
-                },
+                onPressed: () => Navigator.pop(sheet, 'removed'),
                 child: const AppText('已移出的本地书'),
               ),
               GlassTextButton(
-                onPressed: () {
-                  Navigator.pop(sheet);
-                  _syncSettings();
-                },
+                key: const ValueKey('local-sync-settings'),
+                onPressed: () => Navigator.pop(sheet, 'sync'),
                 child: const AppText('跨设备同步设置'),
               ),
             ],
@@ -448,6 +423,27 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
         ),
       ),
     );
+    if (!mounted) return;
+    // The dismissed sheet owns the overlay lock until its transition ends.
+    switch (action) {
+      case 'import':
+        final saved = await pushNovelPage<bool>(
+          context,
+          LocalImportSettingsPage(library: widget.state),
+          reduceMotion: widget.state.reduceMotion,
+        );
+        if (saved == true && mounted) {
+          showNovelFeedback(context, '导入目录设置已保存');
+        }
+      case 'removed':
+        await pushNovelPage<void>(
+          context,
+          RemovedLocalBooksPage(books: widget.books, library: widget.state),
+          reduceMotion: widget.state.reduceMotion,
+        );
+      case 'sync':
+        await _syncSettings();
+    }
   }
 
   void _open(Novel book, Object tag) {
@@ -590,13 +586,25 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
                             style: TextStyle(height: 1.7),
                           ),
                         ],
-                        if (_importing || organization == null)
+                        if (organization == null)
                           BookCollectionSkeleton(
                             rows: 2,
                             label: _importProgress == null
                                 ? '正在整理本地书库'
                                 : '正在导入 ${_importProgress!.$1} / ${_importProgress!.$2} 本',
+                          )
+                        else if (_importing) ...[
+                          AppText(
+                            _importProgress == null
+                                ? '正在导入书籍'
+                                : '正在导入 ${_importProgress!.$1} / ${_importProgress!.$2} 本',
+                            style: const TextStyle(fontSize: 12),
                           ),
+                          const SizedBox(
+                            height: 8,
+                            child: RefreshProgress(label: '正在导入书籍'),
+                          ),
+                        ],
                         if ((_error ?? widget.books.seriesError) != null) ...[
                           AppText(
                             (_error ?? widget.books.seriesError)!,

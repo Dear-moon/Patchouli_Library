@@ -4,6 +4,7 @@ import 'app_interactions.dart';
 import 'app_ui.dart';
 import 'feature_pages.dart' show confirmNovelAction;
 import 'local_library_preferences.dart';
+import 'catalog.dart';
 
 /// Shelf and local library use one category vocabulary and assignment store.
 Future<void> showBookCategories(
@@ -11,6 +12,7 @@ Future<void> showBookCategories(
   LocalLibraryPreferences organization, {
   bool shelf = false,
   bool reduceMotion = false,
+  Iterable<Novel> books = const [],
 }) async {
   final selected = shelf ? organization.shelfSelected : organization.selected;
   final result = await showJellySheet<String>(
@@ -62,6 +64,12 @@ Future<void> showBookCategories(
               ),
             ),
           const SizedBox(height: 12),
+          GlassTextButton(
+            key: const ValueKey('category-by-author'),
+            onPressed: () => Navigator.pop(sheet, '_authors'),
+            child: const AppText('按作者分类'),
+          ),
+          const SizedBox(height: 12),
           GlassPillButton(
             icon: CupertinoIcons.plus,
             label: '新建分类',
@@ -73,7 +81,48 @@ Future<void> showBookCategories(
   );
   if (!context.mounted || result == null) return;
   try {
-    if (result == '_new' || result.startsWith('rename:')) {
+    if (result == '_authors') {
+      final counts = <String, int>{};
+      for (final book in books) {
+        final author = LocalLibraryPreferences.authorName(book.author);
+        counts[author] = (counts[author] ?? 0) + 1;
+      }
+      final authors = counts.keys.toList()..sort();
+      final category = await showJellySheet<String>(
+        context: context,
+        reduceMotion: reduceMotion,
+        heightFactor: .72,
+        builder: (sheet) => ListView(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+          children: [
+            const ArchiveSection(title: '按作者分类', code: 'LIBRARY / AUTHORS'),
+            const SizedBox(height: 16),
+            if (authors.isEmpty) const AppText('当前书库暂无作者信息'),
+            for (final author in authors)
+              GlassTextButton(
+                key: ValueKey('category-author-$author'),
+                selected:
+                    selected == LocalLibraryPreferences.authorCategory(author),
+                onPressed: () => Navigator.pop(
+                  sheet,
+                  LocalLibraryPreferences.authorCategory(author),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(child: AppText(author)),
+                    const SizedBox(width: 12),
+                    AppText(
+                      '${counts[author]} 本',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+      if (category != null) await organization.select(category, shelf: shelf);
+    } else if (result == '_new' || result.startsWith('rename:')) {
       await showJellySheet<void>(
         context: context,
         reduceMotion: reduceMotion,
@@ -109,30 +158,55 @@ Future<void> showBookCategories(
 Future<String?> chooseBookCategory(
   BuildContext context,
   LocalLibraryPreferences organization, {
-  required int bookId,
+  int? bookId,
+  Iterable<int>? bookIds,
   bool reduceMotion = false,
-}) => showJellySheet<String>(
-  context: context,
-  reduceMotion: reduceMotion,
-  heightFactor: .6,
-  builder: (sheet) => ListView(
-    padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-    children: [
-      const ArchiveSection(title: '移至分类', code: 'LIBRARY / ORGANIZE'),
-      const SizedBox(height: 16),
-      for (final entry in {
-        LocalLibraryPreferences.unfiled: '未分类',
-        ...organization.groups,
-      }.entries)
-        GlassTextButton(
-          onPressed: () => Navigator.pop(sheet, entry.key),
-          child: AppText(
-            '${organization.groupOf(bookId) == entry.key ? '✓  ' : ''}${entry.value}',
+}) async {
+  final ids = bookIds?.toSet() ?? {?bookId};
+  final current = ids.map(organization.groupOf).toSet();
+  final result = await showJellySheet<String>(
+    context: context,
+    reduceMotion: reduceMotion,
+    heightFactor: .6,
+    builder: (sheet) => ListView(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+      children: [
+        const ArchiveSection(title: '移至分类', code: 'LIBRARY / ORGANIZE'),
+        const SizedBox(height: 16),
+        for (final entry in {
+          LocalLibraryPreferences.unfiled: '未分类',
+          ...organization.groups,
+        }.entries)
+          GlassTextButton(
+            onPressed: () => Navigator.pop(sheet, entry.key),
+            child: AppText(
+              '${current.length == 1 && current.single == entry.key ? '✓  ' : ''}${entry.value}',
+            ),
           ),
+        const SizedBox(height: 12),
+        GlassPillButton(
+          icon: CupertinoIcons.plus,
+          label: '新建分类',
+          onPressed: () => Navigator.pop(sheet, '_new'),
         ),
-    ],
-  ),
-);
+      ],
+    ),
+  );
+  if (result != '_new' || !context.mounted) return result;
+  await showJellySheet<void>(
+    context: context,
+    reduceMotion: reduceMotion,
+    heightFactor: .58,
+    builder: (_) => _CategoryNameSheet(organization: organization),
+  );
+  if (!context.mounted) return null;
+  return chooseBookCategory(
+    context,
+    organization,
+    bookIds: ids,
+    reduceMotion: reduceMotion,
+  );
+}
 
 class _CategoryNameSheet extends StatefulWidget {
   const _CategoryNameSheet({required this.organization, this.id});

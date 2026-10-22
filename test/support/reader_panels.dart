@@ -23,6 +23,5 @@ Future<void> openReaderPanel(WidgetTester tester, {String tab = '排版'}) async
 Future<void> openReaderChapterProgress(WidgetTester tester) async {
   await tester.tap(find.byKey(const ValueKey('dock-tab-1')));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('本章进度'));
-  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('reader-progress-slider')), findsOneWidget);
 }

@@ -70,6 +70,12 @@ class NativeListeningOutput implements ListeningAudioOutput {
   @override
   Future<void> play() async {
     final epoch = ++_playEpoch;
+    // completed is a persistent decoder state, not a fresh event on play().
+    // Forward it explicitly if pause/resume raced its stream notification.
+    if (_player.processingState == ProcessingState.completed) {
+      _completed.add(null);
+      return;
+    }
     final active = _sessionActive || await _session!.setActive(true);
     if (epoch != _playEpoch) return;
     if (!active) {
@@ -190,9 +196,13 @@ class ListeningAudioHandler extends BaseAudioHandler {
   void _state() {
     final state = controller.snapshot.value;
     final key =
-        '${state.novel?.id}/${state.chapter}/${state.chapterTitle}/${state.voice.engine}/${state.voice.id}';
-    if (_mediaKey != key && state.novel != null) {
-      _mediaKey = key;
+        '${state.novel?.id}/${state.chapter}/${state.chapterTitle}/${state.voice.engine}/${state.voice.id}/${state.spokenLanguage}';
+    final artist = state.spokenLanguage == null && state.languages.length > 1
+        ? '多语言朗读 · 自动匹配'
+        : state.outputVoice.label;
+    final mediaKey = '$key/$artist';
+    if (_mediaKey != mediaKey && state.novel != null) {
+      _mediaKey = mediaKey;
       mediaItem.add(
         MediaItem(
           id: 'wenku:${state.novel!.id}:${state.chapter}',
@@ -200,7 +210,7 @@ class ListeningAudioHandler extends BaseAudioHandler {
               ? '正在准备章节'
               : '第 ${state.chapter + 1} 章 · ${state.chapterTitle}',
           album: state.novel!.title,
-          artist: state.voice.label,
+          artist: artist,
           // Clips are implementation details, not separate tracks. Future
           // speech durations are unknown; do not expose a per-clip seek bar as
           // if it were a chapter duration or republish metadata at every boundary.

@@ -103,6 +103,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(state.directReading, true);
       await tester.ensureVisible(
+        find.byKey(const ValueKey('settings-direct-reading-discovery')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('settings-direct-reading-discovery')),
+      );
+      await tester.pumpAndSettle();
+      expect(state.directReadingPages, {
+        ReadingEntry.shelf,
+        ReadingEntry.local,
+      });
+      await tester.ensureVisible(
         find.byKey(const ValueKey('settings-combined-shelf')),
       );
       await tester.tap(find.byKey(const ValueKey('settings-combined-shelf')));

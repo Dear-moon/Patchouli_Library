@@ -10,6 +10,12 @@ class ReaderScrollAnchor {
   @visibleForTesting
   static bool debugDisableSourceAnchors = false;
   _ReaderScrollRender? _render;
+
+  /// Read already-laid-out row geometry, in display order. Unlike the lazy
+  /// sliver's estimated total height, this source anchor does not drift when
+  /// more variable-height paragraphs enter the cache.
+  ({int row, double fraction})? positionAt(double viewportOffset) =>
+      _render?.positionAt(viewportOffset);
   void restore({
     required int row,
     required double fraction,
@@ -61,6 +67,30 @@ class _ReaderScrollRender extends RenderSliverList {
   }) : _anchor = anchor;
   ReaderScrollAnchor _anchor;
   _Seed? _seed;
+
+  ({int row, double fraction})? positionAt(double viewportOffset) {
+    if (!attached || geometry == null || firstChild == null) return null;
+    final local = viewportOffset - constraints.precedingScrollExtent;
+    for (
+      RenderBox? child = firstChild;
+      child != null;
+      child = childAfter(child)
+    ) {
+      final top = childScrollOffset(child);
+      if (top == null || !child.hasSize) continue;
+      final height = paintExtentOf(child);
+      if (local < top) return (row: indexOf(child), fraction: 0);
+      if (height > 0 && local <= top + height) {
+        return (
+          row: indexOf(child),
+          fraction: ((local - top) / height).clamp(0.0, 1.0),
+        );
+      }
+    }
+    final last = lastChild!;
+    return (row: indexOf(last), fraction: 1);
+  }
+
   set seed(_Seed value) {
     _seed = value;
     markNeedsLayout();

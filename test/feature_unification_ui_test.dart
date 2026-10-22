@@ -571,7 +571,7 @@ void main({
   );
 
   testWidgets(
-    'keep-screen binding releases on covered route background and disposal without article reflow',
+    'keep-screen survives inline tools and releases on background and disposal without article reflow',
     (tester) async {
       final calls = <bool>[];
       Future<bool?> awake() async => nativePlatform
@@ -611,7 +611,7 @@ void main({
       expect(await awake(), isTrue);
       await tester.tap(_button('阅读设置'));
       await tester.pumpAndSettle();
-      expect(await awake(), isFalse);
+      expect(await awake(), isTrue);
       expect(
         tester.widget(find.byKey(const ValueKey('paragraph-0'))),
         same(article),

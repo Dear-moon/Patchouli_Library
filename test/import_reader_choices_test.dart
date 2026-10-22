@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
+import 'support/serif_fixture.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_ui.dart';
 import 'package:wenku8_flutter/catalog.dart';
@@ -28,10 +29,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
     await loadReviewFonts();
-    await (FontLoader('SourceHanSerifCN')..addFont(
-          rootBundle.load('assets/fonts/SourceHanSerifCN-Regular.otf'),
-        ))
-        .load();
+    await (FontLoader('SourceHanSerifCN')..addFont(loadSerifFixture())).load();
   });
   late LibraryState state;
   setUp(() async {
@@ -172,8 +170,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('select-reader-font')), findsNothing);
-    await tester.tap(find.text('系统字体'));
+    expect(find.byKey(const ValueKey('select-reader-font')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('select-reader-font')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-font-system')));
     await ioSettle(tester, until: () => state.readerTypeface == 'system');
     expect(state.readerTypeface, 'system');
     await captureReview(tester, boundary, 'reader-font-options');
@@ -212,9 +212,7 @@ void main() {
         find.byKey(const ValueKey('reader-illustration-layout')),
         findsNothing,
       );
-      // Language follows the app's appearance dropdown. Reading mode and
-      // colors remain visible choices, with no other dropdowns in this panel.
-      expect(find.byIcon(CupertinoIcons.chevron_down), findsOneWidget);
+      // Appearance language is independent of per-book language and fonts.
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('reader-language')),

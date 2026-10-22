@@ -120,6 +120,7 @@ void main({
                 relay: true,
                 vertical: vertical,
                 leafSize: size,
+                travelWidth: size.width * slots + 52,
                 outgoing: outgoing,
                 slot: slot,
                 slots: slots,
@@ -260,9 +261,13 @@ void main({
           expect(
             tester
                 .widgetList<ReaderBookSpread>(find.byType(ReaderBookSpread))
-                .every((spread) => spread.edgeOverflow == 0),
+                .every(
+                  (spread) =>
+                      spread.edgeOverflow >= 0 && spread.edgeOverflow <= 26,
+                ),
             true,
-            reason: 'Sliding parts stay inside the page, not in its margins.',
+            reason:
+                'Moving outer ink can reach the screen edge without changing resting margins.',
           );
           final layouts = <ReaderTurnPartRender, int>{};
           if (mode == ReaderMode.paged) {
@@ -278,7 +283,10 @@ void main({
             final parts = layouts.keys
                 .where(
                   (r) =>
-                      r.scope.enabled && !r.scope.outgoing && r.scope.slot == 0,
+                      r.scope.enabled &&
+                      !r.scope.outgoing &&
+                      r.scope.slot == 0 &&
+                      r.scope.leafSize == controller.pageSize,
                 )
                 .toList();
             expect(parts.length, greaterThan(1));

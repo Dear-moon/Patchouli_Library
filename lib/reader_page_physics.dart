@@ -4,20 +4,55 @@ import 'package:flutter/widgets.dart';
 /// A short deliberate stroke commits one page; a small adjustment returns to
 /// its origin. Distance is bounded in logical pixels, not half a tablet screen.
 class ReaderPagePhysics extends PageScrollPhysics {
-  const ReaderPagePhysics({required this.origin, super.parent});
+  const ReaderPagePhysics({
+    required this.origin,
+    double durationScale = 1,
+    this.liveDurationScale,
+    this.pageBounds,
+    super.parent,
+  }) : _durationScale = durationScale;
   final int? Function() origin;
+  final double _durationScale;
+  // Scrollable retains physics when its runtime type does not change. Read a
+  // live setting at gesture release instead of replacing its scroll position.
+  final double Function()? liveDurationScale;
+
+  /// Ready adjacent chapters extend the same page rail. Unprepared edges stay
+  /// clamped so a slow request cannot expose an empty neighbouring sheet.
+  final ({int first, int last}) Function()? pageBounds;
+  double get durationScale => liveDurationScale?.call() ?? _durationScale;
   static double commitDistance(double viewport) =>
       (viewport * .1).clamp(28, 48);
 
   @override
-  ReaderPagePhysics applyTo(ScrollPhysics? ancestor) =>
-      ReaderPagePhysics(origin: origin, parent: buildParent(ancestor));
+  ReaderPagePhysics applyTo(ScrollPhysics? ancestor) => ReaderPagePhysics(
+    origin: origin,
+    durationScale: _durationScale,
+    liveDurationScale: liveDurationScale,
+    pageBounds: pageBounds,
+    parent: buildParent(ancestor),
+  );
+
+  ScrollMetrics _bounded(ScrollMetrics position) {
+    final bounds = pageBounds?.call();
+    if (bounds == null || position is! PageMetrics) return position;
+    final width = position.viewportDimension * position.viewportFraction;
+    return position.copyWith(
+      minScrollExtent: bounds.first * width,
+      maxScrollExtent: bounds.last * width,
+    );
+  }
+
+  @override
+  double applyBoundaryConditions(ScrollMetrics position, double value) =>
+      super.applyBoundaryConditions(_bounded(position), value);
 
   @override
   Simulation? createBallisticSimulation(
     ScrollMetrics position,
     double velocity,
   ) {
+    position = _bounded(position);
     if (position is! PageMetrics ||
         position.pixels < position.minScrollExtent ||
         position.pixels > position.maxScrollExtent ||
@@ -43,6 +78,7 @@ class ReaderPagePhysics extends PageScrollPhysics {
       position.maxScrollExtent / width,
     );
     final pixels = destination * width;
+    final durationScale = this.durationScale;
     final tolerance = toleranceFor(position);
     if ((pixels - position.pixels).abs() < tolerance.distance) return null;
     return _ReaderPageSnap(
@@ -50,11 +86,12 @@ class ReaderPagePhysics extends PageScrollPhysics {
         spring,
         position.pixels,
         pixels,
-        math.max(-2400.0, math.min(2400.0, velocity)),
+        math.max(-2400.0, math.min(2400.0, velocity)) * durationScale,
         tolerance: tolerance,
       ),
       from: position.pixels,
       to: pixels,
+      durationScale: durationScale,
     );
   }
 }
@@ -62,16 +99,24 @@ class ReaderPagePhysics extends PageScrollPhysics {
 /// A fast release near the landing must not overshoot into the following page
 /// and momentarily expose its text or illustration before bouncing back.
 class _ReaderPageSnap extends Simulation {
-  _ReaderPageSnap(this.spring, {required this.from, required this.to})
-    : super(tolerance: spring.tolerance);
+  _ReaderPageSnap(
+    this.spring, {
+    required this.from,
+    required this.to,
+    required this.durationScale,
+  }) : super(tolerance: spring.tolerance);
   final ScrollSpringSimulation spring;
   final double from, to;
+  final double durationScale;
   @override
   bool isDone(double time) =>
-      spring.isDone(time) ||
-      (to > from ? spring.x(time) >= to : spring.x(time) <= to);
+      spring.isDone(time / durationScale) ||
+      (to > from
+          ? spring.x(time / durationScale) >= to
+          : spring.x(time / durationScale) <= to);
   @override
-  double x(double time) => isDone(time) ? to : spring.x(time);
+  double x(double time) => isDone(time) ? to : spring.x(time / durationScale);
   @override
-  double dx(double time) => isDone(time) ? 0 : spring.dx(time);
+  double dx(double time) =>
+      isDone(time) ? 0 : spring.dx(time / durationScale) / durationScale;
 }

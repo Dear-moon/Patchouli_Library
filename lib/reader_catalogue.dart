@@ -9,7 +9,12 @@ import 'catalog.dart';
 import 'offline_cache.dart';
 import 'library_state.dart' show ReadingPosition;
 import 'reader_tools.dart'
-    show ReaderChapterProgress, ReaderSeekProgress, ReaderOpenFind;
+    show
+        ReaderChapterProgress,
+        ReaderSeekProgress,
+        ReaderOpenFind,
+        ReaderOpenHandoff;
+import 'reader_book_progress.dart';
 
 /// A bounded, lazy chapter picker using the existing glass drawer. The current
 /// chapter is the scroll origin, so locating it never lays out earlier rows.
@@ -23,6 +28,7 @@ class ReaderCatalogue extends StatefulWidget {
     this.onProgressPreview,
     this.onProgressCommitted,
     this.onPreviewChanged,
+    this.canHandoff = false,
   });
   final Novel novel;
   final int currentChapter;
@@ -30,6 +36,7 @@ class ReaderCatalogue extends StatefulWidget {
   final ReadingPosition? position;
   final ValueChanged<double>? onProgressPreview, onProgressCommitted;
   final ValueChanged<bool>? onPreviewChanged;
+  final bool canHandoff;
 
   @override
   State<ReaderCatalogue> createState() => _ReaderCatalogueState();
@@ -39,19 +46,25 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
   final _search = TextEditingController();
   final _scroll = ScrollController();
   final _center = GlobalKey();
-  String _tab = 'chapters';
+  late String _tab = widget.position == null ? 'chapters' : 'progress';
   bool _previewing = false;
+  bool _wholeBook = false;
   late List<int> _matches = _filter('');
-  late final _volumes = NovelVolume.of(widget.novel.chapters);
+  late final _entries = widget.novel.directory;
+  late final _directoryChapters = widget.novel.directoryChapters;
+  late final _current = widget.novel.directoryIndexFor(
+    widget.currentChapter,
+    paragraph: widget.position?.paragraphIndex ?? 0,
+    offset: widget.position?.textOffset ?? 0,
+  );
+  late final _volumes = NovelVolume.of(_directoryChapters);
   late final Set<String> _expanded = {
     for (final volume in _volumes)
-      if (widget.currentChapter >= volume.start &&
-          widget.currentChapter < volume.end)
-        volume.key,
+      if (_current >= volume.start && _current < volume.end) volume.key,
   };
 
   List<int> _filter(String query) {
-    final chapters = widget.novel.chapters;
+    final chapters = _directoryChapters;
     final text = query.trim().toLowerCase();
     if (text.isEmpty) return List.generate(chapters.length, (index) => index);
     final number = int.tryParse(text);
@@ -76,8 +89,7 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
   void _locateCurrent() {
     _tab = 'chapters';
     for (final volume in _volumes) {
-      if (widget.currentChapter >= volume.start &&
-          widget.currentChapter < volume.end) {
+      if (_current >= volume.start && _current < volume.end) {
         _expanded.add(volume.key);
       }
     }
@@ -157,8 +169,8 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
               context,
               groupValue: _tab,
               children: const {
+                'progress': AppText('章节进度'),
                 'chapters': AppText('章节目录'),
-                'progress': AppText('本章进度'),
               },
               onValueChanged: (value) {
                 if (value != null) setState(() => _tab = value);
@@ -171,18 +183,59 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
           child: _tab == 'progress'
               ? SingleChildScrollView(
                   primary: false,
-                  child: ReaderChapterProgress(
-                    position: widget.position,
-                    onPreview: widget.onProgressPreview,
-                    onCommitted: widget.onProgressCommitted,
-                    onPreviewChanged: (active) {
-                      setState(() => _previewing = active);
-                      widget.onPreviewChanged?.call(active);
-                    },
-                    onSeek: (value) =>
-                        Navigator.pop(context, ReaderSeekProgress(value)),
-                    onFind: () =>
-                        Navigator.pop(context, const ReaderOpenFind()),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AppControls.segments<bool>(
+                        context,
+                        groupValue: _wholeBook,
+                        children: const {
+                          false: AppText('本章'),
+                          true: AppText('整书'),
+                        },
+                        onValueChanged: (value) {
+                          if (value != null) setState(() => _wholeBook = value);
+                        },
+                      ),
+                      if (_wholeBook)
+                        ReaderBookProgress(
+                          novel: widget.novel,
+                          chapter: widget.currentChapter,
+                          fraction: widget.position?.fraction ?? 0,
+                        )
+                      else
+                        ReaderChapterProgress(
+                          position: widget.position,
+                          onPreview: widget.onProgressPreview,
+                          onCommitted: widget.onProgressCommitted,
+                          onPreviewChanged: (active) {
+                            setState(() => _previewing = active);
+                            widget.onPreviewChanged?.call(active);
+                          },
+                          onSeek: (value) =>
+                              Navigator.pop(context, ReaderSeekProgress(value)),
+                          onFind: () =>
+                              Navigator.pop(context, const ReaderOpenFind()),
+                        ),
+                      if (widget.canHandoff)
+                        Visibility(
+                          visible: !_previewing,
+                          maintainState: true,
+                          maintainAnimation: true,
+                          maintainSize: true,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
+                            child: GlassTextButton(
+                              key: const ValueKey('reader-handoff-entry'),
+                              onPressed: () => Navigator.pop(
+                                context,
+                                const ReaderOpenHandoff(),
+                              ),
+                              child: const AppText('在其他设备上续读'),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 )
               : Column(
@@ -191,15 +244,19 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
                     AppSearchField(
                       inputKey: const ValueKey('reader-chapter-search'),
                       controller: _search,
-                      hint: '搜索章节名或输入章序',
+                      hint: widget.novel.navigation?.entries.isNotEmpty == true
+                          ? '搜索目录名或输入序号'
+                          : '搜索章节名或输入章序',
                       onChanged: _filterChanged,
                       onSubmitted: (_) => FocusScope.of(context).unfocus(),
                     ),
                     const SizedBox(height: 10),
                     AppText(
                       _search.text.trim().isEmpty
-                          ? '共 ${widget.novel.chapters.length} 章 · 当前第 ${widget.currentChapter + 1} 章'
-                          : '找到 ${_matches.length} 章',
+                          ? widget.novel.navigation?.entries.isNotEmpty == true
+                                ? '共 ${_entries.length} 项 · ${_entries[_current].title}'
+                                : '共 ${_entries.length} 章 · 当前第 ${widget.currentChapter + 1} 章'
+                          : '找到 ${_matches.length} ${widget.novel.navigation?.entries.isNotEmpty == true ? '项' : '章'}',
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -236,9 +293,7 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
     Widget row(int index) => rows[index].volume != null
         ? _volumeRow(context, rows[index].volume!)
         : _row(context, rows[index].chapter!);
-    final current = rows.indexWhere(
-      (row) => row.chapter == widget.currentChapter,
-    );
+    final current = rows.indexWhere((row) => row.chapter == _current);
     final origin = current < 0 ? 0 : current;
     return CustomScrollView(
       key: const ValueKey('reader-catalogue-scroll'),
@@ -306,19 +361,30 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
   }
 
   Widget _row(BuildContext context, int index) {
-    final chapter = widget.novel.chapters[index];
-    final current = index == widget.currentChapter;
+    final entry = _entries[index];
+    final chapter = widget.novel.chapters[entry.chapter];
+    final current = index == _current;
     return Semantics(
       selected: current,
       child: JellyTapSurface(
         key: ValueKey('reader-chapter-$index'),
         onTap: () {
           FocusScope.of(context).unfocus();
-          Navigator.pop(context, index);
+          Navigator.pop(
+            context,
+            widget.novel.navigation?.entries.isNotEmpty == true
+                ? entry.target
+                : entry.chapter,
+          );
         },
         child: Container(
           constraints: const BoxConstraints(minHeight: 52),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          padding: EdgeInsets.fromLTRB(
+            10 + entry.depth.clamp(0, 6) * 12.0,
+            12,
+            10,
+            12,
+          ),
           decoration: BoxDecoration(
             color: current
                 ? Theme.of(context).colorScheme.onSurface.withValues(alpha: .06)
@@ -341,7 +407,7 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
               const SizedBox(width: 7),
               Expanded(
                 child: AppText(
-                  chapter.title,
+                  entry.title,
                   style: const TextStyle(fontSize: 14, height: 1.45),
                 ),
               ),

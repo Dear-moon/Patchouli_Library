@@ -10,6 +10,9 @@ import 'package:wenku8_flutter/main.dart';
 import 'package:wenku8_flutter/pages.dart';
 import 'package:wenku8_flutter/reader_content.dart';
 import 'package:wenku8_flutter/reader_chrome.dart';
+import 'support/visual_review.dart';
+import 'support/background_fixture.dart';
+import 'support/font_store_fixture.dart';
 
 class _Reader extends DemoNovelRepository {
   int calls = 0;
@@ -72,7 +75,6 @@ ParagraphPosition _anchor(WidgetTester tester) {
       .registry;
   return registry.capture(
     _scroll(tester).position.pixels +
-        FrostedHeader.toolbarHeight +
         12 -
         tester
             .widget<ReaderPage>(find.byType(ReaderPage))
@@ -97,6 +99,7 @@ void main({
   capture,
 }) {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(loadReviewFonts);
   late LibraryState state;
   late _Reader repository;
   late GlobalKey boundary;
@@ -106,7 +109,11 @@ void main({
       'readerChromeHintSeen': true,
       'reduceMotion': true,
     });
-    state = await LibraryState.load();
+    state = LibraryState(
+      await SharedPreferences.getInstance(),
+      backgrounds: EmptyReaderBackgrounds(),
+      fonts: InstalledSerifFixture(),
+    );
     repository = _Reader();
     boundary = GlobalKey();
   });
@@ -144,6 +151,42 @@ void main({
     );
     await _settle(tester);
   }
+
+  testWidgets(
+    'reader formatting control uses sliders and opens the existing settings',
+    (tester) async {
+      state.dispose();
+      state = LibraryState(
+        await SharedPreferences.getInstance(),
+        backgrounds: EmptyReaderBackgrounds(),
+        fonts: InstalledSerifFixture(),
+      );
+      for (final brightness in Brightness.values) {
+        await reader(tester, brightness: brightness);
+        final entry = find.byKey(const ValueKey('reader-settings-entry'));
+        expect(
+          tester.widget<GlassIconButton>(entry).icon,
+          CupertinoIcons.slider_horizontal_3,
+        );
+        expect(tester.widget<GlassIconButton>(entry).label, '阅读设置');
+        await captureReview(
+          tester,
+          boundary,
+          'reader-format-${brightness.name}',
+        );
+        await tester.tap(_control('阅读设置'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('reader-font-slider')),
+          findsOneWidget,
+        );
+        await tester.tap(_control('关闭阅读设置'));
+        await _settle(tester);
+        expect(repository.calls, 1);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
 
   testWidgets(
     'font and line spacing changes preserve the visible paragraph anchor',
@@ -280,12 +323,12 @@ void main({
     (tester) async {
       repository.empty = true;
       await reader(tester);
-      expect(find.text('章节加载失败'), findsOneWidget);
+      expect(find.text('章节正文为空'), findsOneWidget);
       expect(state.positionFor(repository.book.id), isNull);
       repository.empty = false;
       await tester.tap(find.text('重试'));
       await _settle(tester);
-      expect(find.text('章节加载失败'), findsNothing);
+      expect(find.text('章节正文为空'), findsNothing);
       expect(find.byType(ReaderParagraph), findsWidgets);
       expect(repository.calls, 2);
     },

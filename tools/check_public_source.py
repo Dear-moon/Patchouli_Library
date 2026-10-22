@@ -43,6 +43,11 @@ UPSTREAM_PATH_EXAMPLES = {
     'third_party/libmobi/src/read.c': '/'.join(('', 'home', 'me', 'test.mobi')),
     'third_party/libmobi/tools/README.md': '/'.join(('', 'Users', 'baf', 'src', 'libmobi', 'tools', '.libs', 'mobitool')),
 }
+# This DOI in the unmodified Apache Commons Math notice is not a host address.
+# Only the complete, reviewed citation in this license file is exempt.
+UPSTREAM_LICENSE_CITATIONS = {
+    'assets/licenses/poi.txt': 'http://citeseerx.ist.psu.edu/viewdoc/download;?doi=' + '10.1.1.' + '173.1898&rep=rep1&type=pdf',
+}
 PATTERNS = {
     'host home path': re.compile(r'[/](?:Users|home)[/][A-Za-z0-9_.-]+[/]'),
     'GitHub credential': re.compile(r'(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})'),
@@ -93,6 +98,8 @@ def inspect(root: Path, files=None, *, require_manifest=False) -> list[str]:
             scanned = text
             if name == 'host home path' and relative.as_posix() in UPSTREAM_PATH_EXAMPLES:
                 scanned = scanned.replace(UPSTREAM_PATH_EXAMPLES[relative.as_posix()], '<upstream example>')
+            if name == 'private LAN address' and relative.as_posix() in UPSTREAM_LICENSE_CITATIONS:
+                scanned = scanned.replace(UPSTREAM_LICENSE_CITATIONS[relative.as_posix()], '<upstream citation>')
             if pattern.search(scanned):
                 # Never echo the matching credential or user data into CI logs.
                 issues.append(f'{relative}: {name}')

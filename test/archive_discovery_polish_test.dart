@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_ui.dart';
 import 'package:wenku8_flutter/archive_shelf.dart';
+import 'package:wenku8_flutter/archive_shelf_loading.dart';
 import 'package:wenku8_flutter/catalog.dart';
 import 'package:wenku8_flutter/legacy_cover.dart';
 import 'package:wenku8_flutter/library_state.dart';
@@ -80,7 +81,7 @@ Widget _app(
 void main({Capture? capture}) {
   for (final brightness in Brightness.values) {
     testWidgets(
-      'category skeleton and diagonal solid assembly share geometry ${brightness.name}',
+      'category skeleton and loaded shelf retain one geometry ${brightness.name}',
       (tester) async {
         _view(tester);
         SharedPreferences.setMockInitialValues({});
@@ -92,7 +93,7 @@ void main({Capture? capture}) {
         final boundary = GlobalKey();
         final load = feed.loadInitial();
         await tester.pumpWidget(_app(state, feed, boundary, brightness));
-        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 180));
         final placeholder = find.byKey(
           const ValueKey('archive-shelf-skeleton'),
         );
@@ -100,7 +101,7 @@ void main({Capture? capture}) {
         final skeletonTop = tester.getTopLeft(placeholder);
         expect(find.byType(ArchiveShelfSkeleton), findsOneWidget);
         expect(find.byKey(const ValueKey('skeleton-library')), findsNothing);
-        expect(tester.binding.transientCallbackCount, 0);
+        expect(tester.binding.transientCallbackCount, greaterThan(0));
         if (capture != null) {
           await capture(
             tester,
@@ -131,27 +132,44 @@ void main({Capture? capture}) {
         clock.value = 0;
         await tester.pumpAndSettle();
         expect(tester.getSize(find.byKey(_railKey)), skeletonSize);
-        expect(tester.getTopLeft(find.byKey(_railKey)), skeletonTop);
+        expect(
+          tester.widget(find.byKey(const ValueKey('archive-shelf-arrival'))),
+          isA<Column>(),
+        );
+        final startTop = tester.getTopLeft(find.byKey(_railKey)).dy;
+        expect(startTop, skeletonTop.dy);
         final scene = _scene(tester);
         final layouts = scene.debugLayoutCount;
         final centre = scene.debugCentreSlot;
         final box = tester.renderObject<ArchiveBoxDepthRender>(
           find.byKey(ValueKey('archive-slot-$centre')),
         );
-        expect(box.debugOpenFraction, 0);
+        expect(box.debugOpenFraction, 1);
+        final coverTransform = box.debugTransform;
+        final spineTransform = box.debugSpineTransform;
         for (final (name, value) in [
-          ('assemble', .22),
-          ('extract', .57),
+          ('handoff-early', .22),
+          ('handoff-late', .57),
           ('ready', 1.0),
         ]) {
           clock.value = value;
           await tester.pumpAndSettle();
-          final left = scene.debugAssemblyOffset(centre - 2);
-          final right = scene.debugAssemblyOffset(centre + 2);
-          if (value < .4) {
-            expect(left.dx, lessThan(right.dx));
-            expect(right.dx, greaterThan(0));
-            expect(right.dy / right.dx, closeTo(-.30 / .66, .00001));
+          expect(box.debugOpenFraction, 1);
+          expect(box.debugTransform.entry(0, 3), coverTransform.entry(0, 3));
+          expect(
+            box.debugSpineTransform.entry(0, 3),
+            spineTransform.entry(0, 3),
+          );
+          final inks = tester
+              .renderObjectList<ArchiveShelfInkRender>(
+                find.byType(ArchiveShelfInk),
+              )
+              .toList();
+          if (value > 0 && value < 1) {
+            expect(
+              inks.any((ink) => ink.progress > 0 && ink.progress < 1),
+              isTrue,
+            );
           }
           expect(scene.debugLayoutCount, layouts);
           expect(
@@ -167,11 +185,11 @@ void main({Capture? capture}) {
           }
         }
         expect(box.debugOpenFraction, 1);
-        expect(scene.debugAssemblyOffset(centre), Offset.zero);
         expect(tester.binding.transientCallbackCount, 0);
+        expect(tester.getTopLeft(find.byKey(_railKey)), skeletonTop);
 
         final switched = feed.selectSort(NovelSort.allVisit);
-        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 180));
         expect(find.text('总人气'), findsOneWidget);
         expect(find.text('最近更新'), findsNothing);
         expect(find.byType(ArchiveShelfSkeleton), findsOneWidget);
@@ -188,7 +206,7 @@ void main({Capture? capture}) {
         );
         await switched;
         await tester.pumpAndSettle();
-        expect(_scene(tester).debugEntranceProgress, 1);
+        expect(_clock(tester).value, 1);
         expect(find.byType(ArchiveShelfSkeleton), findsNothing);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -224,7 +242,7 @@ void main({Capture? capture}) {
       await tester.pump();
       expect(_clock(tester), same(clock));
       expect(_scene(tester), same(scene));
-      expect(scene.debugEntranceProgress, .3);
+      expect(clock.value, .3);
       expect(scene.debugPoolCount, oldPool);
       repo.requests[(NovelSort.lastUpdate, 3)]!.complete(
         NovelPage(items: _books(970700, 20), page: 3, totalPages: 5),
@@ -300,7 +318,7 @@ void main({Capture? capture}) {
       );
       await tester.pumpWidget(app(true));
       await tester.pumpAndSettle();
-      expect(_scene(tester).debugEntranceProgress, 1);
+      expect(_clock(tester).value, 1);
       expect(tester.binding.transientCallbackCount, 0);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpWidget(app(false));
@@ -312,7 +330,7 @@ void main({Capture? capture}) {
       );
       await gesture.moveBy(const Offset(-70, 0));
       await tester.pump();
-      expect(_scene(tester).debugEntranceProgress, 1);
+      expect(_clock(tester).value, 1);
       await gesture.up();
       await tester.pumpAndSettle();
       expect(

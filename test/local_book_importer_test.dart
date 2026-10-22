@@ -8,6 +8,7 @@ import 'package:wenku8_flutter/library_state.dart';
 import 'package:wenku8_flutter/local_books.dart';
 import 'package:wenku8_flutter/local_book_importer.dart';
 import 'package:wenku8_flutter/local_import_review.dart';
+import 'package:wenku8_flutter/local_import_options.dart';
 import 'package:wenku8_flutter/local_library_preferences.dart';
 import 'package:wenku8_flutter/local_scan_page.dart';
 import 'package:wenku8_flutter/local_scan_selection.dart';
@@ -15,8 +16,10 @@ import 'cloud_library_ui_test.dart' show ioSettle;
 
 class _Documents extends BookDocuments {
   List<BookDocumentSelection> selections = [], released = [];
+  bool failDecodedCleanup = false;
+  int cleanupFailures = 0;
   @override
-  Future<List<BookDocumentSelection>> pickBooks() async => selections;
+  Future<List<BookDocumentSelection>> pickForImport() async => selections;
   @override
   Future<String> decodeTextFile(
     String path, {
@@ -24,6 +27,11 @@ class _Documents extends BookDocuments {
   }) async => (await File(path).copy('$path.decoded')).path;
   @override
   Future<void> releaseBooks(Iterable<BookDocumentSelection> books) async {
+    if (failDecodedCleanup && books.any((book) => book.name == 'decoded.txt')) {
+      failDecodedCleanup = false;
+      cleanupFailures++;
+      throw const FileSystemException('cleanup interrupted');
+    }
     released = books.toList();
   }
 }
@@ -70,6 +78,60 @@ class _ScanDocuments extends _Documents {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets(
+    'a decoded temporary cleanup failure retries without losing a durable import',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({'reduceMotion': true});
+      final library = await LibraryState.load();
+      final root = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('book-cleanup-retry-'),
+      ))!;
+      final store = LocalBookStore(Directory('${root.path}/library'));
+      final file = (await tester.runAsync(
+        () => File('${root.path}/book.txt').writeAsString('第一章\n完整正文。'),
+      ))!;
+      final docs = _Documents()
+        ..failDecodedCleanup = true
+        ..selections = [BookDocumentSelection(name: '原书.txt', path: file.path)];
+      final importer = LocalBookImporter(
+        books: store,
+        library: library,
+        documents: docs,
+      );
+      addTearDown(() async {
+        importer.dispose();
+        library.dispose();
+        store.dispose();
+        await root.delete(recursive: true);
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: novelTheme(Brightness.light),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => importer.run(context),
+                child: const Text('导入'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('导入'));
+      await ioSettle(tester, until: () => !importer.busy);
+      expect(store.originals, hasLength(1));
+      expect(docs.cleanupFailures, 1);
+      expect(
+        docs.released.map((book) => book.path),
+        contains('${file.path}.decoded'),
+      );
+      expect(importer.error, isNull);
+      expect(find.byType(LocalImportReview), findsNothing);
+      expect(library.shelf, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   testWidgets('automatic scan waits for foreground and active library', (
     tester,
   ) async {
@@ -139,7 +201,10 @@ void main() {
   testWidgets(
     'scan menu uses the shared durable import and one final series review',
     (tester) async {
-      SharedPreferences.setMockInitialValues({'reduceMotion': true});
+      SharedPreferences.setMockInitialValues({
+        'reduceMotion': true,
+        'linkLocalBooks.v1': false,
+      });
       final library = await LibraryState.load();
       final fixture = (await tester.runAsync(() async {
         final root = await Directory.systemTemp.createTemp(
@@ -233,6 +298,12 @@ void main() {
       )..load();
       final group = await preferences.addGroup('私藏');
       await preferences.select(group);
+      const rules = LocalImportOptions(
+        customToc: true,
+        chapterRule: r'^【.+】$',
+        volumeRule: '',
+      );
+      await tester.runAsync(() => preferences.setImportOptions(rules));
       final fixture = (await tester.runAsync(() async {
         final root = await Directory.systemTemp.createTemp(
           'wenku-shared-import-',
@@ -242,7 +313,7 @@ void main() {
         final docs = _Documents();
         for (var i = 1; i <= 2; i++) {
           final file = File('${root.path}/volume$i.txt');
-          await file.writeAsString('第一章\n卷内的完整正文，序号$i。');
+          await file.writeAsString('【第一章】\n卷内的完整正文，序号$i。');
           docs.selections.add(
             BookDocumentSelection(name: '同一系列 第$i卷.txt', path: file.path),
           );
@@ -296,6 +367,8 @@ void main() {
       preferences.refresh();
       for (final book in store.books) {
         expect(preferences.groupOf(book.id), group);
+        expect(book.chapters.single.title, '【第一章】');
+        expect(store.importOptionsFor(book.id).identity, rules.identity);
       }
       expect(find.textContaining('损坏的.epub'), findsWidgets);
       await tester.binding.handlePopRoute();

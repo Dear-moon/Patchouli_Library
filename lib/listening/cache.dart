@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'edge_tts.dart';
 import 'models.dart';
+import 'languages.dart';
 import 'custom_tts.dart';
 import '../network_status.dart';
 
@@ -21,6 +22,12 @@ abstract interface class SpeechAudioSource {
   Future<void> trim();
 }
 
+/// Optional inventory scoped to the user's selected provider/Android engine.
+/// Older audio sources keep their existing catalogue contract.
+abstract interface class SpeechLanguageVoiceSource {
+  Future<List<SpeechVoice>> languageVoices(SpeechVoice preferred);
+}
+
 /// Playback maintenance is coalesced; an explicit trim still enforces the full
 /// cache policy immediately. Other sources retain their existing trim contract.
 extension SpeechPlaybackMaintenance on SpeechAudioSource {
@@ -30,7 +37,7 @@ extension SpeechPlaybackMaintenance on SpeechAudioSource {
   };
 }
 
-class SpeechAudioCache implements SpeechAudioSource {
+class SpeechAudioCache implements SpeechAudioSource, SpeechLanguageVoiceSource {
   SpeechAudioCache(
     this.directory,
     this.edge, {
@@ -75,6 +82,39 @@ class SpeechAudioCache implements SpeechAudioSource {
   Future<List<SpeechVoice>> onlineVoices() => edge.voices();
 
   @override
+  Future<List<SpeechVoice>> languageVoices(SpeechVoice preferred) {
+    if (preferred.source == ListeningSource.edge) return onlineVoices();
+    if (preferred.source == ListeningSource.custom) {
+      return Future.value([preferred]);
+    }
+    return _native(() async {
+      final raw =
+          await system
+              .invokeListMethod<dynamic>('voices', {'engine': preferred.engine})
+              .timeout(const Duration(seconds: 25)) ??
+          [];
+      return List.unmodifiable([
+        for (final voice in raw)
+          if (voice is Map &&
+              voice['id'] is String &&
+              voice['locale'] is String &&
+              speechLanguageCode(voice['locale']).isNotEmpty &&
+              !(voice['features'] is List &&
+                  (voice['features'] as List).contains('notInstalled')))
+            SpeechVoice(
+              id: voice['id'],
+              label: '${voice['id']}',
+              locale: chineseSpeechLocale(voice['locale']) ?? voice['locale'],
+              source: ListeningSource.system,
+              engine: preferred.engine,
+              offline: voice['networkRequired'] == false,
+              quality: voice['quality'] is int ? voice['quality'] : 0,
+            ),
+      ]);
+    });
+  }
+
+  @override
   Future<List<SpeechVoice>> offlineVoices() => _native(() async {
     final engines = await system.invokeListMethod<dynamic>('engines') ?? [];
     final found = <SpeechVoice>[];
@@ -98,7 +138,7 @@ class SpeechAudioCache implements SpeechAudioSource {
                   (voice['features'] as List).contains('notInstalled'))) {
             continue;
           }
-          final name = '${raw['name'] ?? engine} 离线';
+          final name = '${raw['name'] ?? engine}';
           found.add(
             SpeechVoice(
               id: voice['id'],
@@ -106,7 +146,7 @@ class SpeechAudioCache implements SpeechAudioSource {
               engine: engine,
               locale: chineseSpeechLocale(voice['locale'])!,
               source: ListeningSource.system,
-              offline: true,
+              offline: voice['networkRequired'] == false,
               quality: voice['quality'] is int ? voice['quality'] : 0,
             ),
           );
@@ -136,9 +176,18 @@ class SpeechAudioCache implements SpeechAudioSource {
     if (!voice.supported) {
       throw const SpeechFailure('该音色已不再支持，请重新选择听书音色');
     }
+    if (segment.language.isNotEmpty &&
+        speechLanguageCode(segment.language) !=
+            speechLanguageCode(voice.locale)) {
+      throw const SpeechFailure(
+        '没有对应语言的语音模型，已跳过该语言',
+        kind: SpeechFailureKind.missingLanguage,
+      );
+    }
     if (voice.source == ListeningSource.custom &&
         (customSpeech?.config?.namespace != voice.engine ||
-            customSpeech?.config?.voiceId != voice.id)) {
+            customSpeech?.config?.voiceId != voice.id ||
+            customSpeech?.config?.locale != voice.locale)) {
       throw const SpeechFailure('请重新选择或配置自定义语音接口');
     }
     final key = segment.key(voice);
@@ -198,7 +247,8 @@ class SpeechAudioCache implements SpeechAudioSource {
           final config = customSpeech?.config;
           if (config == null ||
               config.namespace != voice.engine ||
-              config.voiceId != voice.id) {
+              config.voiceId != voice.id ||
+              config.locale != voice.locale) {
             throw const SpeechFailure('请重新选择或配置自定义语音接口');
           }
           final data = await customClient.synthesize(
@@ -209,8 +259,8 @@ class SpeechAudioCache implements SpeechAudioSource {
           cancellation.check();
           await temporary.writeAsBytes(data, flush: true);
         } else {
-          if (!voice.offline || voice.engine == null) {
-            throw const SpeechFailure('请选择已安装的离线中文音色');
+          if (voice.engine == null) {
+            throw const SpeechFailure('请选择已安装的朗读引擎');
           }
           await _native(() async {
             cancellation.check();
@@ -228,6 +278,7 @@ class SpeechAudioCache implements SpeechAudioSource {
                     'text': text,
                     'engine': voice.engine,
                     'voice': voice.id,
+                    if (segment.language.isNotEmpty) 'locale': voice.locale,
                     'path': temporary.path,
                     'requestId': requestId,
                   })
@@ -268,6 +319,7 @@ class SpeechAudioCache implements SpeechAudioSource {
         throw SpeechFailure(
           error.message ?? '系统离线音色暂未就绪',
           kind: switch (error.code) {
+            'TTS_LANGUAGE_UNAVAILABLE' => SpeechFailureKind.missingLanguage,
             'TTS_CONTENT' => SpeechFailureKind.content,
             'TTS_TIMEOUT' => SpeechFailureKind.timeout,
             _ => SpeechFailureKind.unavailable,

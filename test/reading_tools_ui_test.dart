@@ -211,6 +211,10 @@ void main({
   Future<void> openCatalogue(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey('dock-tab-1')));
     await tester.pumpAndSettle();
+    if (find.text('章节目录').evaluate().isNotEmpty) {
+      await tester.tap(find.text('章节目录'));
+      await tester.pumpAndSettle();
+    }
   }
 
   testWidgets(
@@ -356,11 +360,12 @@ void main({
       await openCatalogue(tester);
       await tester.tap(_chapterControl(2));
       await tester.pumpAndSettle();
-      expect(find.text('章节加载失败'), findsOneWidget);
+      expect(find.text('章节未能载入，当前正文已保留，请重试'), findsOneWidget);
       expect(state.positionFor(71)!.chapterId, novel.chapters.first.id);
       expect(state.positionFor(71)!.offset, 700);
       remote.failed.clear();
-      await tester.tap(find.text('重试'));
+      await openCatalogue(tester);
+      await tester.tap(_chapterControl(2));
       await tester.pumpAndSettle();
       expect(state.positionFor(71)!.chapterId, novel.chapters[2].id);
       expect(_scroll(tester, 'reader-scroll').position.pixels, 0);

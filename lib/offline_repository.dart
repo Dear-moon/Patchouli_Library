@@ -8,8 +8,9 @@ import 'book_search.dart';
 import 'offline_cache.dart';
 import 'local_books.dart';
 import 'network_status.dart';
+import 'legacy_transport.dart';
 import 'reader_content.dart'
-    show readerHasMissingIllustrations, readerIllustrationUrl;
+    show ReaderContent, readerHasMissingIllustrations, readerIllustrationUrl;
 import 'ui_notifiers.dart';
 import 'tag_catalogue.dart';
 
@@ -30,6 +31,8 @@ class ChapterDownload {
   DownloadPhase phase = DownloadPhase.queued;
   int completed = 0;
   int total = 0;
+  int illustrations = 0;
+  bool cachingIllustrations = false;
   String? failedChapter;
   Object? error;
 
@@ -42,11 +45,19 @@ class ChapterDownload {
   String get label => switch (phase) {
     DownloadPhase.queued => '等待缓存',
     DownloadPhase.preparing => '正在获取目录',
-    DownloadPhase.downloading => '已缓存 $completed / $total 章',
-    DownloadPhase.completed => '缓存完成 · $completed 章',
+    DownloadPhase.downloading =>
+      cachingIllustrations
+          ? '已缓存 $completed / $total 章 · 正在缓存插图'
+          : '已缓存 $completed / $total 章',
+    DownloadPhase.completed =>
+      '缓存完成 · $completed 章${illustrations > 0 ? ' · $illustrations 张插图' : ''}',
     DownloadPhase.cancelled => '已取消 · 保留已缓存章节',
     DownloadPhase.failed =>
-      failedChapter == null ? '获取目录失败，可重试' : '「$failedChapter」缓存失败，可重试',
+      failedChapter == null
+          ? '获取目录失败，可重试'
+          : cachingIllustrations
+          ? '「$failedChapter」插图未缓存完成，可继续缓存'
+          : '「$failedChapter」缓存失败，可重试',
   };
 }
 
@@ -66,7 +77,11 @@ class OfflineNovelRepository extends FrameChangeNotifier
     required this.cache,
     this.local,
     this.network,
-  }) {
+    Future<Uint8List> Function(String url)? illustrationRequest,
+  }) : _illustrationRequest =
+           illustrationRequest ??
+           ((url) =>
+               LegacyTransport.illustration(url, cacheForViewing: false)) {
     cache.addListener(_cacheChanged);
     local?.addListener(_cacheChanged);
   }
@@ -75,6 +90,7 @@ class OfflineNovelRepository extends FrameChangeNotifier
   final OfflineCacheStore cache;
   final LocalBookStore? local;
   final NetworkStatus? network;
+  final Future<Uint8List> Function(String url) _illustrationRequest;
   bool get offline => network?.offline ?? false;
   bool availableOffline(int id) =>
       local?.book(id) != null || (cache.book(id)?.cachedCount ?? 0) > 0;
@@ -322,8 +338,16 @@ class OfflineNovelRepository extends FrameChangeNotifier
   @override
   Future<Novel> detail(Novel novel) async {
     if (isLocalBook(novel.id)) {
-      return local?.book(novel.id) ??
-          (throw const FormatException('本地原书不存在，请重新导入'));
+      if (local == null || !local!.contains(novel.id)) {
+        throw const FormatException('本地原书不存在，请重新导入');
+      }
+      try {
+        return await local!.ensureNavigation(novel.id);
+      } catch (error) {
+        // Failure to enrich an old TOC does not revoke access to its existing
+        // readable chapters, especially when its original was moved/deleted.
+        return local!.book(novel.id)!;
+      }
     }
     if (offline) return await cachedBook(novel.id) ?? novel;
     try {
@@ -453,6 +477,9 @@ class OfflineNovelRepository extends FrameChangeNotifier
     try {
       final saved = await cache.readChapter(novelId, chapter.id);
       if (saved != null) return saved;
+      if (saved != null && offline) {
+        throw const FormatException('本章旧缓存被插图标记截断，请联网刷新本章；原缓存仍保留');
+      }
       final text = await _fetch(novelId, chapter, request);
       await _saveBody(novelId, chapter.id, text, epoch);
       return text;
@@ -535,15 +562,22 @@ class OfflineNovelRepository extends FrameChangeNotifier
       job.total = selected.length;
       job.phase = DownloadPhase.downloading;
       _changed(job.novel.id);
+      final cachedIllustrations = <String>{};
       for (final chapter in selected) {
         if (!_current(job)) return;
         job.failedChapter = chapter.title;
+        job.cachingIllustrations = false;
         final request = _retainRequest(meta.id, chapter.id, job.epoch);
         try {
           final saved = await cache.readChapter(meta.id, chapter.id);
           if (!_current(job)) return;
-          if (saved == null) {
-            final text = await _fetch(meta.id, chapter, request);
+          var text = saved;
+          if (text == null || readerHasMissingIllustrations(text)) {
+            text = await _fetch(meta.id, chapter, request);
+            if (saved != null && readerHasMissingIllustrations(text)) {
+              job.cachingIllustrations = true;
+              throw const FormatException('本章插图地址暂未完整返回，原有正文已保留，请稍后继续缓存');
+            }
             // Cancelling stops further calls and suppresses a late body commit.
             if (!_current(job)) return;
             final stored = await cache.saveChapter(
@@ -555,7 +589,44 @@ class OfflineNovelRepository extends FrameChangeNotifier
             if (!_current(job)) return;
             if (!stored) throw StateError('章节已不在本地目录中');
           }
+          if (readerHasMissingIllustrations(text)) {
+            job.cachingIllustrations = true;
+            throw const FormatException('本章插图地址暂未完整返回，正文已保留，请稍后继续缓存');
+          }
+          final images = text.contains('<!--image-->')
+              ? (await ReaderContent.parse(text)).illustrations.toSet()
+              : const <String>{};
+          for (final url in images) {
+            if (!_current(job)) return;
+            if (url.startsWith('wenku-local:') ||
+                cachedIllustrations.contains(url)) {
+              continue;
+            }
+            job.cachingIllustrations = true;
+            _changed(job.novel.id);
+            if (!await cache.hasIllustration(meta.id, url)) {
+              if (!_current(job)) return;
+              final retained = await cache.readIllustration(url);
+              if (!_current(job)) return;
+              if (retained == null && offline) {
+                throw const FormatException('当前无网络连接，联网后可继续缓存插图');
+              }
+              final bytes = retained ?? await _illustrationRequest(url);
+              if (!_current(job)) return;
+              final stored = await cache.saveIllustration(
+                meta.id,
+                url,
+                bytes,
+                epoch: job.epoch,
+              );
+              if (!_current(job)) return;
+              if (!stored) throw StateError('书籍缓存已移除');
+            }
+            cachedIllustrations.add(url);
+            job.illustrations++;
+          }
           if (!_current(job)) return;
+          job.cachingIllustrations = false;
           job.completed++;
           _changed(job.novel.id);
         } finally {
@@ -568,7 +639,9 @@ class OfflineNovelRepository extends FrameChangeNotifier
       _changed(job.novel.id);
     } catch (error) {
       if (!_current(job)) return;
-      // Stop at the first failure; retry skips all previously committed bodies.
+
+      // Retry skips committed bodies and images, but still examines cached
+      // bodies so older text-only downloads can fill their missing media.
       job.error = error;
       job.phase = DownloadPhase.failed;
       _changed(job.novel.id);

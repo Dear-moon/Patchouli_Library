@@ -1,3 +1,5 @@
+import 'dart:ui' show DisplayFeature;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -19,6 +21,7 @@ import 'package:wenku8_flutter/reader_preferences.dart';
 import 'package:wenku8_flutter/reader_selection.dart';
 import 'package:wenku8_flutter/reader_vertical_text.dart';
 import 'support/listening_fixture.dart';
+import 'support/background_fixture.dart';
 
 const paragraph =
     '春天的风穿过窗边，书页轻轻翻动。「回到这里吧！」她说。OPPO 2026，👨‍👩‍👧‍👦与𠮷野、e\u0301都不能被拆开。';
@@ -58,21 +61,31 @@ Future<LibraryState> library(ReaderMode mode) async {
     'readerChromeHintSeen': true,
     'reduceMotion': true,
   });
-  final state = await LibraryState.load();
+  final state = LibraryState(
+    await SharedPreferences.getInstance(),
+    backgrounds: EmptyReaderBackgrounds(),
+  );
   await state.setReaderPreferences(ReaderPreferences(mode: mode));
   return state;
 }
 
-Widget app(LibraryState state) => MaterialApp(
-  debugShowCheckedModeBanner: false,
-  theme: novelTheme(Brightness.light),
-  home: ReaderPage(
-    novel: book,
-    state: state,
-    repository: const DemoNovelRepository(),
-    initialChapter: 0,
-  ),
-);
+Widget app(LibraryState state, {List<DisplayFeature> features = const []}) =>
+    MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: novelTheme(Brightness.light),
+      builder: features.isEmpty
+          ? null
+          : (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(displayFeatures: features),
+              child: child!,
+            ),
+      home: ReaderPage(
+        novel: book,
+        state: state,
+        repository: const DemoNovelRepository(),
+        initialChapter: 0,
+      ),
+    );
 Finder content() => find.byKey(const ValueKey('reader-content-tap'));
 
 Future<void> settleReader(WidgetTester tester) async {

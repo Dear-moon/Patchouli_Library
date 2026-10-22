@@ -5,13 +5,13 @@ import java.io.InputStream
 import java.io.IOException
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
-import java.util.zip.ZipFile
 import java.util.zip.ZipException
 import java.util.zip.ZipOutputStream
 
 internal object MobiConverter {
     init { System.loadLibrary("wenku_mobi") }
     external fun exportParts(input: String, output: String): Int
+    external fun exportDescriptor(input: Int, output: String): Int
 }
 
 /** App-private staging only; archive names are never filesystem destinations. */
@@ -24,11 +24,11 @@ internal class BookArchiveImport(
         const val MAX_ARCHIVE = 512L * 1024 * 1024
         private const val MAX_EXPANDED = 1024L * 1024 * 1024
         private val kindle = setOf("mobi", "azw", "azw3", "prc")
-        private val markup = setOf("fb2", "docx", "html", "htm", "xhtml", "md", "markdown", "rtf", "pdf")
+        private val markup = setOf("fb2", "doc", "docx", "html", "htm", "xhtml", "md", "markdown", "rtf", "pdf")
         val extensions = kindle + markup + setOf("txt", "epub", "zip")
         fun supported(name: String) = name.substringAfterLast('.').lowercase() in extensions
         fun limit(name: String) = when (name.substringAfterLast('.').lowercase()) {
-            "txt", "fb2", "rtf" -> BookTextDecoder.MAX_TEXT
+            "txt", "fb2", "rtf", "doc" -> BookTextDecoder.MAX_TEXT
             "html", "htm", "xhtml", "md", "markdown" -> 32L * 1024 * 1024
             "zip" -> MAX_ARCHIVE
             in kindle -> 256L * 1024 * 1024
@@ -37,6 +37,9 @@ internal class BookArchiveImport(
     }
 
     fun prepare(name: String, source: File): List<Map<String, String>> {
+        return prepare(name, BookDocumentInput(source))
+    }
+    fun prepare(name: String, source: BookDocumentInput): List<Map<String, String>> {
         require(supported(name)) { "请选择支持的电子书或文档格式" }
         require(source.length() > 0) { "文件为空，请重新下载原书" }
         require(source.length() <= limit(name)) { "单个 ${name.substringAfterLast('.').uppercase()} 不能超过 ${limit(name) / (1024 * 1024)} MiB" }
@@ -44,19 +47,18 @@ internal class BookArchiveImport(
             "zip" -> unpack(source)
             in kindle -> listOf(convert(name, source))
             in markup -> listOf(documents.convert(name, source))
-            else -> listOf(mapOf("name" to name, "path" to source.path))
+            else -> listOf(mapOf("name" to name, "path" to (source.file ?: error("此格式应直接关联原文件")).path))
         }
     }
 
     private fun temporary() = File.createTempFile("import-", ".source", root)
 
-    private fun unpack(source: File): List<Map<String, String>> {
+    private fun unpack(source: BookDocumentInput): List<Map<String, String>> {
         val prepared = mutableListOf<Map<String, String>>()
         try {
-            val opened = try { ZipFile(source, Charsets.UTF_8) }
-                catch (_: ZipException) { ZipFile(source, charset("GB18030")) }
+            val opened = source.zip()
             opened.use { archive ->
-                val entries = archive.entries().toList()
+                val entries = archive.entries
                 require(entries.size <= 12000) { "压缩包文件过多" }
                 var declared = 0L
                 for (entry in entries) {
@@ -71,15 +73,13 @@ internal class BookArchiveImport(
                 require(books.isNotEmpty()) { "压缩包内没有支持的书籍或文档" }
                 require(books.size <= 200) { "一个压缩包最多导入 200 本书" }
                 var expanded = 0L
-                for (entry in books) {
+                archive.readEntries(books) { entry, input ->
                     val name = entry.name.substringAfterLast('/')
                     var staged: File? = null
                     try {
                         require(entry.size in 1..limit(name)) { "书籍为空或超过大小限制" }
                         val target = temporary().also { staged = it }
-                        archive.getInputStream(entry).use { input ->
-                            expanded += copy(input, target, minOf(limit(name), MAX_EXPANDED - expanded), entry.crc)
-                        }
+                        expanded += copy(input, target, minOf(limit(name), MAX_EXPANDED - expanded), entry.crc)
                         prepared += if (name.substringAfterLast('.').lowercase() in kindle) {
                             try { convert(name, target) } finally { target.delete() }
                         } else if (name.substringAfterLast('.').lowercase() in markup) {
@@ -129,14 +129,16 @@ internal class BookArchiveImport(
         return size
     }
 
-    private fun convert(name: String, source: File): Map<String, String> {
+    private fun convert(name: String, source: File): Map<String, String> = convert(name, BookDocumentInput(source))
+    private fun convert(name: String, source: BookDocumentInput): Map<String, String> {
         val work = File.createTempFile("mobi-", ".work", root).apply {
             check(delete() && mkdir()) { "无法创建 MOBI 转换目录" }
         }
         val output = temporary()
         try {
             val content = File(work, "OEBPS").apply { check(mkdir()) }
-            val status = try { exportMobi(source.path, content.path) }
+            val status = try { if (source.file != null) exportMobi(source.file.path, content.path)
+                else MobiConverter.exportDescriptor(source.descriptor!!, content.path) }
                 catch (_: LinkageError) { error("MOBI 引擎无法加载，请重新安装完整版本") }
             require(status == 0) { when (status) {
                 1 -> "不支持受 DRM 保护的 Kindle 电子书"

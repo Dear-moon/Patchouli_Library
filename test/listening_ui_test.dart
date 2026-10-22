@@ -5,9 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/reader_panels.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_ui.dart';
+import 'package:wenku8_flutter/app_interactions.dart';
 import 'package:wenku8_flutter/catalog.dart';
 import 'package:wenku8_flutter/library_state.dart';
 import 'package:wenku8_flutter/listening/controller.dart';
+import 'package:wenku8_flutter/listening/cache.dart';
+import 'package:wenku8_flutter/listening/system_tts_page.dart';
 import 'package:wenku8_flutter/listening/models.dart';
 import 'package:wenku8_flutter/listening/store.dart';
 import 'package:wenku8_flutter/listening/widgets.dart';
@@ -18,6 +21,7 @@ import 'package:wenku8_flutter/reader_preferences.dart';
 
 import 'support/listening_fixture.dart';
 import 'support/visual_review.dart';
+import 'support/background_fixture.dart';
 
 Finder control(String key) => find
     .descendant(of: find.byKey(ValueKey(key)), matching: find.byType(InkWell))
@@ -40,7 +44,17 @@ void main() {
       'readerChromeHintSeen': true,
       'reduceMotion': true,
     });
-    library = await LibraryState.load();
+    library = LibraryState(
+      await SharedPreferences.getInstance(),
+      backgrounds: EmptyReaderBackgrounds(),
+    );
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          SpeechAudioCache.system,
+          (call) async => call.method == 'engines' || call.method == 'voices'
+              ? <dynamic>[]
+              : null,
+        );
     output = FakeListeningOutput();
     controller = ListeningController(
       repository: const DemoNovelRepository(),
@@ -50,6 +64,8 @@ void main() {
     );
   });
   tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SpeechAudioCache.system, null);
     library.dispose();
   });
   Future<void> disposeFixture(WidgetTester tester) async {
@@ -83,6 +99,106 @@ void main() {
       await tester.pump();
     }
   }
+
+  testWidgets(
+    'only the embedded play button shows an auto-dismissed gesture toast',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final boundary = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundary,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: novelTheme(Brightness.light),
+            home: Scaffold(
+              body: SafeArea(
+                child: ListeningPanel(
+                  controller: controller,
+                  novel: demoNovels.first,
+                  chapter: 0,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(listeningGestureHint), findsNothing);
+      final fromHere = find.byKey(const ValueKey('listening-from-here'));
+      await tester.ensureVisible(fromHere);
+      await tester.pumpAndSettle();
+      await tester.tap(fromHere);
+      await io(tester);
+      expect(find.text(listeningGestureHint), findsNothing);
+      final pause = controller.paragraphDoubleTap(
+        novelId: demoNovels.first.id,
+        chapter: 0,
+        paragraph: 0,
+      );
+      await io(tester);
+      await pause;
+      expect(find.text(listeningGestureHint), findsNothing);
+      await tester.ensureVisible(control('listening-play-pause'));
+      await tester.pumpAndSettle();
+      await tester.tap(control('listening-play-pause'));
+      await io(tester);
+      expect(find.text(listeningGestureHint), findsOneWidget);
+      expect(find.byType(NovelFeedbackNotice), findsOneWidget);
+      expect(find.text('知道了'), findsNothing);
+      final plays = output.plays;
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text(listeningGestureHint), findsOneWidget);
+      await captureReview(tester, boundary, 'listening-gesture-toast');
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.text(listeningGestureHint), findsNothing);
+      expect(output.playing, isTrue);
+      expect(output.plays, plays);
+      await tester.tap(control('listening-play-pause'));
+      await io(tester);
+      expect(find.text(listeningGestureHint), findsNothing);
+      final resume = controller.paragraphDoubleTap(
+        novelId: demoNovels.first.id,
+        chapter: 0,
+        paragraph: 0,
+      );
+      await io(tester);
+      await resume;
+      expect(find.text(listeningGestureHint), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await disposeFixture(tester);
+    },
+  );
+
+  testWidgets(
+    'standalone playback does not show the reader settings gesture hint',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: novelTheme(Brightness.light),
+          home: Scaffold(
+            body: ListeningPanel(
+              controller: controller,
+              novel: demoNovels.first,
+              chapter: 0,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(control('listening-play-pause'));
+      await io(tester);
+      expect(controller.snapshot.value.requestingPlayback, isTrue);
+      expect(find.text(listeningGestureHint), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await disposeFixture(tester);
+    },
+  );
 
   testWidgets(
     'clip handoffs retain preference controls and unaffected paragraph planes',
@@ -780,35 +896,52 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await disposeFixture(tester);
   });
-  testWidgets('offline source is explicitly pending development and disabled', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: novelTheme(Brightness.light),
-        home: Scaffold(
-          body: ListeningPanel(
-            controller: controller,
-            novel: demoNovels.first,
-            chapter: 0,
+  testWidgets(
+    'installed engine list selects the public TTS voice without auto-play',
+    (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SpeechAudioCache.system, (call) async {
+            if (call.method == 'engines') {
+              return [
+                {'id': '@default', 'name': '系统默认'},
+                {'id': 'org.example.tts', 'name': '测试引擎'},
+              ];
+            }
+            return null;
+          });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: novelTheme(Brightness.light),
+          home: Scaffold(
+            body: ListeningPanel(
+              controller: controller,
+              novel: demoNovels.first,
+              chapter: 0,
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('系统离线 · 待开发'));
-    await tester.tap(find.text('系统离线 · 待开发'));
-    await tester.pumpAndSettle();
-    expect(find.text('System 离线中文'), findsNothing);
-    expect(find.text('系统语音设置'), findsNothing);
-    expect(controller.snapshot.value.voice.source, ListeningSource.edge);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(tester.takeException(), null);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await disposeFixture(tester);
-  });
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('系统引擎'));
+      await tester.tap(find.text('系统引擎'));
+      await tester.pumpAndSettle();
+      expect(find.text('系统默认'), findsOneWidget);
+      expect(find.text('测试引擎'), findsOneWidget);
+      expect(find.text('系统语音设置'), findsOneWidget);
+      await tester.tap(control('system-engine-org.example.tts'));
+      await tester.pumpAndSettle();
+      await io(tester);
+      expect(controller.snapshot.value.voice.source, ListeningSource.system);
+      expect(controller.snapshot.value.voice.engine, 'org.example.tts');
+      expect(output.plays, 0);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(tester.takeException(), null);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await disposeFixture(tester);
+    },
+  );
   testWidgets(
-    'tapping pending offline source does not switch or autoplay; online remains usable',
+    'empty engine discovery stays actionable and does not interrupt the online source',
     (tester) async {
       final store = controller.store;
       await disposeFixture(tester);
@@ -832,9 +965,18 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('系统离线 · 待开发'));
-      await tester.tap(find.text('系统离线 · 待开发'));
+      await tester.ensureVisible(find.text('系统引擎'));
+      await tester.tap(find.text('系统引擎'));
       await tester.pumpAndSettle();
+      expect(find.textContaining('没有检测到系统 TTS 引擎'), findsOneWidget);
+      final close = find.byWidgetPredicate(
+        (w) => w is GlassIconButton && w.label == '关闭朗读引擎',
+      );
+      await tester.tap(
+        find.descendant(of: close, matching: find.byType(InkWell)).first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(SystemSpeechEnginesPanel), findsNothing);
       expect(controller.snapshot.value.voice.source, ListeningSource.edge);
       expect(audio.prepared, isEmpty);
       expect(output.plays, 0);

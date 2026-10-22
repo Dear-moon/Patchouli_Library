@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'edge_protocol.dart';
 import 'models.dart';
+import 'languages.dart';
 
 /// Wire interoperability follows rany2/edge-tts; no account, subscription or private API key.
 class EdgeSpeechClient {
@@ -112,8 +113,7 @@ class EdgeSpeechClient {
         }
         final id = item['ShortName'] as String,
             locale = item['Locale'] as String;
-        if (!locale.startsWith('zh-') ||
-            !RegExp(r'^[a-zA-Z0-9-]+$').hasMatch(id)) {
+        if (!validVoice(id, locale)) {
           continue;
         }
         final known = id == defaultEdgeVoice.id
@@ -158,6 +158,16 @@ class EdgeSpeechClient {
     return (path: path, audio: Uint8List.fromList(data.sublist(length + 2)));
   }
 
+  static bool validVoice(String id, String locale) =>
+      id.length <= 120 &&
+      locale.length <= 40 &&
+      RegExp(r'^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){1,4}$').hasMatch(locale) &&
+      RegExp(
+        r'^[a-zA-Z]{2,3}-(?:[A-Za-z0-9]+-)+[A-Za-z0-9]+Neural$',
+      ).hasMatch(id) &&
+      id.toLowerCase().startsWith('${locale.toLowerCase()}-') &&
+      speechLanguageCode(locale).isNotEmpty;
+
   Future<Uint8List> synthesize(
     String text,
     SpeechVoice voice,
@@ -171,12 +181,7 @@ class EdgeSpeechClient {
     required bool retryClock,
   }) async {
     text = speechText(text);
-    if (!RegExp(
-          r'^zh-(?:[A-Za-z0-9]+-)+[A-Za-z0-9]+Neural$',
-        ).hasMatch(voice.id) ||
-        voice.id.length > 120 ||
-        voice.locale.length > 40 ||
-        !RegExp(r'^zh-[A-Za-z-]+$').hasMatch(voice.locale)) {
+    if (!validVoice(voice.id, voice.locale)) {
       throw const SpeechFailure('在线朗读音色无效，请重新选择音色');
     }
     if (!hasSpeechText(text) || utf8.encode(escapeXml(text)).length > 3500) {

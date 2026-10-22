@@ -52,4 +52,77 @@ void main() {
       expect(calls.map((c) => c.method), ['pickBooks', 'pickBook']);
     },
   );
+  test(
+    'deferred selection stages one opaque reference and releases its lease',
+    () async {
+      final documents = BookDocuments();
+      result = [
+        {'name': '第一本.epub', 'token': 'one'},
+        {'name': '第二本.epub', 'token': 'two'},
+        {'name': '失败.epub', 'error': '授权失效'},
+      ];
+      final selected = await documents.pickForImport();
+      expect(calls.single.arguments, {'deferred': true, 'linkOriginals': true});
+      expect(selected.map((b) => b.path), [null, null, null]);
+      result = {'name': '第一本.epub', 'path': '/private/import-1.source'};
+      final staged = await documents.stageForImport(selected.first);
+      expect(calls.last.method, 'stageImportBook');
+      expect(calls.last.arguments, {'token': 'one'});
+      expect(staged.path, '/private/import-1.source');
+      expect(await documents.stageForImport(staged), same(staged));
+      result = null;
+      await documents.releaseBooks([...selected, staged]);
+      expect(calls.last.arguments, {
+        'paths': ['/private/import-1.source'],
+        'tokens': ['one', 'two'],
+      });
+    },
+  );
+  test(
+    'linked TXT selections never stage a copy or release durable grants as temporary files',
+    () async {
+      result = [
+        {'name': '原书.txt', 'reference': 'opaque-document'},
+      ];
+      final documents = BookDocuments();
+      final selected = (await documents.pickForImport()).single;
+      expect(selected.reference, 'opaque-document');
+      expect(await documents.stageForImport(selected), same(selected));
+      expect(await documents.prepareBook(selected), [selected]);
+      result = null;
+      await documents.releaseBooks([selected]);
+      expect(calls.map((c) => c.method), ['pickBooks', 'releaseBooks']);
+      expect(calls.last.arguments, {'paths': <String>[]});
+    },
+  );
+  test(
+    'explicit copy picker retains the old deferred managed import',
+    () async {
+      await BookDocuments().pickCopiesForImport();
+      expect(calls.single.arguments, {'deferred': true});
+    },
+  );
+  test(
+    'linked document conversion retains the origin and owns only its derived staging',
+    () async {
+      result = [
+        {'name': '文档.epub', 'path': '/private/import-document.source'},
+      ];
+      final prepared = await BookDocuments().prepareBook(
+        const BookDocumentSelection.linked(
+          name: '文档.pdf',
+          reference: 'opaque-pdf',
+        ),
+      );
+      expect(calls.single.method, 'prepareLinkedDocument');
+      expect(calls.single.arguments, {
+        'name': '文档.pdf',
+        'reference': 'opaque-pdf',
+      });
+      expect(prepared.single.originReference, 'opaque-pdf');
+      expect(prepared.single.originName, '文档.pdf');
+      expect(prepared.single.reference, isNull);
+      expect(prepared.single.path, '/private/import-document.source');
+    },
+  );
 }
