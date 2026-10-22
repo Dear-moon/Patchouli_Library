@@ -27,9 +27,24 @@ class SpeechLocalePolicyTest {
         assertNull(SpeechLocalePolicy.chineseTag(Locale.ROOT))
     }
 
-    @Test fun retiredEnginesCannotBeInitializedEvenByDirectChannelCalls() {
-        for (engine in listOf("com.oplus.ttsaccessibilityengine", "com.oppo.tts", "com.heytap.speech", "", null))
+    @Test fun publicTtsPackageNamesAndDefaultAreAllowedButInvalidNamesAreRejected() {
+        for (engine in listOf("", null, "../engine", "package;command", "https://engine", "invalid name"))
             assertFalse(SpeechLocalePolicy.supportsEngine(engine))
-        assertTrue(SpeechLocalePolicy.supportsEngine("org.example.tts"))
+        for (engine in listOf("@default", "org.example.tts", "com.oplus.ttsaccessibilityengine", "com.oppo.tts", "com.heytap.speech"))
+            assertTrue(SpeechLocalePolicy.supportsEngine(engine))
+    }
+
+    @Test fun matchingNeverSubstitutesAnotherLanguage() {
+        assertTrue(SpeechLocalePolicy.matches(Locale.forLanguageTag("ja-JP"), Locale("jpn")))
+        assertTrue(SpeechLocalePolicy.matches(Locale.forLanguageTag("zh-TW"), Locale("chi", "CN")))
+        assertFalse(SpeechLocalePolicy.matches(Locale.JAPANESE, Locale.SIMPLIFIED_CHINESE))
+        assertFalse(SpeechLocalePolicy.matches(Locale.US, Locale.JAPANESE))
+    }
+
+    @Test fun invalidRequestedLocalesAreNotSilentlyDefaulted() {
+        assertEquals(Locale.JAPAN, SpeechLocalePolicy.requestedLocale("ja-JP"))
+        assertNull(SpeechLocalePolicy.requestedLocale(""))
+        assertNull(SpeechLocalePolicy.requestedLocale("und"))
+        assertNull(SpeechLocalePolicy.requestedLocale("ja-JP\"/text"))
     }
 }
