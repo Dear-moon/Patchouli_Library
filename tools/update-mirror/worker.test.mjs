@@ -247,6 +247,23 @@ test('current distribution only approves its three reviewed APK identities', () 
   assert.equal(approvedTag('v0.3.7+63'), false);
 });
 
+test('registry follows current deployment approval instead of a retained instance snapshot', async () => {
+  const original = globalThis.fetch;
+  const stored = new Map();
+  const storage = { get: async k => stored.get(k), put: async (k, v) => stored.set(k, v), list: async () => new Map(), delete: async () => {} };
+  const current = { ...data, tag_name: 'v0.4.7', assets: APPROVED_RELEASES['v0.4.7'].map(id => ({ ...data.assets[0], id })) };
+  globalThis.fetch = async () => Response.json(current);
+  try {
+    const registry = new ReleaseRegistry({ storage });
+    registry.policy = Object.fromEntries(Object.entries(APPROVED_RELEASES).filter(([tag]) => tag !== 'v0.4.7'));
+    assert.equal((await registry.fetch(new Request('https://registry/tags/v0.4.7'))).status, 200);
+    const latest = await registry.fetch(new Request('https://registry/latest'));
+    assert.equal(latest.status, 200);
+    assert.deepEqual((await latest.json()).assets.map(a => a.id), APPROVED_RELEASES['v0.4.7']);
+    assert.equal((await registry.fetch(new Request('https://registry/tags/v9.9.9'))).status, 404);
+  } finally { globalThis.fetch = original; }
+});
+
 test('public introduction keeps reading and free-use notices without contacts', () => {
   const identity = HOME.indexOf('本项目仅为第三方阅读客户端');
   const free = HOME.indexOf('本项目完全免费、开源，无任何赞助、打赏或付费渠道');

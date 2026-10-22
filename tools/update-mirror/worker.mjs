@@ -240,15 +240,18 @@ export default {
 // One shared refresh per 120 s instead of a separate GitHub API budget per POP.
 // The free SQLite object stores public release manifests, never visitor/account data.
 export class ReleaseRegistry {
-  constructor(ctx, env = {}, policy = APPROVED_RELEASES) { this.storage = ctx.storage; this.env = env; this.policy = policy; this.pending = new Map(); this.cooldown = 0; }
+  constructor(ctx, env = {}, policy) { this.storage = ctx.storage; this.env = env; this.policyOverride = policy; this.pending = new Map(); this.cooldown = 0; }
+  // The signed-asset approval belongs to deployed code, not a long-lived
+  // object's constructor snapshot. An explicit test policy stays isolated.
+  get activePolicy() { return this.policyOverride ?? APPROVED_RELEASES; }
   async fetch(request) {
     const url = new URL(request.url), suffix = url.pathname.slice(1);
     if (suffix !== 'latest' && !/^tags\/v?\d+\.\d+\.\d+(?:\+\d+)?$/.test(suffix) || suffix.length > 80) return error('Unknown release', 404);
-    if (Object.keys(this.policy).length === 0 || (suffix.startsWith('tags/') && !approvedTag(suffix.slice(5), this.policy))) return error('No published release', 404);
+    if (Object.keys(this.activePolicy).length === 0 || (suffix.startsWith('tags/') && !approvedTag(suffix.slice(5), this.activePolicy))) return error('No published release', 404);
     const now = Date.now(), key = `release:${CACHE_NAMESPACE}:${suffix}`;
     let saved = await this.storage.get(key);
     if (saved) {
-      const data = approvedMetadata(saved.data, this.policy);
+      const data = approvedMetadata(saved.data, this.activePolicy);
       saved = data ? { ...saved, data } : null;
     }
     if (saved && now - saved.at < (suffix === 'latest' ? 120000 : 300000)) return Response.json(saved.data);
@@ -280,7 +283,7 @@ export class ReleaseRegistry {
     if (r.status !== 200) { await r.body?.cancel(); throw new Error(`GitHub HTTP ${r.status}`); }
     const text = await r.text();
     if (text.length > 1024 * 1024) throw new Error('Manifest too large');
-    const data = approvedMetadata(JSON.parse(text), this.policy);
+    const data = approvedMetadata(JSON.parse(text), this.activePolicy);
     if (!data ||
         (suffix !== 'latest' && data.tag_name !== suffix.slice(5))) throw new Error('No stable release');
     const value = { data, at: now };
