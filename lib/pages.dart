@@ -1949,10 +1949,10 @@ class _ShelfPageState extends State<ShelfPage>
                           AppText(
                             _cacheOnly
                                 ? state.combinedShelf
-                                      ? '缓存正文或导入本地书籍后即可在这里阅读'
+                                      ? '已缓存的收藏和本地导入书籍会显示在这里'
                                       : '已缓存正文的收藏会显示在这里，本地导入请到「本地」阅读'
                                 : state.combinedShelf && all.isEmpty
-                                ? '收藏、缓存或点击右上角 ＋ 导入书籍'
+                                ? '收藏喜欢的书，或点击右上角 ＋ 导入书籍'
                                 : state.shelf.isEmpty
                                 ? '在发现页收藏喜欢的书'
                                 : '试试其他关键词或切回全部',
@@ -2158,11 +2158,7 @@ class _ShelfPageState extends State<ShelfPage>
           ),
           GlassMenuItem(
             order: 1,
-            label: !state.contains(id)
-                ? '加入收藏书架'
-                : state.combinedShelf && _offline?.availableOffline(id) == true
-                ? '取消收藏（保留缓存）'
-                : '移出书架',
+            label: !state.contains(id) ? '加入收藏书架' : '移出书架',
             onPressed: () => Navigator.pop(
               menuContext,
               state.contains(id) ? 'remove' : 'add',
@@ -2208,9 +2204,7 @@ class _ShelfPageState extends State<ShelfPage>
     if (!mounted) return;
     showNovelFeedback(
       this.context,
-      state.combinedShelf && _offline?.availableOffline(id) == true
-          ? '已取消收藏，缓存仍在书架中'
-          : '已移出书架',
+      _offline?.availableOffline(id) == true ? '已移出书架，缓存和阅读进度保留' : '已移出书架',
       actionLabel: '撤销',
       action: () async {
         if (!state.contains(id) && state.shelfRevision(id) == revision) {
@@ -2381,7 +2375,7 @@ class SettingsPage extends StatelessWidget {
             keyName: 'settings-combined-shelf',
             icon: CupertinoIcons.square_stack,
             title: '合并书架',
-            description: '缓存与本地书统一显示在书架，隐藏底部本地入口',
+            description: '收藏与本地书统一显示在书架，试读缓存不加入',
             value: state.combinedShelf,
             onChanged: (value) => state.setNavigationMode(combinedShelf: value),
           ),
@@ -2392,7 +2386,7 @@ class SettingsPage extends StatelessWidget {
             icon: CupertinoIcons.wifi_slash,
             title: '离线适配',
             description: state.combinedShelf
-                ? '断网后隐藏发现，书架保留缓存和本地书籍'
+                ? '断网后隐藏发现，书架保留已缓存的收藏和本地书籍'
                 : '断网后隐藏发现，书架只显示已缓存的收藏',
             value: state.adaptWhenOffline,
             onChanged: (value) =>

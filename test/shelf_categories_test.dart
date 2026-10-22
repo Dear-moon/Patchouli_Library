@@ -16,9 +16,79 @@ import 'package:wenku8_flutter/offline_repository.dart';
 import 'package:wenku8_flutter/pages.dart';
 import 'support/visual_review.dart';
 
+class _TrialRepository extends DemoNovelRepository {
+  @override
+  Future<String> chapterContent(int id, NovelChapter chapter) async =>
+      chapter.content;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(loadReviewFonts);
+  test('trial caching stays separate from saved shelf membership', () async {
+    SharedPreferences.setMockInitialValues({'combinedShelf': true});
+    final state = await LibraryState.load();
+    final root = await Directory.systemTemp.createTemp('wenku-trial-shelf-');
+    final cache = OfflineCacheStore(Directory('${root.path}/cache'));
+    final repo = OfflineNovelRepository(
+      remote: _TrialRepository(),
+      cache: cache,
+    );
+    addTearDown(() async {
+      repo.dispose();
+      cache.dispose();
+      state.dispose();
+      await root.delete(recursive: true);
+    });
+    final book = demoNovels.first.withChapters(const [
+      NovelChapter('试读章节', '试读正文。', id: 11),
+    ]);
+    await repo.rememberDirectory(book);
+    expect(await repo.chapterContent(book.id, book.chapters.single), '试读正文。');
+    await state.savePosition(
+      novel: book,
+      chapter: 0,
+      offset: 0,
+      maximum: 100,
+      width: 390,
+    );
+    expect(cache.book(book.id)!.cachedCount, 1);
+    expect(state.shelf, isEmpty);
+    expect(bookshelfIds(state, repo), isEmpty);
+    expect(bookshelfIds(state, repo, readableOnly: true), isEmpty);
+    final search = LibrarySearchRepository(source: repo, state: state);
+    expect(await search.list(), isEmpty);
+    await state.setShelfView(source: 'cached');
+    expect(bookshelfIds(state, repo), isEmpty);
+
+    await state.setShelfMembership(book.id, true, novel: book);
+    expect(bookshelfIds(state, repo), {book.id});
+    expect(bookshelfIds(state, repo, readableOnly: true), {book.id});
+    await state.setShelfMembership(book.id, false);
+    expect(bookshelfIds(state, repo), isEmpty);
+    expect(await cache.readChapter(book.id, 11), '试读正文。');
+    expect(state.positionFor(book.id), isNotNull);
+
+    final restarted = await LibraryState.load();
+    final reloaded = OfflineCacheStore(Directory('${root.path}/cache'));
+    await reloaded.load();
+    final reopened = OfflineNovelRepository(
+      remote: _TrialRepository(),
+      cache: reloaded,
+    );
+    addTearDown(() {
+      reopened.dispose();
+      reloaded.dispose();
+      restarted.dispose();
+    });
+    expect(restarted.combinedShelf, isTrue);
+    expect(restarted.positionFor(book.id), isNotNull);
+    expect(bookshelfIds(restarted, reopened), isEmpty);
+    await restarted.setNavigationMode(combinedShelf: false);
+    expect(bookshelfIds(restarted, reopened), isEmpty);
+    expect(await reloaded.readChapter(book.id, 11), '试读正文。');
+  });
+
   test(
     'categories compose with source, offline and merged views without membership changes',
     () async {

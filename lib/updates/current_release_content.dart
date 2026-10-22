@@ -18,11 +18,12 @@ const _freeFraudNotice =
 const _downloadNotice = '请通过**项目仓库或 App 内更新**获取安装包。';
 const _freeNoticeBody =
     '$_freeHeading\n\n$releaseFreeNotice\n\n$_freeFraudNotice\n\n$_downloadNotice';
-const _websiteRedirectFix =
-    '修复合法官网跳转被误判为“其他站点”的问题，改善详情、目录和正文加载；遇到临时网络故障时，自动尝试备用官网一次。';
-const _backgroundConcentrationFix = '阅读器自定义背景图片浓度最高支持 **100%**，并可保存该设置。';
+const _websiteReadingFix =
+    '改善部分设备及网络环境下官网书籍详情、目录和正文无法加载的问题；需要访问验证时，可在官网页面完成验证后返回继续阅读。';
+const _chineseUsernameFix = '修复文库账号用户名输入框无法正常输入中文的问题。';
+const _trialShelfFix = '修复试读或缓存章节后书籍自动出现在书架的问题；在线书籍仅在主动加入书架后显示，缓存与阅读进度保留。';
 const _releaseChanges =
-    '### 本次更新\n\n- $_websiteRedirectFix\n- $_backgroundConcentrationFix';
+    '### 本次更新\n\n- $_websiteReadingFix\n- $_chineseUsernameFix\n- $_trialShelfFix';
 
 // Keep the in-app opening intact. Public announcements omit contact information.
 const publicReleaseNotes =
@@ -34,8 +35,9 @@ const currentReleaseSummary = [
   releaseFreeNotice,
   releaseReadingNotice,
   currentReleaseSourcePolicy,
-  _websiteRedirectFix,
-  _backgroundConcentrationFix,
+  _websiteReadingFix,
+  _chineseUsernameFix,
+  _trialShelfFix,
 ];
 
 const currentReleaseSections = [
@@ -48,5 +50,9 @@ const currentReleaseSections = [
     releaseReadingNotice,
     currentReleaseSourcePolicy,
   ]),
-  ReleaseSection("本次更新", [_websiteRedirectFix, _backgroundConcentrationFix]),
+  ReleaseSection("本次更新", [
+    _websiteReadingFix,
+    _chineseUsernameFix,
+    _trialShelfFix,
+  ]),
 ];

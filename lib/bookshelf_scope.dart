@@ -2,7 +2,8 @@ import 'library_state.dart';
 import 'offline_repository.dart';
 import 'local_library_preferences.dart';
 
-/// Membership is a view, never a write to cloud favorites or local originals.
+/// The shelf contains saved books and, when merged, imported originals.
+/// Cached trial chapters provide offline availability, never membership.
 Set<int> bookshelfIds(
   LibraryState state,
   OfflineNovelRepository? offline, {
@@ -13,11 +14,8 @@ Set<int> bookshelfIds(
     {
           for (final id in state.shelf)
             if (!readableOnly || offline?.availableOffline(id) == true) id,
-          if (state.combinedShelf && offline != null) ...[
-            for (final book in offline.cache.books)
-              if (book.cachedCount > 0) book.novel.id,
-            ...?offline.local?.books.map((book) => book.id),
-          ],
+          if (state.combinedShelf)
+            ...?offline?.local?.books.map((book) => book.id),
         }
         .where(
           (id) =>

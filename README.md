@@ -9,9 +9,9 @@
 
 ## 下载与更新
 
-当前正式版：**[0.4.5 · build 155](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.5)**。
+当前正式版：**[0.4.6 · build 163](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.4.6)**。
 
-本版修复合法官网跳转被误判为“其他站点”的问题，遇到临时网络故障时尝试备用官网一次；自定义阅读背景图片浓度最高支持 **100%**。
+本版改善官网阅读与访问验证后的恢复，修复中文用户名输入，并让试读缓存与收藏书架分开，避免只看一眼就自动上架。
 
 ### [镜像下载 →](https://git.3952039.xyz/#releases)　[GitHub Releases →](https://github.com/mikufoxxx/Wenku8_Flutter/releases/latest)
 
