@@ -14,11 +14,27 @@ const BASE_HEADERS = {
   'Referrer-Policy': 'no-referrer',
 };
 
-function error(message, status = 502) {
-  return new Response(JSON.stringify({ error: message }), {
+function error(message, status = 502, details = {}) {
+  return new Response(JSON.stringify({ error: message, ...details }), {
     status,
     headers: { ...BASE_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
   });
+}
+
+class RegistryFailure extends Error {
+  constructor(stage, status) {
+    super(stage === 'http' ? `GitHub HTTP ${status}` : 'Registry refresh failed');
+    this.stage = stage;
+  }
+}
+
+async function registryStep(stage, action) {
+  try { return await action(); }
+  catch { throw new RegistryFailure(stage); }
+}
+
+function registryError(message, status, stage) {
+  return error(message, status, { stage, policyNamespace: CACHE_NAMESPACE });
 }
 
 function output(response, method, state) {
@@ -247,11 +263,15 @@ export class ReleaseRegistry {
   async fetch(request) {
     const url = new URL(request.url), suffix = url.pathname.slice(1);
     if (suffix !== 'latest' && !/^tags\/v?\d+\.\d+\.\d+(?:\+\d+)?$/.test(suffix) || suffix.length > 80) return error('Unknown release', 404);
-    if (Object.keys(this.activePolicy).length === 0 || (suffix.startsWith('tags/') && !approvedTag(suffix.slice(5), this.activePolicy))) return error('No published release', 404);
+    if (Object.keys(this.activePolicy).length === 0 || (suffix.startsWith('tags/') && !approvedTag(suffix.slice(5), this.activePolicy))) return registryError('No published release', 404, 'approval');
     const now = Date.now(), key = `release:${CACHE_NAMESPACE}:${suffix}`;
-    let saved = await this.storage.get(key);
+    let saved;
+    try { saved = await this.storage.get(key); }
+    catch { return registryError('Update service is temporarily unavailable', 502, 'storage'); }
     if (saved) {
-      const data = approvedMetadata(saved.data, this.activePolicy);
+      let data;
+      try { data = approvedMetadata(saved.data, this.activePolicy); }
+      catch { return registryError('Update service is temporarily unavailable', 502, 'approval'); }
       saved = data ? { ...saved, data } : null;
     }
     if (saved && now - saved.at < (suffix === 'latest' ? 120000 : 300000)) return Response.json(saved.data);
@@ -262,7 +282,11 @@ export class ReleaseRegistry {
         this.pending.set(key, pending);
       }
       try { saved = await pending; }
-      catch (failure) { this.cooldown = Date.now() + 30000; this.lastFailure = /^GitHub HTTP \d+$/.test(failure.message) ? failure.message : 'Registry refresh failed'; }
+      catch (failure) {
+        this.cooldown = Date.now() + 30000;
+        this.lastFailure = failure instanceof RegistryFailure ? failure.message : 'Registry refresh failed';
+        this.lastFailureStage = failure instanceof RegistryFailure ? failure.stage : 'refresh';
+      }
       finally { this.pending.delete(key); }
       if (saved && saved.at === now) return Response.json(saved.data);
       // Other requests may have shared this refresh with an earlier start time.
@@ -271,30 +295,33 @@ export class ReleaseRegistry {
     if (url.searchParams.get('download') === '1' && saved && now - saved.at < 86400000) {
       return Response.json(saved.data, { headers: { 'X-Wenku-Stale': '1' } });
     }
-    return error(this.lastFailure ?? 'GitHub release is temporarily unavailable', 503);
+    return registryError(this.lastFailure ?? 'GitHub release is temporarily unavailable', 503, this.lastFailureStage ?? 'refresh');
   }
   async refresh(suffix, key, now) {
     const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'Wenku8-Release-Registry', 'X-GitHub-Api-Version': '2022-11-28' };
     // Only the fixed GitHub API origin receives this optional encrypted Secret.
     if (this.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${this.env.GITHUB_TOKEN}`;
-    const r = await fetchHeaders((...args) => fetch(...args), `${API}${suffix}`, {
+    const r = await registryStep('fetch', () => fetchHeaders((...args) => fetch(...args), `${API}${suffix}`, {
       headers, redirect: 'manual',
-    });
-    if (r.status !== 200) { await r.body?.cancel(); throw new Error(`GitHub HTTP ${r.status}`); }
-    const text = await r.text();
-    if (text.length > 1024 * 1024) throw new Error('Manifest too large');
-    const data = approvedMetadata(JSON.parse(text), this.activePolicy);
+    }));
+    if (r.status !== 200) { await r.body?.cancel().catch(() => {}); throw new RegistryFailure('http', r.status); }
+    const text = await registryStep('fetch', () => r.text());
+    if (text.length > 1024 * 1024) throw new RegistryFailure('json');
+    const manifest = await registryStep('json', () => JSON.parse(text));
+    const data = await registryStep('approval', () => approvedMetadata(manifest, this.activePolicy));
     if (!data ||
-        (suffix !== 'latest' && data.tag_name !== suffix.slice(5))) throw new Error('No stable release');
+        (suffix !== 'latest' && data.tag_name !== suffix.slice(5))) throw new RegistryFailure('approval');
     const value = { data, at: now };
-    await this.storage.put(key, value);
-    // Reuse the same verified manifest for a tagged download, avoiding a second API call.
-    await this.storage.put(`release:${CACHE_NAMESPACE}:tags/${data.tag_name}`, value);
-    const all = await this.storage.list({ prefix: `release:${CACHE_NAMESPACE}:tags/` });
-    if (all.size > 20) {
-      const oldest = [...all.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, all.size - 20).map(([k]) => k);
-      await this.storage.delete(oldest);
-    }
+    await registryStep('storage', async () => {
+      await this.storage.put(key, value);
+      // Reuse the same verified manifest for a tagged download, avoiding a second API call.
+      await this.storage.put(`release:${CACHE_NAMESPACE}:tags/${data.tag_name}`, value);
+      const all = await this.storage.list({ prefix: `release:${CACHE_NAMESPACE}:tags/` });
+      if (all.size > 20) {
+        const oldest = [...all.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, all.size - 20).map(([k]) => k);
+        await this.storage.delete(oldest);
+      }
+    });
     return value;
   }
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { handle, REPOSITORY, ReleaseRegistry, HOME } from './worker.mjs';
-import { APPROVED_RELEASES, approvedTag, approvedMetadata } from './distribution.mjs';
+import { APPROVED_RELEASES, CACHE_NAMESPACE, approvedTag, approvedMetadata } from './distribution.mjs';
 
 const host = 'https://git.3952039.xyz';
 const approvals = { 'v0.4.2': [12], 'v0.4.2+57': [12] };
@@ -137,7 +137,9 @@ test('global release registry shares refreshes and historical guesses spend no u
     assert.equal((await registry.fetch(new Request('https://registry/tags/v9.9.9?download=1'))).status, 404);
     assert.equal(calls, 1);
     now += 121000; failing = true;
-    assert.equal((await latest()).status, 503);
+    const failed = await latest();
+    assert.equal(failed.status, 503);
+    assert.deepEqual(await failed.json(), { error: 'GitHub HTTP 403', stage: 'http', policyNamespace: CACHE_NAMESPACE });
     const staleDownload = await registry.fetch(new Request('https://registry/latest?download=1'));
     assert.equal(staleDownload.status, 200); assert.equal(staleDownload.headers.get('x-wenku-stale'), '1');
     assert.equal(calls, 2);
@@ -160,6 +162,51 @@ test('optional API credential stays on the fixed GitHub API request, outside res
     assert.equal(calls[0].options.redirect, 'manual');
     assert.doesNotMatch(await response.text(), /fixture-read-only/);
   } finally { globalThis.fetch = original; }
+});
+
+test('registry failures identify their stage without returning credentials or upstream content', async () => {
+  const original = globalThis.fetch;
+  const privateDetail = 'fixture-private-detail';
+  const cases = [
+    { stage: 'fetch', fetcher: () => { throw new Error(privateDetail); } },
+    { stage: 'fetch', fetcher: () => new Response(new ReadableStream({ start(controller) { controller.error(new Error(privateDetail)); } })) },
+    { stage: 'http', fetcher: () => new Response(privateDetail, { status: 403 }), message: 'GitHub HTTP 403' },
+    { stage: 'json', fetcher: () => new Response(privateDetail) },
+    { stage: 'approval', fetcher: () => Response.json({ ...data, body: privateDetail, assets: [{ id: 999 }] }) },
+    { stage: 'storage', storageMethod: 'put' },
+    { stage: 'storage', storageMethod: 'list' },
+    { stage: 'storage', storageMethod: 'get', status: 502, message: 'Update service is temporarily unavailable' },
+  ];
+  try {
+    for (const scenario of cases) {
+      let calls = 0;
+      const storage = { get: async () => undefined, put: async () => {}, list: async () => new Map(), delete: async () => {} };
+      if (scenario.storageMethod) storage[scenario.storageMethod] = async () => { throw new Error(privateDetail); };
+      globalThis.fetch = async () => { calls++; return scenario.fetcher ? scenario.fetcher() : Response.json(data); };
+      const registry = new ReleaseRegistry({ storage }, { GITHUB_TOKEN: privateDetail }, approvals);
+      const request = () => handle(new Request(host + '/api/releases/latest'), {
+        cache: { match: async () => undefined },
+        registry: suffix => registry.fetch(new Request('https://registry/' + suffix)),
+      });
+      const response = await request();
+      assert.equal(response.status, scenario.status ?? 503);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal(response.headers.get('x-wenku-cache'), 'MISS');
+      const text = await response.text();
+      assert.doesNotMatch(text, new RegExp(privateDetail));
+      const expected = { error: scenario.message ?? 'Registry refresh failed', stage: scenario.stage, policyNamespace: CACHE_NAMESPACE };
+      assert.deepEqual(JSON.parse(text), expected);
+      assert.deepEqual(await (await request()).json(), expected);
+      assert.equal(calls, scenario.storageMethod === 'get' ? 0 : 1);
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+test('registry approval failures expose the running namespace without changing denial status', async () => {
+  const registry = new ReleaseRegistry({ storage: { get() { throw new Error('must not read'); } } }, {}, approvals);
+  const response = await registry.fetch(new Request('https://registry/tags/v9.9.9'));
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: 'No published release', stage: 'approval', policyNamespace: CACHE_NAMESPACE });
 });
 
 test('withdrawn 0.4.0 rejects GET, HEAD, Range and known-ID caches before reading bytes', async () => {
