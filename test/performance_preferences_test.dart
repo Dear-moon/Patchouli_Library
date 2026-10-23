@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wenku8_flutter/app_ui.dart';
 import 'package:wenku8_flutter/archive_wave.dart';
 import 'package:wenku8_flutter/catalog.dart';
+import 'package:wenku8_flutter/glass_dock.dart';
 import 'package:wenku8_flutter/library_backup.dart';
 import 'package:wenku8_flutter/library_state.dart';
 import 'package:wenku8_flutter/low_performance_page.dart';
@@ -20,6 +21,109 @@ void main() {
     state = await LibraryState.load();
   });
   tearDown(() => state.dispose());
+
+  test(
+    'animated icons have an independent persisted lightweight switch',
+    () async {
+      expect(state.performance.animatedIcons, isTrue);
+      await state.setPerformance(const PerformancePreferences(enabled: true));
+      expect(state.performance.animatedIcons, isFalse);
+      await state.setPerformance(
+        state.performance.withEffect(PerformanceEffect.animatedIcons, true),
+      );
+      expect(state.performance.motion, isFalse);
+      expect(state.performance.animatedIcons, isTrue);
+      final restored = await LibraryState.load();
+      addTearDown(restored.dispose);
+      expect(restored.performance.animatedIcons, isTrue);
+      expect(restored.performance.motion, isFalse);
+      expect(
+        restored.performance.toRecords()['performanceAnimatedIcons'],
+        isTrue,
+      );
+      await state.setPerformance(state.performance.withEnabled(false));
+      expect(state.performance.animatedIcons, isTrue);
+      await state.setPerformance(state.performance.withEnabled(true));
+      expect(state.performance.animatedIcons, isTrue);
+    },
+  );
+
+  testWidgets(
+    'icon and dock motion ignore transition-only reduction, not explicit reduction',
+    (tester) async {
+      Animation<double> gesture(Finder icon) =>
+          (tester
+                          .widget<CustomPaint>(
+                            find.descendant(
+                              of: icon,
+                              matching: find.byType(CustomPaint),
+                            ),
+                          )
+                          .painter
+                      as dynamic)
+                  .gesture
+              as Animation<double>;
+      final icon = find.byKey(const ValueKey('independent-icon'));
+      final dockIcon = find.descendant(
+        of: find.byKey(const ValueKey('dock-tab-0')),
+        matching: find.byType(ArchiveIcon),
+      );
+      Future<void> show({
+        bool icons = true,
+        bool motion = false,
+        bool? explicit = false,
+      }) => tester.pumpWidget(
+        MaterialApp(
+          home: PerformanceScope(
+            preferences: PerformancePreferences(
+              enabled: true,
+              effects: {
+                if (icons) PerformanceEffect.animatedIcons,
+                if (motion) PerformanceEffect.motion,
+              },
+            ),
+            explicitReduceMotion: explicit,
+            child: MediaQuery(
+              data: MediaQueryData(
+                size: const Size(800, 600),
+                disableAnimations: !motion || explicit == true,
+              ),
+              child: Scaffold(
+                body: Column(
+                  children: [
+                    const ArchiveIcon.symbol(
+                      ArchiveSymbol.shelf,
+                      key: ValueKey('independent-icon'),
+                    ),
+                    GlassDock(selectedIndex: 0, onSelected: (_) {}),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await show();
+      await tester.pump(const Duration(milliseconds: 480));
+      expect(gesture(icon).value, inExclusiveRange(0, 1));
+      expect(gesture(dockIcon).value, inExclusiveRange(0, 1));
+      await show(icons: false, motion: true);
+      expect(gesture(icon).value, 1);
+      expect(gesture(dockIcon).value, 1);
+      await show(explicit: true);
+      expect(gesture(icon).value, 1);
+      expect(gesture(dockIcon).value, 1);
+      // A standalone host that has no explicit override retains MediaQuery's
+      // accessibility contract rather than interpreting its origin itself.
+      await show(explicit: null);
+      expect(gesture(icon).value, 1);
+      expect(gesture(dockIcon).value, 1);
+      await show();
+      await tester.pump(const Duration(milliseconds: 480));
+      expect(gesture(icon).value, inExclusiveRange(0, 1));
+      await tester.pumpAndSettle();
+    },
+  );
 
   test(
     'preset is opt-in and custom switches survive leaving the mode and reloading',
@@ -56,7 +160,11 @@ void main() {
     () async {
       const preferences = PerformancePreferences(
         enabled: true,
-        effects: {PerformanceEffect.glass, PerformanceEffect.motion},
+        effects: {
+          PerformanceEffect.glass,
+          PerformanceEffect.motion,
+          PerformanceEffect.animatedIcons,
+        },
       );
       await state.setPerformance(preferences);
       final backup = await state.createBackup();
@@ -169,6 +277,18 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(state.performance.glass, true);
+      final animatedIcons = find.byKey(
+        const ValueKey('performanceAnimatedIcons'),
+      );
+      await tester.ensureVisible(animatedIcons);
+      expect(tester.widget<AppGlassSwitch>(animatedIcons).value, isFalse);
+      await tester.tap(animatedIcons);
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pumpAndSettle();
+      expect(state.performance.animatedIcons, isTrue);
+      expect(state.performance.motion, isFalse);
       await tester.ensureVisible(
         find.byKey(const ValueKey('performance-light-preset')),
       );
@@ -178,6 +298,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(state.performance.glass, false);
+      expect(state.performance.animatedIcons, false);
       expect(tester.takeException(), isNull);
       await captureReview(tester, boundary, 'low-performance-settings');
     },

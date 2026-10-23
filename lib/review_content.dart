@@ -64,16 +64,28 @@ class _ReviewContentState extends State<ReviewContent> {
     super.dispose();
   }
 
-  Future<void> _copy(String text, String notice) async {
+  Future<void> _copy(
+    String text,
+    String notice, {
+    BuildContext? feedbackContext,
+  }) async {
+    final target = feedbackContext ?? context;
     try {
       await Clipboard.setData(ClipboardData(text: text));
-      if (mounted) showNovelFeedback(context, notice);
+      if (target.mounted) {
+        showNovelFeedback(target, notice, haptic: HapticCue.success);
+      }
     } catch (_) {
-      if (mounted) showNovelFeedback(context, '复制未完成，请重试');
+      if (target.mounted) {
+        showNovelFeedback(target, '复制未完成，请重试', haptic: HapticCue.error);
+      }
     }
   }
 
-  Future<void> _open(Uri uri) async {
+  Future<void> _open(Uri uri, {BuildContext? feedbackContext}) async {
+    // Inline links and links in the extracted list share one feedback owner.
+    final target = feedbackContext ?? context;
+    AppHaptics.play(target, HapticCue.action);
     try {
       if (widget.onOpenLink != null) {
         await widget.onOpenLink!(uri);
@@ -93,7 +105,9 @@ class _ReviewContentState extends State<ReviewContent> {
         throw StateError('No link handler');
       }
     } catch (_) {
-      if (mounted) showNovelFeedback(context, '暂时无法打开，可在链接列表中复制');
+      if (target.mounted) {
+        showNovelFeedback(target, '暂时无法打开，可在链接列表中复制', haptic: HapticCue.error);
+      }
     }
   }
 
@@ -120,15 +134,18 @@ class _ReviewContentState extends State<ReviewContent> {
             children: [
               GlassTextButton(
                 key: ValueKey('review-open-link-$index'),
+                haptic: null,
                 compact: true,
-                onPressed: () => _open(uri),
+                onPressed: () => _open(uri, feedbackContext: sheet),
                 child: const AppText('打开链接'),
               ),
               const SizedBox(width: 12),
               GlassTextButton(
                 key: ValueKey('review-copy-link-$index'),
+                haptic: null,
                 compact: true,
-                onPressed: () => _copy(uri.toString(), '链接已复制'),
+                onPressed: () =>
+                    _copy(uri.toString(), '链接已复制', feedbackContext: sheet),
                 child: const AppText('复制链接'),
               ),
             ],
@@ -189,6 +206,7 @@ class _ReviewContentState extends State<ReviewContent> {
               ),
             GlassIconButton(
               key: const ValueKey('review-copy-text'),
+              haptic: null,
               icon: CupertinoIcons.doc_on_doc,
               label: '复制评论',
               onPressed: () => _copy(

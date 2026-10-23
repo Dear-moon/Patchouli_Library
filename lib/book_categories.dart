@@ -257,6 +257,8 @@ class _CategoryNameSheetState extends State<_CategoryNameSheet> {
         ),
         const SizedBox(height: 20),
         CupertinoTextField(
+          onTap: () => AppHaptics.play(context, HapticCue.selection),
+          onSubmitted: (_) => AppHaptics.play(context, HapticCue.action),
           controller: text,
           enabled: !busy,
           placeholder: appText(context, '分类名称'),

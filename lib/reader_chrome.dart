@@ -225,7 +225,7 @@ class _ReaderFollowDockState extends State<ReaderFollowDock>
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(CupertinoIcons.location_fill, size: 17),
+              ArchiveIcon(CupertinoIcons.location_fill, size: 17),
               SizedBox(width: 8),
               AppText('开启跟随'),
             ],

@@ -1,7 +1,6 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support/reader_panels.dart';
 import 'support/background_fixture.dart';
@@ -13,6 +12,7 @@ import 'package:wenku8_flutter/reader_landing_highlight.dart';
 import 'package:wenku8_flutter/reader_preferences.dart';
 import 'package:wenku8_flutter/reader_tools.dart';
 import 'package:wenku8_flutter/reader_paged_view.dart';
+import 'package:wenku8_flutter/reader_scroll_stream.dart';
 import 'support/visual_review.dart';
 import 'reader_modes_test.dart' show settleReader;
 
@@ -35,6 +35,18 @@ ScrollableState _article(WidgetTester tester) => tester.state<ScrollableState>(
       )
       .first,
 );
+
+ReaderScrollStream _stream(WidgetTester tester) => tester.widget(
+  find.byWidgetPredicate((widget) => widget is ReaderScrollStream),
+);
+
+double _chapterEnd(WidgetTester tester) {
+  final stream = _stream(tester);
+  return stream.controller.originOf(stream.chapter) +
+      (stream.controller.extentOf(stream.chapter)! -
+              _article(tester).position.viewportDimension)
+          .clamp(0.0, double.infinity);
+}
 
 void _expectBookmarkVisible(WidgetTester tester, ReadingPosition saved) {
   final paragraph = find.byKey(ValueKey('paragraph-${saved.paragraphIndex}'));
@@ -513,24 +525,27 @@ void main({
   );
 
   testWidgets(
-    'chapter progress detents are light, rate limited and only run during dragging',
+    'chapter progress detents acknowledge changes, rate limit and have no release echo',
     (tester) async {
       final haptics = <Object?>[];
+      var clock = Duration.zero;
+      AppHaptics.resetForTesting(now: () => clock);
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
+        AppHaptics.channel,
         (call) async {
-          if (call.method == 'HapticFeedback.vibrate') {
+          if (call.method == 'play') {
             haptics.add(call.arguments);
           }
-          return null;
+          return true;
         },
       );
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          SystemChannels.platform,
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          AppHaptics.channel,
           null,
-        ),
-      );
+        );
+        AppHaptics.resetForTesting();
+      });
       await tester.pumpWidget(
         MaterialApp(
           home: ReaderValueSlider(
@@ -550,19 +565,24 @@ void main({
         find.byKey(const ValueKey('test-progress')),
       );
       slider.onChangeStart!(0);
-      slider.onChanged!(.001);
       expect(haptics, isEmpty);
+      slider.onChanged!(.001);
+      expect(haptics, ['detent']);
       slider.onChanged!(.011);
       slider.onChanged!(.022);
-      expect(haptics, ['HapticFeedbackType.selectionClick']);
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 75)),
-      );
+      expect(haptics, ['detent']);
+      clock += const Duration(milliseconds: 75);
       slider.onChanged!(.034);
       expect(haptics.length, 2);
       slider.onChangeEnd!(.034);
-      slider.onChanged!(.08);
       expect(haptics.length, 2);
+      clock += const Duration(milliseconds: 75);
+      slider.onChanged!(.08);
+      expect(
+        haptics,
+        ['detent', 'detent', 'detent'],
+        reason: 'Accessibility increments are committed interactions too.',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -615,15 +635,17 @@ void main({
       await tester.tap(find.text('跳至章末'));
       await tester.pumpAndSettle();
       final scroll = _article(tester).position;
-      expect(scroll.pixels, closeTo(scroll.maxScrollExtent, 1));
-      expect(find.text('继续向下阅读下一章'), findsOneWidget);
+      expect(scroll.pixels, closeTo(_chapterEnd(tester), 1));
+      expect(_stream(tester).chapter, 0);
+      expect(find.text('继续向下阅读下一章'), findsNothing);
       await tester.drag(
         find.byKey(const ValueKey('reader-scroll')),
-        const Offset(0, -160),
+        Offset(0, -scroll.viewportDimension),
       );
       await tester.pumpAndSettle();
       expect(state.positionFor(71)!.chapter, 1);
-      expect(_article(tester).position.pixels, 0);
+      expect(_article(tester).position, same(scroll));
+      expect(_article(tester).position.pixels, greaterThan(0));
       expect(tester.takeException(), isNull);
     },
   );
@@ -656,10 +678,8 @@ void main({
       await tester.ensureVisible(find.text('跳至章末'));
       await tester.tap(find.text('跳至章末'));
       await tester.pumpAndSettle();
-      expect(
-        _article(tester).position.pixels,
-        closeTo(_article(tester).position.maxScrollExtent, 1),
-      );
+      expect(_article(tester).position.pixels, closeTo(_chapterEnd(tester), 1));
+      expect(_stream(tester).chapter, 0);
       expect(tester.takeException(), isNull);
     },
   );

@@ -26,6 +26,7 @@ import 'offline_cache.dart';
 import 'offline_repository.dart';
 import 'pages.dart';
 import 'performance_preferences.dart';
+import 'haptic_preferences.dart';
 import 'touch_sampling.dart';
 import 'updates/app_updates.dart';
 import 'updates/update_page.dart';
@@ -395,6 +396,8 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
                 final media = MediaQuery.of(context);
                 final content = PerformanceScope(
                   preferences: state.performance,
+                  explicitReduceMotion:
+                      media.disableAnimations || state.reduceMotion,
                   child: MediaQuery(
                     data: media.copyWith(
                       disableAnimations:
@@ -433,13 +436,16 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
                     ),
                   ),
                 );
-                return updates == null
-                    ? content
-                    : AppUpdateMonitor(
-                        updates: updates!,
-                        navigation: _updateNavigation,
-                        child: content,
-                      );
+                return HapticScope(
+                  preferences: state.haptics,
+                  child: updates == null
+                      ? content
+                      : AppUpdateMonitor(
+                          updates: updates!,
+                          navigation: _updateNavigation,
+                          child: content,
+                        ),
+                );
               },
             ),
           ),

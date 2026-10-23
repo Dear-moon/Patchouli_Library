@@ -173,6 +173,10 @@ class LiquidGlassSwitch extends StatefulWidget {
   /// Keep direct manipulation, without spring or morph interpolation.
   final bool reduceMotion;
 
+  /// Let an embedding application own feedback without a second motor call.
+  /// Standalone controls retain their original feedback by default.
+  final bool enableHaptics;
+
   const LiquidGlassSwitch({
     super.key,
     required this.value,
@@ -188,6 +192,7 @@ class LiquidGlassSwitch extends StatefulWidget {
     this.pixelRatio = 1.0,
     this.reduceMotion = false,
     this.horizontalDragOnly = false,
+    this.enableHaptics = true,
   });
 
   /// Yield vertical gestures to an enclosing scrollable; existing callers
@@ -565,7 +570,7 @@ class _LiquidGlassSwitchState extends State<LiquidGlassSwitch>
       final newState = hitRight;
       if (newState != _isOn) {
         _didToggleDuringDrag = true;
-        HapticFeedback.lightImpact();
+        if (widget.enableHaptics) HapticFeedback.lightImpact();
         _isOn = newState;
         widget.onChanged(_isOn);
       }
@@ -582,7 +587,7 @@ class _LiquidGlassSwitchState extends State<LiquidGlassSwitch>
     // mouse speeds.
     if (!_didMoveFar && elapsed < _tapTimeThreshold) {
       // A tap: toggle immediately, glide across, contract 0.2 s later.
-      HapticFeedback.lightImpact();
+      if (widget.enableHaptics) HapticFeedback.lightImpact();
       _isOn = !_isOn;
       widget.onChanged(_isOn);
       _thumbSpringTarget = _targetThumbCX;
@@ -599,7 +604,7 @@ class _LiquidGlassSwitchState extends State<LiquidGlassSwitch>
       // long-press-and-release flip the switch.
       _isDragging = false;
       if (!_didToggleDuringDrag) {
-        HapticFeedback.lightImpact();
+        if (widget.enableHaptics) HapticFeedback.lightImpact();
         _isOn = !_isOn;
         widget.onChanged(_isOn);
       }
@@ -615,7 +620,8 @@ class _LiquidGlassSwitchState extends State<LiquidGlassSwitch>
   void _handleCancel() {
     if (!mounted || !_pointerDown) return;
     final elapsed = DateTime.now().difference(_downTime).inMicroseconds / 1e6;
-    if (_didMoveFar || !widget.horizontalDragOnly && elapsed >= _tapTimeThreshold) {
+    if (_didMoveFar ||
+        !widget.horizontalDragOnly && elapsed >= _tapTimeThreshold) {
       _handleUp();
       return;
     }

@@ -108,6 +108,30 @@ class Novel {
     return best;
   }
 
+  /// A page title belongs to its reading resource and source position. The
+  /// directory's nearest-row selection may point into a different resource;
+  /// that is useful for navigation, but must not name this page after it.
+  String readingTitleFor(int chapter, {int paragraph = 0, int offset = 0}) {
+    if (chapters.isEmpty) return '目录为空';
+    NovelDirectoryEntry? best;
+    for (final entry in directory) {
+      if (entry.chapter != chapter) continue;
+      final target = entry.target;
+      if (target.paragraph > paragraph ||
+          target.paragraph == paragraph && target.offset > offset) {
+        continue;
+      }
+      final before = best?.target;
+      if (before == null ||
+          target.paragraph > before.paragraph ||
+          target.paragraph == before.paragraph &&
+              target.offset >= before.offset) {
+        best = entry;
+      }
+    }
+    return best?.title ?? chapters[chapter].title;
+  }
+
   List<String> get tags => List.unmodifiable(
     genre
         .split(RegExp(r'[\s\u3000·,，、;；|/]+'))
@@ -350,11 +374,17 @@ class NovelPage {
     required this.page,
     this.totalPages,
     this.totalItems,
+    this.searchFailures = const {},
   });
   final List<Novel> items;
   final int page;
   final int? totalPages;
   final int? totalItems;
+
+  /// Successful fields remain usable when an independent search field fails.
+  /// Callers may complete these fields through another source; presentation
+  /// exposes the missing scope, never the underlying response or exception.
+  final Map<BookSearchField, Object> searchFailures;
   bool get hasMore =>
       totalPages == null ? items.isNotEmpty : page < totalPages!;
 

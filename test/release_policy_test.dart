@@ -15,8 +15,8 @@ void main() {
   });
 
   test('current release upgrades the restored and earlier app versions', () {
-    expect(currentAppVersion, '0.4.7');
-    expect(currentAppBuild, 183);
+    expect(currentAppVersion, '0.4.8');
+    expect(currentAppBuild, 192);
     final release = AppRelease.fromGithub({
       'tag_name': 'v$currentAppVersion',
       'draft': false,
@@ -46,6 +46,8 @@ void main() {
       (version: '0.4.5', build: 162),
       (version: '0.4.6', build: 163),
       (version: '0.4.6', build: 182),
+      (version: '0.4.7', build: 183),
+      (version: '0.4.7', build: 191),
     ]) {
       expect(
         release.isNewerThan(
@@ -84,14 +86,37 @@ void main() {
     expect(currentReleaseSummary[3], currentReleaseSourcePolicy);
     expect(currentReleaseSections.first.title, contains('重要说明'));
     expect(currentReleaseSections.first.items.last, currentReleaseSourcePolicy);
-    expect(currentReleaseSections, hasLength(6));
-    expect(currentReleaseSections[1].title, '阅读器与翻页');
-    expect(currentReleaseSections[1].items, hasLength(8));
-    expect(currentReleaseSections.last.title, '评论与联网阅读');
-    expect(currentReleaseSections.last.items.last, contains('插图连接超时'));
-    expect(currentReleaseNotes, contains('左右点按均为下一页'));
-    expect(currentReleaseNotes, contains('强制竖屏'));
-    expect(currentReleaseNotes, contains('每种语言单独配置音色'));
+    expect(currentReleaseSummary, hasLength(8));
+    expect(currentReleaseSections, hasLength(5));
+    expect(currentReleaseSections.skip(1).map((section) => section.title), [
+      '图标与页面动效',
+      '振动反馈',
+      '搜索与标签',
+      '阅读与听书',
+    ]);
+    expect(currentReleaseSections[1].items, hasLength(3));
+    expect(currentReleaseSections.last.items.last, contains('插图拖动取消'));
+    for (final addition in [
+      '原创折页墨线',
+      '同一行同步播放',
+      '低性能模式支持单独开关图标动画',
+      '性能与动效 → 振动反馈',
+      '普通触屏及普通滚动开始不振动',
+      '标签组合搜索',
+      '按实际文字行衔接重排',
+      '上下滚动支持连续跨章',
+      '后续 **3 个语段**',
+    ]) {
+      expect(currentReleaseNotes, contains(addition));
+    }
+    for (final previousReleaseFeature in [
+      '新增旧版 Word',
+      '新增 **“强制竖屏”**',
+      '本书语言支持显示全部语言',
+      '本地书籍详情及编辑页移除简介',
+    ]) {
+      expect(currentReleaseNotes, isNot(contains(previousReleaseFeature)));
+    }
     for (final hidden in ['发布前待确认', '仍需补齐真机验收', '仅复制故障码', '加密', '故障排查']) {
       expect(currentReleaseNotes, isNot(contains(hidden)));
     }
@@ -115,6 +140,7 @@ void main() {
     final currentChangelog = changelog.split(
       RegExp(r'^## ', multiLine: true),
     )[1];
+    expect(currentChangelog, startsWith('0.4.8 · 2026-10-23\n'));
     final publishedNotes = currentChangelog
         .substring(currentChangelog.indexOf('\n') + 1)
         .trim();

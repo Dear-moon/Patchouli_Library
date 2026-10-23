@@ -6,6 +6,8 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_interactions.dart';
+import '../app_haptics.dart';
+import '../archive_icons.dart';
 import '../app_language.dart';
 
 /// Release text shares typography and parsing across prompts, About and pages.
@@ -138,15 +140,24 @@ class ReleaseNotes extends StatelessWidget {
         ),
         textScaler: MediaQuery.textScalerOf(context),
       ),
-      onTapLink: (_, href, _) => unawaited(_open(context, href)),
+      onTapLink: (_, href, _) {
+        AppHaptics.play(context, HapticCue.action);
+        unawaited(_open(context, href));
+      },
       // Keep update checks lightweight: remote artwork opens only on request.
-      imageBuilder: (uri, title, alt) => TextButton.icon(
-        onPressed: releaseLinkUri(uri.toString(), baseUri: baseUri) == null
-            ? null
-            : () => unawaited(_open(context, uri.toString())),
-        icon: const Icon(Icons.image_outlined, size: 18),
-        label: Text(
-          appText(context, '查看图片${alt?.isNotEmpty == true ? '：$alt' : ''}'),
+      imageBuilder: (uri, title, alt) => ArchiveIconResponse.builder(
+        enabled: releaseLinkUri(uri.toString(), baseUri: baseUri) != null,
+        builder: (context, activate) => TextButton.icon(
+          onPressed: releaseLinkUri(uri.toString(), baseUri: baseUri) == null
+              ? null
+              : () {
+                  activate();
+                  unawaited(_open(context, uri.toString()));
+                },
+          icon: const ArchiveIcon(Icons.image_outlined, size: 18),
+          label: Text(
+            appText(context, '查看图片${alt?.isNotEmpty == true ? '：$alt' : ''}'),
+          ),
         ),
       ),
     );

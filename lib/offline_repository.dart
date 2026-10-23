@@ -206,6 +206,7 @@ class OfflineNovelRepository extends FrameChangeNotifier
     int page = 1,
     bool refresh = false,
     bool Function()? current,
+    void Function(TagSearchProgress)? onProgress,
   }) {
     if (!offline && remote is ProgressiveTagCatalogue) {
       return (remote as ProgressiveTagCatalogue).tagPage(
@@ -213,6 +214,7 @@ class OfflineNovelRepository extends FrameChangeNotifier
         page: page,
         refresh: refresh,
         current: current,
+        onProgress: onProgress,
       );
     }
     return searchFilteredPage(

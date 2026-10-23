@@ -182,7 +182,7 @@ class _LocalScanSelectionState extends State<LocalScanSelection> {
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Icon(
+                                    ArchiveIcon(
                                       chosen
                                           ? CupertinoIcons.checkmark_circle_fill
                                           : CupertinoIcons.circle,

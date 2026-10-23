@@ -330,6 +330,7 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () {
+                AppHaptics.play(context, HapticCue.action);
                 _cache.evict(widget.url);
                 setState(() {
                   _future = _load();
@@ -339,7 +340,11 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
                 fit: BoxFit.scaleDown,
                 child: Padding(
                   padding: EdgeInsets.all(2),
-                  child: Icon(CupertinoIcons.arrow_clockwise, size: 24),
+                  child: ArchiveIcon(
+                    CupertinoIcons.arrow_clockwise,
+                    size: 24,
+                    ambient: true,
+                  ),
                 ),
               ),
             ),
@@ -352,7 +357,11 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(CupertinoIcons.photo, size: 28),
+                  const ArchiveIcon(
+                    CupertinoIcons.photo,
+                    size: 28,
+                    ambient: true,
+                  ),
                   const SizedBox(height: 12),
                   AppText(_failureLabel(snapshot.data?.error)),
                   GlassTextButton(
@@ -387,7 +396,12 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
           return frame(
             LayoutBuilder(
               builder: (context, constraints) => GestureDetector(
-                onTap: widget.onOpen,
+                onTap: widget.onOpen == null
+                    ? null
+                    : () {
+                        AppHaptics.play(context, HapticCue.action);
+                        widget.onOpen!();
+                      },
                 child: Semantics(
                   label: '章节插图，点击查看大图',
                   image: true,
@@ -496,8 +510,15 @@ class _ReaderIllustrationGalleryState extends State<ReaderIllustrationGallery> {
         : distance.abs() > .2
         ? distance.sign.toInt()
         : 0;
+    final target = (origin + step).clamp(0, widget.urls.length - 1);
+    if (target != origin || step != 0) {
+      AppHaptics.play(
+        context,
+        target != origin ? HapticCue.pageTurn : HapticCue.boundary,
+      );
+    }
     _pages.animateToPage(
-      (origin + step).clamp(0, widget.urls.length - 1),
+      target,
       duration: NovelMotion.contact,
       curve: NovelMotion.ease,
     );
@@ -507,6 +528,11 @@ class _ReaderIllustrationGalleryState extends State<ReaderIllustrationGallery> {
     final origin = _dragPage;
     _dragPage = null;
     if (origin != null) _pages.jumpToPage(origin);
+  }
+
+  void _closeFromCanvas() {
+    AppHaptics.play(context, HapticCue.action);
+    Navigator.maybePop(context);
   }
 
   Future<void> _save() async {
@@ -561,7 +587,7 @@ class _ReaderIllustrationGalleryState extends State<ReaderIllustrationGallery> {
         ),
         body: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => Navigator.maybePop(context),
+          onTap: _closeFromCanvas,
           child: PageView.builder(
             key: const ValueKey('book-image-canvas'),
             controller: _pages,
@@ -582,7 +608,7 @@ class _ReaderIllustrationGalleryState extends State<ReaderIllustrationGallery> {
               onDragUpdate: _dragUpdate,
               onDragEnd: _dragEnd,
               onDragCancel: _dragCancel,
-              onClose: () => Navigator.maybePop(context),
+              onClose: _closeFromCanvas,
               child: SizedBox.expand(
                 child: ReaderIllustration(
                   url: widget.urls[index],
@@ -639,6 +665,9 @@ class _ZoomableBookImageState extends State<_ZoomableBookImage>
   Offset _tap = Offset.zero;
   final _contacts = <int>{};
   bool _multiple = false, _paging = false, _zoomed = false;
+  bool _interactionFeedback = false;
+  double _startScale = _initialScale;
+  Offset _startTranslation = Offset.zero;
   @override
   void initState() {
     super.initState();
@@ -702,12 +731,19 @@ class _ZoomableBookImageState extends State<_ZoomableBookImage>
           }
         },
         onPointerUp: (event) => _contacts.remove(event.pointer),
-        onPointerCancel: (event) => _contacts.remove(event.pointer),
+        onPointerCancel: (event) {
+          _contacts.remove(event.pointer);
+          // ScaleRecognizer still ends a cancelled drag. Restore its source
+          // page now, before that end callback can commit a turn or feedback.
+          _paging = false;
+          widget.onDragCancel();
+        },
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onClose,
           onDoubleTapDown: (details) => _tap = details.localPosition,
           onDoubleTap: () {
+            AppHaptics.play(context, HapticCue.action);
             _animateTo(
               (_scale - _initialScale).abs() > .01
                   ? _bounded(size, _initialScale, 0, 0)
@@ -722,6 +758,10 @@ class _ZoomableBookImageState extends State<_ZoomableBookImage>
             boundaryMargin: const EdgeInsets.all(double.infinity),
             onInteractionStart: (details) {
               _settle.stop();
+              _interactionFeedback = false;
+              _startScale = _scale;
+              final translation = _transform.value.getTranslation();
+              _startTranslation = Offset(translation.x, translation.y);
               _multiple = _contacts.length > 1 || details.pointerCount > 1;
               _paging = !_multiple && !_zoomed;
               if (_paging) widget.onDragStart(details);
@@ -733,6 +773,16 @@ class _ZoomableBookImageState extends State<_ZoomableBookImage>
                 widget.onDragCancel();
               } else if (_paging && !_multiple) {
                 widget.onDragUpdate(details);
+              }
+              if (!_paging && !_interactionFeedback) {
+                final translation = _transform.value.getTranslation();
+                final moved =
+                    (Offset(translation.x, translation.y) - _startTranslation)
+                        .distance;
+                if ((_scale - _startScale).abs() > .01 || moved > .5) {
+                  _interactionFeedback = true;
+                  AppHaptics.play(context, HapticCue.action);
+                }
               }
             },
             onInteractionEnd: (details) {

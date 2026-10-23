@@ -19,6 +19,8 @@ FILES = (
     "tools/public-source-files.txt", ".githooks/pre-push",
     "tools/create_update_fixtures.py",
     "third_party/JUNIVERSALCHARDET.md",
+    "docs/HAPTICS.md", "docs/ICON_SYSTEM.md",
+    "tools/icon_studio.dart", "tools/export_icon_studio.dart",
 )
 DIRECTORIES = ("lib", "assets", "shaders", "test", "integration_test", "android", "ios", "docs/images", "third_party/liquid_glass_easy", "third_party/libmobi", "third_party/juniversalchardet-2.0.4", "tools/update-mirror")
 PRIVATE_NAMES = {

@@ -12,6 +12,7 @@ import io.flutter.plugin.common.PluginRegistry
 
 /** Source builds attach local platform capabilities only. */
 internal fun attachWenkuEnginePlugins(engine: FlutterEngine) {
+    if (!engine.plugins.has(AppHapticsPlugin::class.java)) engine.plugins.add(AppHapticsPlugin())
     if (!engine.plugins.has(MonetPlugin::class.java)) engine.plugins.add(MonetPlugin())
     if (!engine.plugins.has(LanReadingConfigPlugin::class.java)) engine.plugins.add(LanReadingConfigPlugin())
     if (!engine.plugins.has(LanDiscoveryPlugin::class.java)) engine.plugins.add(LanDiscoveryPlugin())

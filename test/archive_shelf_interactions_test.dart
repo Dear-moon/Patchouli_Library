@@ -191,19 +191,133 @@ void main() {
   );
 
   testWidgets(
+    'real dragging emits detents when frames skip the exact centre and does not replay them on release',
+    (tester) async {
+      _view(tester);
+      final pulses = <String>[];
+      AppHaptics.resetForTesting(
+        now: () => tester.binding.currentSystemFrameTimeStamp,
+      );
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(AppHaptics.channel, (call) async {
+            pulses.add(call.arguments as String);
+            return true;
+          });
+      addTearDown(() {
+        AppHaptics.resetForTesting();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(AppHaptics.channel, null);
+      });
+      await tester.pumpWidget(_app(count: 5));
+      await tester.pumpAndSettle();
+      final pitch = _scene(tester).debugPitch;
+      for (final direction in [1, -1]) {
+        await _at(tester, 0);
+        final gesture = await tester.startGesture(tester.getCenter(_rail));
+        await gesture.moveBy(Offset(-direction * 24, 0));
+        await tester.pump(const Duration(milliseconds: 120));
+        final origin = _scene(tester).debugFocus.round();
+        pulses.clear();
+        for (var step = 0; step < 3; step++) {
+          final target = origin + direction * (step + 1.18);
+          await gesture.moveBy(
+            Offset(-(target - _scene(tester).debugFocus) * pitch, 0),
+          );
+          await tester.pump(const Duration(milliseconds: 120));
+          expect(pulses.length, step + 1);
+        }
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(pulses.length, 3);
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(pulses.length, 3);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'centre approach matches the old shelf timing without missing fast crossings or replaying ticks',
+    (tester) async {
+      _view(tester);
+      final pulses = <Duration>[];
+      AppHaptics.resetForTesting(
+        now: () => tester.binding.currentSystemFrameTimeStamp,
+      );
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(AppHaptics.channel, (call) async {
+            expect(call.arguments, 'shelfStep');
+            pulses.add(tester.binding.currentSystemFrameTimeStamp);
+            return true;
+          });
+      addTearDown(() {
+        AppHaptics.resetForTesting();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(AppHaptics.channel, null);
+      });
+      await tester.pumpWidget(_app(count: 5));
+      await tester.pumpAndSettle();
+      final pitch = _scene(tester).debugPitch;
+      final gesture = await tester.startGesture(tester.getCenter(_rail));
+      await gesture.moveBy(const Offset(-24, 0));
+      await tester.pump(const Duration(milliseconds: 120));
+      final origin = _scene(tester).debugFocus.round();
+      pulses.clear();
+      Future<void> move(double focus, int ms) async {
+        await gesture.moveBy(
+          Offset(-(focus - _scene(tester).debugFocus) * pitch, 0),
+        );
+        await tester.pump(Duration(milliseconds: ms));
+      }
+
+      await move(origin + .50, 120);
+      await move(origin + .86, 120);
+      expect(pulses, isEmpty);
+      await move(origin + 1.04, 120);
+      expect(pulses.length, 1);
+      for (final fraction in [.9, 1.1, .85, 1.15]) {
+        await move(origin + fraction, 120);
+      }
+      expect(pulses.length, 1);
+      for (var step = 1; step <= 5; step++) {
+        await move(origin + step + 1.18, 8);
+      }
+      expect(pulses.length, 2);
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(pulses.length, 2);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      for (var i = 1; i < pulses.length; i++) {
+        expect(
+          pulses[i] - pulses[i - 1],
+          greaterThanOrEqualTo(const Duration(milliseconds: 65)),
+        );
+      }
+      final settled = pulses.length;
+      await tester.pump(const Duration(seconds: 1));
+      expect(pulses.length, settled);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'detents emit one light selection pulse per book and remain silent while idle',
     (tester) async {
       _view(tester);
       final pulses = <MethodCall>[];
+      AppHaptics.resetForTesting(
+        now: () => tester.binding.currentSystemFrameTimeStamp,
+      );
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-            if (call.method == 'HapticFeedback.vibrate') pulses.add(call);
-            return null;
+          .setMockMethodCallHandler(AppHaptics.channel, (call) async {
+            if (call.method == 'play') pulses.add(call);
+            return true;
           });
       addTearDown(
         () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(SystemChannels.platform, null),
+            .setMockMethodCallHandler(AppHaptics.channel, null),
       );
+      addTearDown(AppHaptics.resetForTesting);
       await tester.pumpWidget(_app(count: 5));
       await tester.pumpAndSettle();
       expect(pulses, isEmpty);
@@ -212,7 +326,7 @@ void main() {
         await tester.tap(find.byTooltip('下一份档案'));
         await tester.pumpAndSettle(const Duration(milliseconds: 16));
         expect(pulses.length - before, 1);
-        expect(pulses.last.arguments, 'HapticFeedbackType.selectionClick');
+        expect(pulses.last.arguments, 'shelfStep');
       }
       final settled = pulses.length;
       await tester.pump(const Duration(seconds: 3));

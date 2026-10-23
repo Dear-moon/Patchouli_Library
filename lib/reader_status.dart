@@ -152,9 +152,10 @@ class _ReaderStatusFooterState extends State<ReaderStatusFooter>
             children: [
               AppText(time, key: const ValueKey('reader-status-time')),
               const Spacer(),
-              if (_charging) const Icon(CupertinoIcons.bolt_fill, size: 11),
+              if (_charging)
+                const ArchiveIcon(CupertinoIcons.bolt_fill, size: 11),
               if (_battery != null) ...[
-                const Icon(CupertinoIcons.battery_100, size: 15),
+                const ArchiveIcon(CupertinoIcons.battery_100, size: 15),
                 const SizedBox(width: 5),
                 AppText(
                   '$_battery%',

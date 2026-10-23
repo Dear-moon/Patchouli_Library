@@ -92,18 +92,23 @@ class AuthorWorksPage extends StatefulWidget {
 
 class _AuthorWorksPageState extends State<AuthorWorksPage> {
   late final _feed = NovelFeedController(
-    AuthorWorksRepository(
-      widget.repository,
-      widget.author,
-      localOnly: widget.localOnly,
-      tagSearch: widget.tagSearch,
-      current: () => mounted,
-    ),
+    widget.tagSearch
+        ? widget.repository
+        : AuthorWorksRepository(
+            widget.repository,
+            widget.author,
+            localOnly: widget.localOnly,
+          ),
+    search: widget.tagSearch,
     initialItems: 20,
   );
   @override
   void initState() {
     super.initState();
+    if (widget.tagSearch) {
+      _feed.query = widget.author;
+      _feed.searchField = BookSearchField.tags;
+    }
     unawaited(_feed.loadInitial());
   }
 
@@ -173,9 +178,10 @@ class _AuthorWorksPageState extends State<AuthorWorksPage> {
                       child: sectionHeader(
                         context,
                         widget.author,
-                        _feed.totalItems == null
-                            ? '已显示 ${_feed.items.length} 部作品'
-                            : '${_feed.totalItems} 部作品',
+                        _feed.tagProgressLabel ??
+                            (_feed.totalItems == null
+                                ? '已显示 ${_feed.items.length} 部作品'
+                                : '${_feed.totalItems} 部作品'),
                       ),
                     ),
                   ),

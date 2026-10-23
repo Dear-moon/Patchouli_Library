@@ -31,6 +31,8 @@ Future<void> organizeBookmark(
             const SizedBox(height: 18),
             CupertinoTextField(
               key: const ValueKey('bookmark-category-name'),
+              onTap: () => AppHaptics.play(sheet, HapticCue.selection),
+              onSubmitted: (_) => AppHaptics.play(sheet, HapticCue.action),
               controller: text,
               maxLength: 30,
               placeholder: '新建或选择分类',

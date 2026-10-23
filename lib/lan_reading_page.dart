@@ -347,6 +347,10 @@ class _LanReadingPageState extends State<LanReadingPage> {
                             children: [
                               CupertinoTextField(
                                 key: const ValueKey('lan-pair-code'),
+                                onTap: () => AppHaptics.play(
+                                  context,
+                                  HapticCue.selection,
+                                ),
                                 controller: _code,
                                 maxLines: 3,
                                 autocorrect: false,

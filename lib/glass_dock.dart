@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 
 import 'app_ui.dart';
+import 'performance_preferences.dart';
 
 class GlassDockItem {
   const GlassDockItem(
@@ -14,6 +15,8 @@ class GlassDockItem {
     this.semanticLabel,
     this.selectableOnDrag = true,
     this.id,
+    this.symbol,
+    this.haptic = HapticCue.selection,
   });
   final IconData icon;
   final String label;
@@ -21,6 +24,8 @@ class GlassDockItem {
   final String? semanticLabel;
   final bool selectableOnDrag;
   final Object? id;
+  final ArchiveSymbol? symbol;
+  final HapticCue haptic;
   Object get identity => id ?? (icon, label);
 }
 
@@ -41,9 +46,10 @@ class GlassDock extends StatefulWidget {
     required this.onSelected,
     this.onReselected,
     this.reduceMotion = false,
+    this.animateInactiveIcons = false,
     this.items = const [
       GlassDockItem(CupertinoIcons.house, '发现'),
-      GlassDockItem(CupertinoIcons.book, '书架'),
+      GlassDockItem(CupertinoIcons.book, '书架', symbol: ArchiveSymbol.shelf),
       GlassDockItem(CupertinoIcons.settings, '设置'),
     ],
   }) : assert(items.length >= 2 && items.length <= 4);
@@ -54,6 +60,10 @@ class GlassDock extends StatefulWidget {
   /// A deliberate tap on the selected item, not a drag ending in its lane.
   final ValueChanged<int>? onReselected;
   final bool reduceMotion;
+
+  /// Navigation only animates the destination. Action docks (previous/next
+  /// chapter) can also animate invoked controls without selecting their lane.
+  final bool animateInactiveIcons;
   final List<GlassDockItem> items;
 
   @override
@@ -88,6 +98,7 @@ class _GlassDockState extends State<GlassDock> with TickerProviderStateMixin {
   double _lastX = 0;
   Duration _lastTime = Duration.zero;
   int? _pointer;
+  final Map<Object, int> _iconActivations = {};
   Timer? _restTimer;
   bool _dragging = false;
   bool _reduceMotion = false;
@@ -291,6 +302,11 @@ class _GlassDockState extends State<GlassDock> with TickerProviderStateMixin {
       return;
     }
     _dragging = false;
+    AppHaptics.play(context, widget.items[index].haptic);
+    setState(() {
+      final identity = widget.items[index].identity;
+      _iconActivations[identity] = (_iconActivations[identity] ?? 0) + 1;
+    });
     _release();
     _settlePosition(index, velocity: velocity);
     if (!fromDrag &&
@@ -482,7 +498,26 @@ class _GlassDockState extends State<GlassDock> with TickerProviderStateMixin {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(item.icon, size: 20, color: color),
+                  ArchiveIconContact(
+                    pressed:
+                        _pointer != null &&
+                        index >= 0 &&
+                        item.enabled &&
+                        _fingerPosition(_lastX).round() == index,
+                    activation: _iconActivations[item.identity] ?? 0,
+                    child: ArchiveIcon(
+                      item.icon,
+                      symbol: item.symbol,
+                      size: 20,
+                      color: color,
+                      active: widget.selectedIndex == index,
+                      animate:
+                          !widget.reduceMotion &&
+                          !PerformanceScope.reduceMotionOf(context) &&
+                          (widget.animateInactiveIcons ||
+                              widget.selectedIndex == index),
+                    ),
+                  ),
                   const SizedBox(height: 3),
                   Flexible(
                     child: FittedBox(

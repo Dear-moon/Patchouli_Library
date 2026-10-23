@@ -460,6 +460,12 @@ class LocalBookImporter extends ChangeNotifier {
         }
         return;
       }
+      AppHaptics.play(
+        context,
+        completed.failures.isNotEmpty
+            ? (completed.added > 0 ? HapticCue.warning : HapticCue.error)
+            : (completed.added > 0 ? HapticCue.success : null),
+      );
       if (onImported != null) {
         await onImported(completed);
         return;
@@ -480,7 +486,13 @@ class LocalBookImporter extends ChangeNotifier {
       }
     } catch (failure) {
       error = cloudFailureMessage(failure);
-      if (context.mounted && !_disposed) showNovelFeedback(context, error!);
+      if (context.mounted && !_disposed) {
+        showNovelFeedback(
+          context,
+          error!,
+          haptic: automatic ? null : HapticCue.error,
+        );
+      }
     } finally {
       await releaseStaging();
       busy = false;

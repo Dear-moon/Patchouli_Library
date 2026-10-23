@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../legacy_transport.dart';
+
 export 'current_release_content.dart'
     show currentReleaseNotes, publicReleaseNotes;
 
@@ -17,8 +18,8 @@ const updateRepository = String.fromEnvironment(
   'UPDATE_REPOSITORY',
   defaultValue: officialUpdateRepository,
 );
-const currentAppVersion = '0.4.7';
-const currentAppBuild = 183;
+const currentAppVersion = '0.4.8';
+const currentAppBuild = 192;
 
 class ReleaseVersion implements Comparable<ReleaseVersion> {
   const ReleaseVersion(this.major, this.minor, this.patch, [this.build = 0]);
@@ -601,16 +602,14 @@ class AppUpdates extends ChangeNotifier {
     var page = showRelease ? releasePage : projectPage;
     if (_usesMirror) {
       final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 4);
+        ..connectionTimeout = const Duration(seconds: 2);
       try {
-        final request = await client
-            .headUrl(Uri.parse(updateMirrorOrigin))
-            .timeout(const Duration(seconds: 4));
-        request.followRedirects = false;
-        final response = await request.close().timeout(
-          const Duration(seconds: 5),
-        );
-        if (response.statusCode != 200) throw const HttpException('项目入口暂不可用');
+        await (() async {
+          final request = await client.headUrl(Uri.parse(updateMirrorOrigin));
+          request.followRedirects = false;
+          final response = await request.close();
+          if (response.statusCode != 200) throw const HttpException('项目入口暂不可用');
+        })().timeout(const Duration(seconds: 2));
       } catch (_) {
         page = showRelease
             ? release?.page ??
@@ -741,7 +740,7 @@ class AppUpdates extends ChangeNotifier {
         'lastAppUpdateCheck',
         now.millisecondsSinceEpoch,
       );
-    } catch (_) {
+    } catch (failure) {
       if (!_disposed) {
         error = '无法检查更新，请检查网络后重试';
       }

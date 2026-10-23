@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'archive_design.dart';
+import 'app_language.dart' show AppText;
 import 'app_palette.dart';
 import 'archive_shelf_geometry.dart';
 import 'archive_shelf_loading.dart';
@@ -534,10 +535,11 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
 }
 
 class SearchSkeleton extends StatelessWidget {
-  const SearchSkeleton({super.key});
+  const SearchSkeleton({super.key, this.status});
+  final String? status;
   @override
   Widget build(BuildContext context) => Semantics(
-    label: '正在找故事',
+    label: status ?? '正在找故事',
     liveRegion: true,
     child: ClipRect(
       child: OverflowBox(
@@ -550,14 +552,19 @@ class SearchSkeleton extends StatelessWidget {
             22,
             0,
           ),
-          child: const Column(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
+              if (status case final text?)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: AppText(text),
+                ),
+              const SizedBox(
                 height: 54,
                 child: LoadingSkeleton(layout: SkeletonLayout.actions),
               ),
-              BookCollectionSkeleton(rows: 6),
+              const BookCollectionSkeleton(rows: 6),
             ],
           ),
         ),

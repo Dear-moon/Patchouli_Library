@@ -132,10 +132,12 @@ VoidCallback? showNovelFeedback(
   String actionFailure = '操作保存失败，请重试',
   ValueListenable<double>? headerVisibility,
   Duration? duration,
+  HapticCue? haptic,
 }) {
   if (!context.mounted) return null;
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return null;
+  AppHaptics.play(context, haptic);
   _feedbackEntries[overlay]?.close();
   final sourceRoute = ModalRoute.of(context);
   final header =
@@ -173,7 +175,11 @@ VoidCallback? showNovelFeedback(
                     await action();
                   } catch (_) {
                     if (context.mounted) {
-                      showNovelFeedback(context, actionFailure);
+                      showNovelFeedback(
+                        context,
+                        actionFailure,
+                        haptic: HapticCue.error,
+                      );
                     }
                   }
                 },

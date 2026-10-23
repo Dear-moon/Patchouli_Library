@@ -117,7 +117,7 @@ class _FrameRateOptionsState extends State<FrameRateOptions>
           children: [
             const Row(
               children: [
-                Icon(CupertinoIcons.speedometer, size: 20),
+                ArchiveIcon(CupertinoIcons.speedometer, size: 20),
                 SizedBox(width: 10),
                 AppText(
                   '帧率偏好',

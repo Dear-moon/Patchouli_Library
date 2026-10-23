@@ -138,7 +138,7 @@ class _ArchiveTransferButtonState extends State<ArchiveTransferButton>
                     child: icon,
                   ),
                 ),
-                child: Icon(widget.icon, size: 21, color: ink),
+                child: ArchiveIcon(widget.icon, size: 21, color: ink),
               ),
             ),
           ),

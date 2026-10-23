@@ -137,7 +137,10 @@ class _LanSendBookSheetState extends State<LanSendBookSheet> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(CupertinoIcons.device_laptop, size: 24),
+                        const ArchiveIcon(
+                          CupertinoIcons.device_laptop,
+                          size: 24,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -293,7 +296,7 @@ class _LanHandoffMonitorState extends State<LanHandoffMonitor> {
                 children: [
                   Row(
                     children: [
-                      const Icon(CupertinoIcons.device_laptop, size: 19),
+                      const ArchiveIcon(CupertinoIcons.device_laptop, size: 19),
                       const SizedBox(width: 10),
                       Expanded(
                         child: AppText(

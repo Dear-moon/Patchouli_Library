@@ -1,16 +1,20 @@
 import 'dart:ui' show lerpDouble;
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'archive_motion.dart';
 import 'reader_pagination.dart';
 import 'reader_turn_motion.dart';
 
+part 'reader_line_reflow.dart';
+
 /// Reflow retains source identities. Changed vertical columns are replaced in
 /// reading order while unchanged glyphs stay painted in place.
 class ReaderReflowScope extends InheritedWidget {
-  const ReaderReflowScope({
+  ReaderReflowScope({
     super.key,
     required this.animation,
     required this.previous,
+    this.current,
     required this.size,
     required this.previousSize,
     required this.originDelta,
@@ -18,6 +22,8 @@ class ReaderReflowScope extends InheritedWidget {
   });
   final Animation<double> animation;
   final ReaderLeaf previous;
+  final ReaderLeaf? current;
+  late final _LineReflowPlan _linePlan = _LineReflowPlan(this);
   final Size size, previousSize;
   final Offset originDelta;
   double get progress =>
@@ -38,19 +44,38 @@ class ReaderReflowScope extends InheritedWidget {
 
   Offset displacementFor(int index, int count, {bool reverse = false}) =>
       originDelta * (progress - progressFor(index, count, reverse: reverse));
+  int lineCount({bool departing = false}) =>
+      (departing ? previous : current ?? previous).fragments.fold<int>(
+        0,
+        (count, fragment) => count + fragment.lineCount,
+      );
+  int lineIndex(ReaderPageFragment fragment, {bool departing = false}) {
+    var rank = 0;
+    for (final part in (departing ? previous : current ?? previous).fragments) {
+      if (identical(part, fragment) ||
+          part.paragraph == fragment.paragraph &&
+              part.start == fragment.start) {
+        return rank;
+      }
+      rank += part.lineCount;
+    }
+    return rank;
+  }
+
   static ReaderReflowScope? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<ReaderReflowScope>();
   @override
   bool updateShouldNotify(ReaderReflowScope oldWidget) =>
       animation != oldWidget.animation ||
       previous != oldWidget.previous ||
+      current != oldWidget.current ||
       size != oldWidget.size ||
       previousSize != oldWidget.previousSize ||
       originDelta != oldWidget.originDelta;
 }
 
-/// The existing paragraph moves as one piece. Only newly exposed paragraphs
-/// borrow the same finite slide/reveal clock as the archive's loaded content.
+/// Horizontal reflow owns individual shaped lines, while images and rules
+/// remain atomic. Text and selection still use one intact paragraph renderer.
 class ReaderFragmentMotion extends StatelessWidget {
   const ReaderFragmentMotion({
     super.key,
@@ -72,6 +97,23 @@ class ReaderFragmentMotion extends StatelessWidget {
         index: index,
         count: count,
         bounds: fragment.rect,
+        child: child,
+      );
+    }
+    if (fragment.lineMetrics != null) {
+      final old = scope.previous.fragments
+          .where((before) => before.paragraph == fragment.paragraph)
+          .firstOrNull;
+      return _ReaderLineMotion(
+        scope: scope,
+        fragment: fragment,
+        previous: old,
+        previousChild:
+            old == null ||
+                previousBuilder == null ||
+                old.text == fragment.text && old.rect.size == fragment.rect.size
+            ? null
+            : previousBuilder!(old),
         child: child,
       );
     }
@@ -189,8 +231,7 @@ class _FragmentReplacement extends StatelessWidget {
   }
 }
 
-/// A paragraph that no longer fits leaves in the same stagger as retained
-/// paragraphs, instead of disappearing when the new pagination is published.
+/// Departing text leaves line by line on the same clock as retained text.
 class ReaderLeavingFragment extends StatelessWidget {
   const ReaderLeavingFragment({
     super.key,
@@ -206,6 +247,20 @@ class ReaderLeavingFragment extends StatelessWidget {
   Widget build(BuildContext context) {
     final scope = ReaderReflowScope.maybeOf(context);
     if (scope == null) return const SizedBox.shrink();
+    if (fragment.lineMetrics != null) {
+      return IgnorePointer(
+        child: ExcludeSemantics(
+          child: SelectionContainer.disabled(
+            child: _ReaderLineMotion(
+              scope: scope,
+              fragment: fragment,
+              leaving: true,
+              child: child,
+            ),
+          ),
+        ),
+      );
+    }
     final reverse = scope.originDelta.dy < 0;
     return IgnorePointer(
       child: ExcludeSemantics(

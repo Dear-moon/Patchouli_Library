@@ -48,7 +48,7 @@ class _AppSearchFieldState extends State<AppSearchField> {
           if (widget.showLeading)
             SizedBox(
               width: 44,
-              child: Icon(
+              child: ArchiveIcon(
                 CupertinoIcons.search,
                 size: 19,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -62,8 +62,13 @@ class _AppSearchFieldState extends State<AppSearchField> {
               autofocus: widget.autofocus,
               textInputAction: TextInputAction.search,
               style: const TextStyle(fontSize: 14, height: 1.25),
+              onTap: () => AppHaptics.play(context, HapticCue.selection),
+              onTapAlwaysCalled: true,
               onChanged: widget.onChanged,
-              onSubmitted: widget.onSubmitted,
+              onSubmitted: (value) {
+                AppHaptics.play(context, HapticCue.action);
+                widget.onSubmitted?.call(value);
+              },
               decoration: InputDecoration(
                 hintText: appText(context, widget.hint),
                 hintStyle: TextStyle(
@@ -88,13 +93,13 @@ class _AppSearchFieldState extends State<AppSearchField> {
                 : SizedBox(
                     width: 40,
                     height: 46,
-                    child: IconButton(
+                    child: ArchiveIconButton(
                       tooltip: appText(context, '清空搜索'),
                       onPressed: () {
                         _text.clear();
                         widget.onChanged?.call('');
                       },
-                      icon: const Icon(
+                      icon: const ArchiveIcon(
                         CupertinoIcons.xmark_circle_fill,
                         size: 16,
                       ),

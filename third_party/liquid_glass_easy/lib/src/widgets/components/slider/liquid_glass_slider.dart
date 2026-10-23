@@ -175,7 +175,11 @@ class LiquidGlassSlider extends StatefulWidget {
   /// Capture resolution for the inner view.
   final double pixelRatio;
   final bool reduceMotion;
+
+  /// Preserve standalone feedback; embedders may provide one shared owner.
+  final bool enableHaptics;
   final double minimumTouchHeight;
+
   /// Yield vertical gestures to an enclosing scrollable. The eager upstream
   /// gesture remains the default for existing standalone controls.
   final bool horizontalDragOnly;
@@ -203,6 +207,7 @@ class LiquidGlassSlider extends StatefulWidget {
     this.reduceMotion = false,
     this.minimumTouchHeight = 0,
     this.horizontalDragOnly = false,
+    this.enableHaptics = true,
   });
 
   @override
@@ -541,9 +546,11 @@ class _LiquidGlassSliderState extends State<LiquidGlassSlider>
 
       // The tap's own end haptics: light landing on the minimum,
       // medium landing on the maximum.
-      if ((newValue - widget.minimumValue).abs() < 0.01) {
+      if (widget.enableHaptics &&
+          (newValue - widget.minimumValue).abs() < 0.01) {
         HapticFeedback.lightImpact();
-      } else if ((newValue - widget.maximumValue).abs() < 0.01) {
+      } else if (widget.enableHaptics &&
+          (newValue - widget.maximumValue).abs() < 0.01) {
         HapticFeedback.mediumImpact();
       }
 
@@ -585,6 +592,7 @@ class _LiquidGlassSliderState extends State<LiquidGlassSlider>
   }
 
   void _checkEdgeHaptics(double centerX) {
+    if (!widget.enableHaptics) return;
     if (centerX <= _minThumbCX + _hapticEdge && !_didMinHaptic) {
       _didMinHaptic = true;
       _didMaxHaptic = false;

@@ -143,12 +143,14 @@ class ReaderPagedChapter {
     required this.title,
     required this.pageBuilder,
     this.pageBuilderKey,
+    this.titleForAnchor,
   });
   final Object key;
   final ReaderContent content;
   final String title;
   final Widget Function(ReaderLeaf page) pageBuilder;
   final Object? pageBuilderKey;
+  final String Function(ReaderTextAnchor)? titleForAnchor;
 }
 
 class _AdjacentLayout {
@@ -247,6 +249,7 @@ class ReaderPagedView extends StatefulWidget {
     this.preservePositionStart = false,
     this.pageBuilderKey,
     this.status,
+    this.titleForAnchor,
     this.backgroundBuilder,
     this.chapterKey,
     this.chapterTurnDirection = 0,
@@ -275,6 +278,7 @@ class ReaderPagedView extends StatefulWidget {
 
   /// Reader-owned status is part of the turning sheet, not pinned chrome.
   final Widget? status;
+  final String Function(ReaderTextAnchor)? titleForAnchor;
   final Widget Function(Widget child)? backgroundBuilder;
   final VoidCallback onReady, onChanged, onUserScroll;
   final ValueChanged<int> onBoundary;
@@ -365,6 +369,7 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
   ReaderContent? _publishedContent;
   Object? _publishedChapterKey;
   String? _publishedTitle;
+  String Function(ReaderTextAnchor)? _publishedTitleForAnchor;
   PageController? _pager;
   Object? _layoutKey;
   ReadingPosition? _pendingPosition;
@@ -499,6 +504,21 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
       old.controller._owner = null;
       widget.controller._owner = this;
     }
+    for (final direction in [-1, 1]) {
+      final ready = _adjacentLayouts[direction];
+      final chapter = direction < 0
+          ? widget.previousChapter
+          : widget.nextChapter;
+      if (ready != null &&
+          chapter != null &&
+          ready.chapter.key == chapter.key &&
+          identical(ready.chapter.content, chapter.content)) {
+        if (ready.chapter.pageBuilderKey != chapter.pageBuilderKey) {
+          ready.bodies.clear();
+        }
+        ready.chapter = chapter;
+      }
+    }
     if (contentChanged) {
       _readingAnchor = null;
       _layingOut = true;
@@ -507,6 +527,9 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
           ? _anchorFor(widget.position)
           : null;
     } else {
+      // Naming/TOC metadata can be corrected without changing any line breaks.
+      _publishedTitle = widget.title;
+      _publishedTitleForAnchor = widget.titleForAnchor;
       if (styleLayout ||
           old.preferences.layoutKey != widget.preferences.layoutKey) {
         _pageBreakAnchor = null;
@@ -1043,6 +1066,7 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
       _publishedContent = content;
       _publishedChapterKey = widget.chapterKey;
       _publishedTitle = widget.title;
+      _publishedTitleForAnchor = widget.titleForAnchor;
       _previousPage = previous;
       _previousSize = animate && viewportChanged ? previousSize : null;
       _previousLeafSize = animate && viewportChanged ? previousLeafSize : null;
@@ -1217,6 +1241,7 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
           ? ReaderReflowScope(
               animation: _arrival,
               previous: _previousLeaves[slot],
+              current: pagination.pages[index],
               size: pagination.size,
               previousSize: _previousLeafSize!,
               originDelta: _originDelta,
@@ -1366,6 +1391,13 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
       pagination.pages.length - 1,
     );
     final fraction = countSpreads < 2 ? 0 : localSpread / (countSpreads - 1);
+    final anchor = pagination.pages[first].anchor;
+    final title = adjacent == null
+        ? _publishedTitleForAnchor?.call(anchor) ??
+              _publishedTitle ??
+              widget.title
+        : adjacent.chapter.titleForAnchor?.call(anchor) ??
+              adjacent.chapter.title;
     Key key(String name, {int leaf = 0}) => ValueKey(
       spread == _restingSpread && physicalLeaf == leaf
           ? name
@@ -1414,9 +1446,7 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
                   children: [
                     Expanded(
                       child: AppText(
-                        adjacent?.chapter.title ??
-                            _publishedTitle ??
-                            widget.title,
+                        title,
                         key: key('reader-chapter-title'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -1572,6 +1602,9 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
             // live sheet/clock until it really snaps, or the next drag can still
             // be attached to a rail that was replaced by a premature handoff.
             if ((position - spread).abs() > .0001) return false;
+            if (!_programmaticTurn && spread != _swipeOrigin) {
+              AppHaptics.play(context, HapticCue.pageTurn);
+            }
             final boundary = spread < 0
                 ? -1
                 : spread >= _spreadCount

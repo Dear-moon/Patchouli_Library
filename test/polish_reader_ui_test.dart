@@ -10,6 +10,7 @@ import 'package:wenku8_flutter/main.dart';
 import 'package:wenku8_flutter/pages.dart';
 import 'package:wenku8_flutter/reader_content.dart';
 import 'package:wenku8_flutter/reader_chrome.dart';
+import 'package:wenku8_flutter/reader_scroll_stream.dart';
 import 'support/visual_review.dart';
 import 'support/background_fixture.dart';
 import 'support/font_store_fixture.dart';
@@ -70,18 +71,31 @@ ScrollableState _scroll(WidgetTester tester) => tester.state<ScrollableState>(
 );
 
 ParagraphPosition _anchor(WidgetTester tester) {
-  final registry = tester
-      .widget<ReaderParagraph>(find.byType(ReaderParagraph).first)
-      .registry;
-  return registry.capture(
-    _scroll(tester).position.pixels +
-        12 -
-        tester
-            .widget<ReaderPage>(find.byType(ReaderPage))
-            .state
-            .readerPreferences
-            .marginTop,
-  )!;
+  final stream = _stream(tester);
+  final registry = stream.controller.registryFor(stream.chapter)!;
+  final anchor = registry.capture(
+    _scroll(tester).position.pixels + stream.readingInset,
+  );
+  expect(
+    anchor,
+    isNotNull,
+    reason:
+        'The active chapter must retain a mounted source anchor at the '
+        'reading inset after geometry changes.',
+  );
+  return anchor!;
+}
+
+ReaderScrollStream _stream(WidgetTester tester) => tester.widget(
+  find.byWidgetPredicate((widget) => widget is ReaderScrollStream),
+);
+
+double _chapterEnd(WidgetTester tester) {
+  final stream = _stream(tester);
+  return stream.controller.originOf(stream.chapter) +
+      (stream.controller.extentOf(stream.chapter)! -
+              _scroll(tester).position.viewportDimension)
+          .clamp(0.0, double.infinity);
 }
 
 Future<void> _settle(WidgetTester tester) async {
@@ -301,7 +315,8 @@ void main({
       expect(_scroll(tester).position.pixels, 0);
       await tester.sendKeyEvent(LogicalKeyboardKey.end);
       await _settle(tester);
-      expect(_scroll(tester).position.extentAfter, lessThan(1));
+      expect(_stream(tester).chapter, 0);
+      expect(_scroll(tester).position.pixels, closeTo(_chapterEnd(tester), 1));
       await tester.sendKeyEvent(LogicalKeyboardKey.home);
       await _settle(tester);
       expect(_scroll(tester).position.pixels, 0);

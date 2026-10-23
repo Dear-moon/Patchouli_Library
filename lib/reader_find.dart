@@ -267,8 +267,10 @@ class ReaderHighlightText extends StatelessWidget {
     this.sourceStart = 0,
     this.format,
     this.onNote,
+    this.chapter,
   });
   final int index;
+  final int? chapter;
   final String text;
   final ValueListenable<ReaderMatch?> match;
   final TextStyle style;
@@ -294,6 +296,9 @@ class ReaderHighlightText extends StatelessWidget {
     valueListenable: match,
     builder: (context, selected, _) {
       if (selected == null ||
+          (selected.chapter != null &&
+              chapter != null &&
+              selected.chapter != chapter) ||
           selected.paragraph != index ||
           selected.end <= sourceStart ||
           selected.start >= sourceStart + text.length) {

@@ -270,6 +270,8 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
         const SizedBox(height: 9),
         CupertinoTextField(
           key: ValueKey('local-edit-$label'),
+          onTap: () => AppHaptics.play(context, HapticCue.selection),
+          onSubmitted: (_) => AppHaptics.play(context, HapticCue.action),
           controller: controller,
           enabled: !_busy,
           maxLines: lines,

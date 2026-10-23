@@ -30,8 +30,22 @@ class NovelFeedController extends ChangeNotifier {
   Set<String> get tagSuggestions => Set.unmodifiable(_tagSuggestions);
   int page = 0;
   int? totalItems;
+  Set<BookSearchField> incompleteSearchFields = const {};
+  String? get searchNotice => incompleteSearchFields.isEmpty
+      ? null
+      : '${incompleteSearchFields.map((field) => field.label).join('、')}搜索暂未完成，已保留其他搜索结果。';
   bool hasMore = true;
   bool loading = false;
+  TagSearchProgress? _tagProgress;
+  String? get tagProgressLabel {
+    final progress = _tagProgress;
+    if (!loading || progress == null) return null;
+    final total = progress.totalPages;
+    return total == null
+        ? '正在筛选标签 · 已检查 ${progress.scannedPages} 页'
+        : '正在筛选标签 · 已检查 ${progress.scannedPages} / $total 页';
+  }
+
   Object? error;
   String get failureMessage {
     final failure = error;
@@ -93,9 +107,7 @@ class NovelFeedController extends ChangeNotifier {
   }
 
   Future<void> selectTags(Iterable<String> values) async {
-    final next =
-        values.map((t) => t.trim()).where((t) => t.isNotEmpty).toSet().toList()
-          ..sort();
+    final next = tagSearchTerms(values.join(' '));
     if (listEquals(tags, next)) return;
     tags = List.unmodifiable(next);
     _reset();
@@ -151,11 +163,13 @@ class NovelFeedController extends ChangeNotifier {
   /// A closed search keeps its last result/query, without launching a request
   /// which the user can no longer see. Reopening can explicitly resume it.
   void cancelScheduledSearch() {
-    if (_searchDelay == null) return;
-    _searchDelay!.cancel();
+    if (_disposed || _searchDelay == null && !loading) return;
+    _searchDelay?.cancel();
     _searchDelay = null;
+    _generation++;
     loading = false;
     refreshing = false;
+    _tagProgress = null;
     notifyListeners();
   }
 
@@ -164,6 +178,8 @@ class NovelFeedController extends ChangeNotifier {
     _items = const [];
     page = 0;
     totalItems = null;
+    incompleteSearchFields = const {};
+    _tagProgress = null;
     hasMore = true;
     error = null;
     refreshFailed = false;
@@ -181,17 +197,45 @@ class NovelFeedController extends ChangeNotifier {
     final filteringTags = !search && tags.isNotEmpty;
     final requestedQuery = filteringTags ? tags.join(' ') : query;
     final requestedField = filteringTags ? BookSearchField.tags : searchField;
-    final retaining = replace && hasLoaded;
+    final retaining = replace && (hasLoaded || _items.isNotEmpty);
     final retainedCount = _items.length;
     final retainedPage = page;
     var pending = replace ? <Novel>[] : _items;
+    final pendingIncompleteFields = replace
+        ? <BookSearchField>{}
+        : {...incompleteSearchFields};
     loading = true;
+    _tagProgress = null;
     refreshing = retaining;
     error = null;
     refreshFailed = false;
     notifyListeners();
     try {
       while (true) {
+        void acceptTagProgress(TagSearchProgress progress) {
+          if (_disposed || generation != _generation) return;
+          _tagProgress = progress;
+          if (!retaining && progress.items.isNotEmpty) {
+            final oldCount = pending.length;
+            final merged = <int, Novel>{
+              if (!replacing)
+                for (final item in pending) item.id: item,
+              for (final item in progress.items) item.id: item,
+            };
+            final first = replacing ? 0 : oldCount;
+            pending = List.unmodifiable(merged.values);
+            replacing = false;
+            _items = pending;
+            _tagSuggestions.addAll(pending.expand((book) => book.tags));
+            if (first < pending.length) {
+              _resultStartIndex = first;
+              _resultReplacesRetained = false;
+              _resultRevision++;
+            }
+          }
+          notifyListeners();
+        }
+
         final tagOnly =
             requestedField == BookSearchField.tags ||
             requestedField == BookSearchField.all &&
@@ -205,6 +249,7 @@ class NovelFeedController extends ChangeNotifier {
                 page: requestedPage,
                 refresh: force,
                 current: () => !_disposed && generation == _generation,
+                onProgress: acceptTagProgress,
               )
             : search || filteringTags
             ? await repository.searchFilteredPage(
@@ -222,6 +267,7 @@ class NovelFeedController extends ChangeNotifier {
         if (result.page != requestedPage) {
           throw const FormatException('分页游标不匹配');
         }
+        pendingIncompleteFields.addAll(result.searchFailures.keys);
         final oldCount = pending.length;
         final merged = <int, Novel>{
           if (!replacing)
@@ -250,14 +296,17 @@ class NovelFeedController extends ChangeNotifier {
                       pending.length >= initialItems ||
                       requestedPage >= 3);
         if (!retaining || complete) {
-          _resultStartIndex = retaining ? 0 : first;
-          _resultReplacesRetained = retaining;
           _items = pending;
           _tagSuggestions.addAll(pending.expand((book) => book.tags));
-          if (_resultStartIndex < _items.length || retaining) _resultRevision++;
+          if (first < _items.length || retaining) {
+            _resultStartIndex = retaining ? 0 : first;
+            _resultReplacesRetained = retaining;
+            _resultRevision++;
+          }
           page = requestedPage;
           hasMore = result.hasMore;
           totalItems = result.totalItems;
+          incompleteSearchFields = Set.unmodifiable(pendingIncompleteFields);
         }
         if (complete) break;
         if (!retaining) notifyListeners();
@@ -272,6 +321,7 @@ class NovelFeedController extends ChangeNotifier {
       if (!_disposed && generation == _generation) {
         loading = false;
         refreshing = false;
+        _tagProgress = null;
         notifyListeners();
       }
     }

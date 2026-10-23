@@ -84,7 +84,7 @@ class CloudLibraryPage extends StatelessWidget {
                           ),
                         ),
                       ),
-                      Icon(
+                      ArchiveIcon(
                         kind == CloudSourceKind.webdav
                             ? CupertinoIcons.cloud
                             : CupertinoIcons.folder,
@@ -245,6 +245,8 @@ class _CloudConnectionPageState extends State<CloudConnectionPage> {
         const SizedBox(height: 9),
         CupertinoTextField(
           key: ValueKey('cloud-field-$label'),
+          onTap: () => AppHaptics.play(context, HapticCue.selection),
+          onSubmitted: (_) => AppHaptics.play(context, HapticCue.action),
           controller: controller,
           enabled: !_busy,
           placeholder: hint,
@@ -669,7 +671,7 @@ class _CloudBookBrowserState extends State<CloudBookBrowser> {
                       padding: const EdgeInsets.symmetric(vertical: 5),
                       child: Row(
                         children: [
-                          Icon(
+                          ArchiveIcon(
                             entry.folder
                                 ? CupertinoIcons.folder
                                 : CupertinoIcons.doc_text,
@@ -677,8 +679,7 @@ class _CloudBookBrowserState extends State<CloudBookBrowser> {
                           ),
                           const SizedBox(width: 14),
                           Expanded(
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
+                            child: JellyTapSurface(
                               onTap: _importing || _loading
                                   ? null
                                   : () => entry.folder
@@ -719,7 +720,10 @@ class _CloudBookBrowserState extends State<CloudBookBrowser> {
                             ),
                           ),
                           if (entry.folder)
-                            const Icon(CupertinoIcons.chevron_forward, size: 16)
+                            const ArchiveIcon(
+                              CupertinoIcons.chevron_forward,
+                              size: 16,
+                            )
                           else
                             GlassIconButton(
                               icon: _selected.containsKey(entry.id)

@@ -67,7 +67,7 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
   Widget build(BuildContext context) {
     final label = Row(
       children: [
-        Icon(widget.icon, size: 21),
+        ArchiveIcon(widget.icon, size: 21),
         const SizedBox(width: 12),
         Expanded(
           child: AppText(
@@ -98,7 +98,7 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
                 ),
               ),
               const SizedBox(width: 7),
-              const Icon(CupertinoIcons.chevron_down, size: 14),
+              const ArchiveIcon(CupertinoIcons.chevron_down, size: 14),
             ],
           ),
         ),

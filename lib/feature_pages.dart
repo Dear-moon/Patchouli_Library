@@ -42,6 +42,7 @@ Future<bool> confirmNovelAction(
             const SizedBox(height: 24),
             GlassTextButton(
               onPressed: () => Navigator.pop(sheet, true),
+              haptic: HapticCue.warning,
               child: AppText(confirmLabel),
             ),
             const SizedBox(height: 8),
@@ -113,7 +114,7 @@ class FeatureEntry extends StatelessWidget {
     onTap: onTap,
     child: Row(
       children: [
-        Icon(icon, size: 21),
+        ArchiveIcon(icon, size: 21),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -137,7 +138,7 @@ class FeatureEntry extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        const Icon(CupertinoIcons.chevron_right, size: 14),
+        const ArchiveIcon(CupertinoIcons.chevron_right, size: 14),
       ],
     ),
   );
@@ -283,6 +284,9 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
                       children: [
                         TextField(
                           key: const ValueKey('account-username'),
+                          onTap: () =>
+                              AppHaptics.play(context, HapticCue.selection),
+                          onTapAlwaysCalled: true,
                           controller: _username,
                           enabled: !account.busy,
                           autocorrect: false,
@@ -299,6 +303,9 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
                         const SizedBox(height: 12),
                         TextField(
                           key: const ValueKey('account-password'),
+                          onTap: () =>
+                              AppHaptics.play(context, HapticCue.selection),
+                          onTapAlwaysCalled: true,
                           controller: _password,
                           enabled: !account.busy,
                           obscureText: _obscure,
@@ -317,7 +324,7 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
                             counterText: '',
                             suffixIcon: IconButton(
                               tooltip: _obscure ? '显示密码' : '隐藏密码',
-                              icon: Icon(
+                              icon: ArchiveIcon(
                                 _obscure
                                     ? CupertinoIcons.eye
                                     : CupertinoIcons.eye_slash,

@@ -45,24 +45,28 @@ TextRange readerSentenceRange(
 typedef ReaderSelectionAnchor = ({int paragraph, int offset});
 
 class ReaderQuoteSelection {
-  const ReaderQuoteSelection(this.text, this.anchor);
+  const ReaderQuoteSelection(this.text, this.anchor, {this.chapter});
   final String text;
   final ReaderSelectionAnchor? anchor;
+  final int? chapter;
 }
 
 class ReaderSelectionController extends ValueNotifier<bool> {
   ReaderSelectionController() : super(false);
   final key = GlobalKey<SelectionAreaState>();
   String text = '';
-  final _anchors = <Object, ReaderSelectionAnchor>{};
+  final _anchors = <Object, ({ReaderSelectionAnchor anchor, int? chapter})>{};
   ReaderQuoteSelection get quote {
     final values = _anchors.values.toList()
       ..sort(
-        (a, b) => a.paragraph == b.paragraph
-            ? a.offset.compareTo(b.offset)
-            : a.paragraph.compareTo(b.paragraph),
+        (a, b) => a.chapter != b.chapter
+            ? (a.chapter ?? 0).compareTo(b.chapter ?? 0)
+            : a.anchor.paragraph == b.anchor.paragraph
+            ? a.anchor.offset.compareTo(b.anchor.offset)
+            : a.anchor.paragraph.compareTo(b.anchor.paragraph),
       );
-    return ReaderQuoteSelection(text, values.firstOrNull);
+    final first = values.firstOrNull;
+    return ReaderQuoteSelection(text, first?.anchor, chapter: first?.chapter);
   }
 
   void clear() {
@@ -84,6 +88,7 @@ class ReaderSelectionFragment extends StatefulWidget {
     this.text,
     this.selectableOffset = 0,
     this.paragraphEnds = const [],
+    this.chapter,
   });
   final ReaderSelectionController controller;
   final ReaderSelectionAnchor? Function(int offset) anchorForOffset;
@@ -93,6 +98,7 @@ class ReaderSelectionFragment extends StatefulWidget {
   // WidgetSpan from contentLength. Normalize that geometry-only indent here.
   final int selectableOffset;
   final List<int> paragraphEnds;
+  final int? chapter;
   @override
   State<ReaderSelectionFragment> createState() =>
       _ReaderSelectionFragmentState();
@@ -117,7 +123,10 @@ class _ReaderSelectionFragmentState extends State<ReaderSelectionFragment> {
     if (anchor == null) {
       widget.controller._anchors.remove(this);
     } else {
-      widget.controller._anchors[this] = anchor;
+      widget.controller._anchors[this] = (
+        anchor: anchor,
+        chapter: widget.chapter,
+      );
     }
   }
 

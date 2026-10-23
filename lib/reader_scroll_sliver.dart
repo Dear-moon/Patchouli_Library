@@ -39,10 +39,12 @@ class ReaderScrollSliver extends SliverList {
     required this.anchor,
     required IndexedWidgetBuilder itemBuilder,
     required int itemCount,
+    ChildIndexGetter? findChildIndexCallback,
   }) : super(
          delegate: SliverChildBuilderDelegate(
            itemBuilder,
            childCount: itemCount,
+           findChildIndexCallback: findChildIndexCallback,
            addAutomaticKeepAlives: false,
          ),
        );

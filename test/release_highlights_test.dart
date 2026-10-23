@@ -349,6 +349,12 @@ void main() {
 
   for (final scene in [
     (
+      name: 'phone',
+      size: const Size(390, 844),
+      scale: 1.0,
+      brightness: Brightness.light,
+    ),
+    (
       name: 'compact-large',
       size: const Size(320, 640),
       scale: 2.0,
@@ -386,9 +392,11 @@ void main() {
       await tester.pumpAndSettle();
       await captureReview(tester, capture, 'release-${scene.name}');
       for (var i = 0; i < currentReleaseSections.length; i++) {
-        if (i == 1) {
-          await captureReview(tester, capture, 'release-${scene.name}-account');
-        }
+        await captureReview(
+          tester,
+          capture,
+          'release-${scene.name}-section-$i',
+        );
         expect(
           find.byKey(const ValueKey('release-details-next')).hitTestable(),
           findsOneWidget,

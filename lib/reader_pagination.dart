@@ -36,12 +36,52 @@ class ReaderPageFragment {
     this.indent = false,
     this.image = false,
     this.rule = false,
+    this.lineMetrics,
   });
   final int paragraph, start, end;
   final String text;
   final Rect rect;
   final bool indent, image;
   final bool rule;
+  final ReaderFragmentLines? lineMetrics;
+  int get lineCount => lineMetrics?.count ?? 1;
+  Iterable<ReaderPageLine> get lines =>
+      lineMetrics?.values ?? [ReaderPageLine(start, end, 0, rect.height)];
+}
+
+/// Source boundaries and local line boxes reuse the compact shaping metrics.
+/// Only visible reflow builds line objects; pagination does not retain a widget
+/// or a native LineMetrics object for every line in a chapter.
+class ReaderPageLine {
+  const ReaderPageLine(this.start, this.end, this.top, this.height);
+  final int start, end;
+  final double top, height;
+}
+
+class ReaderFragmentLines {
+  const ReaderFragmentLines._(
+    this._metrics,
+    this._first,
+    this._end,
+    this._prefix,
+    this._sourceLength,
+  );
+  final _HorizontalMetrics _metrics;
+  final int _first, _end, _prefix, _sourceLength;
+  int get count => _end - _first;
+  Iterable<ReaderPageLine> get values sync* {
+    var top = 0.0;
+    for (var i = _first; i < _end; i++) {
+      final start = (_metrics.starts[i] - _prefix).clamp(0, _sourceLength);
+      final end = (_metrics.starts[i + 1] - _prefix).clamp(
+        start,
+        _sourceLength,
+      );
+      final height = _metrics.heights[i];
+      yield ReaderPageLine(start, end, top, height);
+      top += height;
+    }
+  }
 }
 
 class ReaderVerticalGlyph {
@@ -589,6 +629,13 @@ Future<ReaderPagination?> paginateReader({
                 text: text.substring(start, end),
                 rect: Rect.fromLTWH(0, y, size.width, height),
                 indent: start == 0 && indent,
+                lineMetrics: ReaderFragmentLines._(
+                  metrics,
+                  first,
+                  line,
+                  prefix.length,
+                  text.length,
+                ),
               ),
             );
             y += height;

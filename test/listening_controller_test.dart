@@ -70,6 +70,48 @@ void main() {
   }
 
   test(
+    'prepares three later clips without playing them and replenishes the bounded window',
+    () async {
+      final book = speechBook(List.generate(8, (index) => '后续语段 $index。'));
+      await controller.start(book, chapter: 0);
+      await listeningMicrotasks();
+      expect(audio.prepared.map((part) => part.paragraph), [0, 1, 2, 3]);
+      expect(output.loaded.length, 1);
+      expect(output.plays, 1);
+      expect(audio.protected.length, 4);
+      output.complete();
+      await listeningMicrotasks();
+      expect(controller.snapshot.value.current!.paragraph, 1);
+      expect(audio.prepared.map((part) => part.paragraph), [0, 1, 2, 3, 4]);
+      expect(output.loaded.length, 2);
+      expect(audio.protected.length, 4);
+      await controller.stop();
+      expect(audio.protected, isEmpty);
+    },
+  );
+  test(
+    'pause finishes only an already started preparation and resume fills the remaining window',
+    () async {
+      final held = Completer<void>();
+      audio.gateFor = (part) => part.paragraph == 2 ? held : null;
+      final book = speechBook(List.generate(8, (index) => '暂停预取语段 $index。'));
+      await controller.start(book, chapter: 0);
+      await listeningMicrotasks();
+      expect(audio.prepared.map((part) => part.paragraph), [0, 1, 2]);
+      await controller.pause();
+      held.complete();
+      await listeningMicrotasks();
+      expect(audio.prepared.map((part) => part.paragraph), [0, 1, 2]);
+      expect(output.loaded.length, 1);
+      expect(output.playing, false);
+      await controller.resume();
+      await listeningMicrotasks();
+      expect(audio.prepared.map((part) => part.paragraph), [0, 1, 2, 3]);
+      expect(output.loaded.length, 1);
+      expect(output.playing, true);
+    },
+  );
+  test(
     'online voices skip a rejected fragment and keep reading the next paragraph',
     () async {
       for (final voice in [defaultEdgeVoice, alternateEdgeVoice]) {

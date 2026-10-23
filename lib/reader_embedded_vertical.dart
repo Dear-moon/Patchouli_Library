@@ -17,9 +17,11 @@ class ReaderEmbeddedVertical extends StatefulWidget {
     required this.preferences,
     required this.selection,
     required this.onNote,
+    this.chapter,
   });
   final String text;
   final int paragraph;
+  final int? chapter;
   final ReaderRichParagraph format;
   final TextStyle style;
   final ReaderPreferences preferences;
@@ -90,6 +92,7 @@ class _ReaderEmbeddedVerticalState extends State<ReaderEmbeddedVertical> {
                   height: height,
                   child: ReaderSelectionFragment(
                     controller: widget.selection,
+                    chapter: widget.chapter,
                     text: page.text,
                     anchorForOffset: (offset) {
                       final glyph = page.glyphs

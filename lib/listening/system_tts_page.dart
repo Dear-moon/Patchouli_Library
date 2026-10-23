@@ -168,7 +168,7 @@ class _SystemSpeechEnginesPanelState extends State<SystemSpeechEnginesPanel>
                 ),
                 if (widget.selected.source == ListeningSource.system &&
                     widget.selected.engine == engine.id)
-                  const Icon(CupertinoIcons.checkmark, size: 16),
+                  const ArchiveIcon(CupertinoIcons.checkmark, size: 16),
               ],
             ),
           ),
@@ -207,7 +207,8 @@ class _SystemSpeechEnginesPanelState extends State<SystemSpeechEnginesPanel>
               ],
             ),
           ),
-          if (_chosen(voice)) const Icon(CupertinoIcons.checkmark, size: 16),
+          if (_chosen(voice))
+            const ArchiveIcon(CupertinoIcons.checkmark, size: 16),
         ],
       ),
     ),

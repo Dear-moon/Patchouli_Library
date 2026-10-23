@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import 'archive_design.dart';
+import 'archive_icons.dart';
+import 'app_haptics.dart';
 import 'app_window_insets.dart';
 import 'catalog.dart';
 import 'local_book_media.dart';
@@ -31,6 +33,8 @@ export 'scroll_edge_blur.dart' show ProgressiveBlur, ScrollEdgeProfile;
 export 'loading_ui.dart';
 export 'motion_ui.dart';
 export 'archive_design.dart';
+export 'archive_icons.dart';
+export 'app_haptics.dart';
 export 'glass_controls.dart';
 
 const ink = Color(0xFF181818);
@@ -243,11 +247,13 @@ abstract final class AppControls {
     Key? key,
     required bool value,
     required FutureOr<void> Function(bool)? onChanged,
+    bool haptics = true,
   }) {
     return AppGlassSwitch(
       key: key,
       value: value,
       onChanged: onChanged,
+      haptics: haptics,
       activeColor: _accent(context),
       inactiveColor: _track(context),
       thumbColor:
@@ -267,6 +273,7 @@ abstract final class AppControls {
     double min = 0,
     double max = 1,
     int? divisions,
+    bool haptics = true,
     ValueChanged<double>? onChangeStart,
     ValueChanged<double>? onChangeEnd,
   }) {
@@ -276,6 +283,7 @@ abstract final class AppControls {
       min: min,
       max: max,
       divisions: divisions,
+      haptics: haptics,
       onChanged: onChanged,
       onChangeStart: onChangeStart,
       onChangeEnd: onChangeEnd,
@@ -297,6 +305,7 @@ abstract final class AppControls {
     required Map<T, Widget> children,
     required ValueChanged<T?> onValueChanged,
     Set<T> disabledChildren = const {},
+    bool haptics = true,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return DefaultTextStyle.merge(
@@ -311,6 +320,7 @@ abstract final class AppControls {
         groupValue: groupValue,
         children: children,
         disabledChildren: disabledChildren,
+        haptics: haptics,
         onValueChanged: onValueChanged,
         foregroundColor: scheme.onSurface,
         style: _material(context, plate: true),
@@ -570,7 +580,9 @@ class NovelScrollBehavior extends MaterialScrollBehavior {
     BuildContext context,
     Widget child,
     ScrollableDetails details,
-  ) => child;
+  ) => axisDirectionToAxis(details.direction) == Axis.vertical
+      ? AppScrollHaptics(child: child)
+      : child;
 
   @override
   ScrollPhysics getScrollPhysics(BuildContext context) =>
@@ -642,6 +654,7 @@ class LiquidGlass extends StatefulWidget {
     this.radius = 28,
     this.padding = EdgeInsets.zero,
     this.onTap,
+    this.haptic = HapticCue.action,
     this.semanticLabel,
     this.elevated = false,
     this.thickness = 20,
@@ -660,6 +673,7 @@ class LiquidGlass extends StatefulWidget {
   final double radius;
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
+  final HapticCue? haptic;
   final String? semanticLabel;
   final bool elevated;
   final double thickness;
@@ -680,6 +694,7 @@ class LiquidGlass extends StatefulWidget {
 class _LiquidGlassState extends State<LiquidGlass> {
   bool _pressed = false;
   bool _cancelledPress = false;
+  int _iconActivation = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -737,7 +752,14 @@ class _LiquidGlassState extends State<LiquidGlass> {
                 button: widget.onTap != null,
                 label: widget.semanticLabel,
                 child: InkWell(
-                  onTap: widget.onTap,
+                  enableFeedback: false,
+                  onTap: widget.onTap == null
+                      ? null
+                      : () {
+                          AppHaptics.play(context, widget.haptic);
+                          setState(() => _iconActivation++);
+                          widget.onTap!();
+                        },
                   onTapCancel: widget.onTap == null
                       ? null
                       : () => _cancelledPress = true,
@@ -753,7 +775,11 @@ class _LiquidGlassState extends State<LiquidGlass> {
                   hoverColor: Colors.transparent,
                   child: Padding(
                     padding: widget.padding,
-                    child: GlassForeground(child: widget.child),
+                    child: ArchiveIconContact(
+                      pressed: _pressed,
+                      activation: _iconActivation,
+                      child: GlassForeground(child: widget.child),
+                    ),
                   ),
                 ),
               ),
@@ -798,6 +824,7 @@ class GlassIconButton extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.color,
+    this.haptic = HapticCue.action,
   }) : child = null;
 
   /// Shares the standard hit area, glass and press response with icon actions.
@@ -806,6 +833,7 @@ class GlassIconButton extends StatelessWidget {
     required this.child,
     required this.label,
     required this.onPressed,
+    this.haptic = HapticCue.action,
   }) : icon = null,
        color = null;
 
@@ -814,6 +842,7 @@ class GlassIconButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
   final Color? color;
+  final HapticCue? haptic;
 
   @override
   Widget build(BuildContext context) => LibraryReflowPart(
@@ -829,12 +858,13 @@ class GlassIconButton extends StatelessWidget {
           elevated: false,
           semanticLabel: appText(context, label),
           onTap: onPressed,
+          haptic: haptic,
           child: SizedBox(
             width: 46,
             height: 46,
             child:
                 child ??
-                Icon(
+                ArchiveIcon(
                   icon,
                   size: 21,
                   color:
@@ -903,7 +933,7 @@ class GlassPillButton extends StatelessWidget {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(icon, size: 18, color: color),
+                          ArchiveIcon(icon, size: 18, color: color),
                           const SizedBox(width: 9),
                           Flexible(
                             child: AppText(
@@ -937,11 +967,13 @@ class GlassTextButton extends StatelessWidget {
     required this.onPressed,
     this.compact = false,
     this.selected,
+    this.haptic = HapticCue.action,
   });
   final Widget child;
   final VoidCallback? onPressed;
   final bool compact;
   final bool? selected;
+  final HapticCue? haptic;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -967,6 +999,9 @@ class GlassTextButton extends StatelessWidget {
               )
             : null,
         onTap: onPressed,
+        haptic: selected != null && haptic == HapticCue.action
+            ? HapticCue.selection
+            : haptic,
         child: ConstrainedBox(
           constraints: BoxConstraints(
             minWidth: compact ? 48 : 64,
@@ -1031,12 +1066,14 @@ class ContentPanel extends StatefulWidget {
     this.radius = ArchiveDesign.panelRadius,
     this.backgroundColor,
     this.onTap,
+    this.haptic = HapticCue.action,
   });
   final Widget child;
   final EdgeInsetsGeometry padding;
   final double radius;
   final Color? backgroundColor;
   final VoidCallback? onTap;
+  final HapticCue? haptic;
 
   @override
   State<ContentPanel> createState() => _ContentPanelState();
@@ -1044,6 +1081,7 @@ class ContentPanel extends StatefulWidget {
 
 class _ContentPanelState extends State<ContentPanel> {
   bool _pressed = false;
+  int _iconActivation = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -1064,10 +1102,12 @@ class _ContentPanelState extends State<ContentPanel> {
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
+          enableFeedback: false,
           onTap: widget.onTap == null
               ? null
               : () {
-                  HapticFeedback.selectionClick();
+                  AppHaptics.play(context, widget.haptic);
+                  setState(() => _iconActivation++);
                   widget.onTap!();
                 },
           onHighlightChanged: widget.onTap == null
@@ -1075,8 +1115,12 @@ class _ContentPanelState extends State<ContentPanel> {
               : (pressed) => setState(() => _pressed = pressed),
           splashFactory: NoSplash.splashFactory,
           highlightColor: Colors.transparent,
-          child: ArchiveRegistration(
-            child: Padding(padding: widget.padding, child: widget.child),
+          child: ArchiveIconContact(
+            pressed: _pressed,
+            activation: _iconActivation,
+            child: ArchiveRegistration(
+              child: Padding(padding: widget.padding, child: widget.child),
+            ),
           ),
         ),
       ),
@@ -1085,10 +1129,16 @@ class _ContentPanelState extends State<ContentPanel> {
 }
 
 class JellyTapSurface extends StatefulWidget {
-  const JellyTapSurface({super.key, required this.child, required this.onTap});
+  const JellyTapSurface({
+    super.key,
+    required this.child,
+    required this.onTap,
+    this.haptic = HapticCue.action,
+  });
 
   final Widget child;
   final VoidCallback? onTap;
+  final HapticCue? haptic;
 
   @override
   State<JellyTapSurface> createState() => _JellyTapSurfaceState();
@@ -1097,6 +1147,7 @@ class JellyTapSurface extends StatefulWidget {
 class _JellyTapSurfaceState extends State<JellyTapSurface> {
   bool _pressed = false;
   bool _cancelledPress = false;
+  int _iconActivation = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -1114,6 +1165,7 @@ class _JellyTapSurfaceState extends State<JellyTapSurface> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
+          enableFeedback: false,
           splashFactory: NoSplash.splashFactory,
           highlightColor: Colors.transparent,
           onTapCancel: widget.onTap == null
@@ -1128,10 +1180,15 @@ class _JellyTapSurfaceState extends State<JellyTapSurface> {
           onTap: widget.onTap == null
               ? null
               : () {
-                  HapticFeedback.selectionClick();
+                  AppHaptics.play(context, widget.haptic);
+                  setState(() => _iconActivation++);
                   widget.onTap!();
                 },
-          child: widget.child,
+          child: ArchiveIconContact(
+            pressed: _pressed,
+            activation: _iconActivation,
+            child: widget.child,
+          ),
         ),
       ),
     );
@@ -1458,8 +1515,9 @@ class ContentNotice extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
+          ArchiveIcon(
             icon,
+            ambient: true,
             size: 34,
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
@@ -1787,6 +1845,7 @@ class GlassMenuItem extends StatelessWidget {
     selected: selected,
     child: JellyTapSurface(
       onTap: onPressed,
+      haptic: HapticCue.selection,
       child: GlassForeground(
         child: ArchivePart(
           start: .06 + order.clamp(0, 8) * .025,
@@ -1829,7 +1888,7 @@ class GlassMenuItem extends StatelessWidget {
                   ),
                 ),
                 if (selected)
-                  Icon(
+                  ArchiveIcon(
                     CupertinoIcons.check_mark,
                     size: 17,
                     color: Theme.of(context).colorScheme.surface,
@@ -1843,7 +1902,8 @@ class GlassMenuItem extends StatelessWidget {
   );
 }
 
-class _GlassOverlayRoute<T> extends PopupRoute<T> {
+class _GlassOverlayRoute<T> extends PopupRoute<T>
+    with AppHapticModalBarrier<T> {
   _GlassOverlayRoute({
     required this.builder,
     required this.kind,
@@ -2114,6 +2174,7 @@ class _GlassSheetState extends State<_GlassSheet>
             _surfaceKey.currentContext!.findRenderObject()! as RenderBox;
         if ((details.primaryVelocity ?? 0) > 550 ||
             _drag.value > box.size.height * .24) {
+          AppHaptics.play(context, HapticCue.action);
           Navigator.of(context).pop();
         } else {
           _restore();

@@ -9,6 +9,7 @@ import 'book_identity.dart';
 import 'book_text_encoding.dart';
 import 'local_import_options.dart';
 import 'performance_preferences.dart';
+import 'haptic_preferences.dart';
 import 'local_book_media.dart';
 import 'reader_preferences.dart';
 import 'reader_book_style.dart';
@@ -24,6 +25,7 @@ final backupPreferenceKeys = <String>{
   'readerFontSize',
   'readerLineHeight',
   'reduceMotion',
+  HapticPreferences.preferenceKey,
   'glassBlur',
   'glassOpacity',
   'readerKeepScreenOn',
@@ -204,6 +206,7 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
       final valid = switch (key) {
         'theme' => ['system', 'light', 'dark'].contains(value),
         AppPalettePreferences.key => _validAppPalette(value),
+        HapticPreferences.preferenceKey => _validHaptics(value),
         'shelfSort' => ['recentRead', 'recentAdded', 'title'].contains(value),
         'shelfLayout' => ['shelf', 'list'].contains(value),
         'shelfSourceFilter' => [
@@ -369,6 +372,15 @@ bool _validAppPalette(Object? value) {
   if (value is! String) return false;
   try {
     AppPalettePreferences.decode(value);
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
+bool _validHaptics(Object? value) {
+  try {
+    HapticPreferences.decode(value);
     return true;
   } on FormatException {
     return false;

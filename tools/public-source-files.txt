@@ -17,6 +17,7 @@ android/app/src/main/AndroidManifest.xml
 android/app/src/main/cpp/CMakeLists.txt
 android/app/src/main/cpp/mobi_export.c
 android/app/src/main/cpp/mobi_jni.c
+android/app/src/main/kotlin/org/mewx/wenku8_flutter/AppHapticsPlugin.kt
 android/app/src/main/kotlin/org/mewx/wenku8_flutter/AppUpdatePlugin.kt
 android/app/src/main/kotlin/org/mewx/wenku8_flutter/BookArchiveImport.kt
 android/app/src/main/kotlin/org/mewx/wenku8_flutter/BookDocImport.kt
@@ -79,6 +80,7 @@ android/app/src/main/res/xml/backup_rules.xml
 android/app/src/main/res/xml/data_extraction_rules.xml
 android/app/src/main/res/xml/update_paths.xml
 android/app/src/profile/AndroidManifest.xml
+android/app/src/test/kotlin/org/mewx/wenku8_flutter/AppHapticPolicyTest.kt
 android/app/src/test/kotlin/org/mewx/wenku8_flutter/BookArchiveImportTest.kt
 android/app/src/test/kotlin/org/mewx/wenku8_flutter/BookFolderIndexTest.kt
 android/app/src/test/kotlin/org/mewx/wenku8_flutter/BookMarkupImportTest.kt
@@ -125,6 +127,8 @@ assets/opencc/TWPhrasesName.txt
 assets/opencc/TWPhrasesOther.txt
 assets/opencc/TWVariants.txt
 docs/CLOUD_IMPORT.md
+docs/HAPTICS.md
+docs/ICON_SYSTEM.md
 docs/READER.md
 docs/RELEASING.md
 docs/SEARCH.md
@@ -215,6 +219,7 @@ ios/Runner/Info.plist
 ios/Runner/Runner-Bridging-Header.h
 ios/Runner/SceneDelegate.swift
 ios/RunnerTests/RunnerTests.swift
+lib/app_haptics.dart
 lib/app_interactions.dart
 lib/app_language.dart
 lib/app_licenses.dart
@@ -225,6 +230,10 @@ lib/app_ui.dart
 lib/app_window_insets.dart
 lib/archive_carousel.dart
 lib/archive_design.dart
+lib/archive_icon_art.dart
+lib/archive_icon_fold_art.dart
+lib/archive_icon_motion.dart
+lib/archive_icons.dart
 lib/archive_motion.dart
 lib/archive_progress.dart
 lib/archive_scroll_simulation.dart
@@ -271,6 +280,8 @@ lib/glass_dock.dart
 lib/glass_optics.dart
 lib/glass_palette.dart
 lib/glass_sampling_budget.dart
+lib/haptic_preferences.dart
+lib/haptic_settings_page.dart
 lib/home_navigation.dart
 lib/illustration_layout_page.dart
 lib/illustration_placement.dart
@@ -385,6 +396,7 @@ lib/reader_handoff_navigation.dart
 lib/reader_illustrations.dart
 lib/reader_landing_highlight.dart
 lib/reader_languages.dart
+lib/reader_line_reflow.dart
 lib/reader_page_anchor.dart
 lib/reader_page_physics.dart
 lib/reader_paged_view.dart
@@ -395,6 +407,7 @@ lib/reader_reflow.dart
 lib/reader_rich_content.dart
 lib/reader_scroll_location.dart
 lib/reader_scroll_sliver.dart
+lib/reader_scroll_stream.dart
 lib/reader_selection.dart
 lib/reader_sheet_motion.dart
 lib/reader_source_progress.dart
@@ -436,7 +449,9 @@ shaders/analytic_glass.frag
 shaders/continuous_blur.frag
 shaders/glass_shape.glsl
 test/adaptive_ui_test.dart
+test/app_haptics_test.dart
 test/app_icon_asset_test.dart
+test/app_palette_test.dart
 test/app_typography_test.dart
 test/app_update_prompt_test.dart
 test/app_updates_test.dart
@@ -444,6 +459,9 @@ test/archive_carousel_test.dart
 test/archive_cover_flight_test.dart
 test/archive_design_test.dart
 test/archive_discovery_polish_test.dart
+test/archive_icon_behavior_test.dart
+test/archive_icon_entrance_test.dart
+test/archive_icons_test.dart
 test/archive_motion_test.dart
 test/archive_scroll_simulation_test.dart
 test/archive_shelf_interactions_test.dart
@@ -464,6 +482,7 @@ test/dark_palette_test.dart
 test/detail_loading_test.dart
 test/detail_scroll_test.dart
 test/discovery_prefetch_test.dart
+test/discovery_refresh_test.dart
 test/easy_glass_compositing_test.dart
 test/edge_protocol_test.dart
 test/epub_illustration_toc_test.dart
@@ -479,6 +498,9 @@ test/glass_optics_test.dart
 test/glass_retry_test.dart
 test/glass_sampling_budget_test.dart
 test/glass_scene_geometry_test.dart
+test/haptic_dispatch_test.dart
+test/haptic_preferences_test.dart
+test/haptic_settings_ui_test.dart
 test/import_reader_choices_test.dart
 test/inline_search_test.dart
 test/large_book_import_test.dart
@@ -534,18 +556,22 @@ test/reader_chapter_timing_test.dart
 test/reader_exit_test.dart
 test/reader_follow_scroll_test.dart
 test/reader_handoff_transaction_test.dart
+test/reader_haptic_coverage_test.dart
 test/reader_incremental_test.dart
 test/reader_indent_51_test.dart
 test/reader_landing_highlight_test.dart
 test/reader_library_polish_50_test.dart
+test/reader_line_reflow_test.dart
 test/reader_major_update_test.dart
 test/reader_modes_test.dart
 test/reader_page_effects_test.dart
+test/reader_page_title_test.dart
 test/reader_polish_test.dart
 test/reader_rail_roundtrip_test.dart
 test/reader_reflow_idempotence_test.dart
 test/reader_scroll_audit_test.dart
 test/reader_scroll_start_test.dart
+test/reader_scroll_stream_test.dart
 test/reader_speech_highlight_test.dart
 test/reader_tap_both_sides_test.dart
 test/reader_tools_features_test.dart
@@ -561,9 +587,11 @@ test/release_markdown_test.dart
 test/release_policy_test.dart
 test/render_performance_test.dart
 test/route_headers_illustrations_test.dart
+test/screen_haptic_coverage_test.dart
 test/scroll_edge_input_test.dart
 test/selected_value_builder_test.dart
 test/settings_scroll_budget_test.dart
+test/shared_interaction_haptics_test.dart
 test/shelf_categories_test.dart
 test/support/background_fixture.dart
 test/support/book_cover_fixture.dart
@@ -905,8 +933,10 @@ third_party/liquid_glass_easy/lib/src/widgets/utils/liquid_glass_warm_up.dart
 third_party/liquid_glass_easy/pubspec.yaml
 tools/check_public_source.py
 tools/create_update_fixtures.py
+tools/export_icon_studio.dart
 tools/export_public_source.py
 tools/generate_app_icons.dart
+tools/icon_studio.dart
 tools/prepare_release.py
 tools/public-source-files.txt
 tools/sign_distribution.py

@@ -170,7 +170,9 @@ class _LocalImportReviewState extends State<LocalImportReview> {
                                   ),
                                   const SizedBox(width: 12),
                                   if (_done.contains(group.seed))
-                                    const Icon(CupertinoIcons.checkmark_circle)
+                                    const ArchiveIcon(
+                                      CupertinoIcons.checkmark_circle,
+                                    )
                                   else
                                     Semantics(
                                       label: '合并 ${group.title}',
@@ -293,7 +295,10 @@ class _LocalImportReviewState extends State<LocalImportReview> {
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Icon(CupertinoIcons.doc_text, size: 20),
+                                  const ArchiveIcon(
+                                    CupertinoIcons.doc_text,
+                                    size: 20,
+                                  ),
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: AppText(

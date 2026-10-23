@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'app_haptics.dart';
 import 'library_state.dart';
 import 'reader_preferences.dart';
 
@@ -191,14 +192,32 @@ class _ReaderBrightnessGestureState extends State<ReaderBrightnessGesture> {
   double? _base;
   double _delta = 0;
   int _ticket = 0;
+  int? _lastHapticStep;
+  double? _lastHapticValue;
+  bool _hasHapticStep = false;
+  bool _fineAdjustmentPending = false;
+  bool _pointerReleased = false;
   void _apply(bool persist) {
     final base = _base;
     if (base == null || !mounted) return;
     final height = MediaQuery.sizeOf(context).height;
+    final brightness = (base - _delta / height).clamp(0.0, 1.0);
+    final step = (brightness * 20).round();
+    final previous = _lastHapticStep ?? (base * 20).round();
+    final boundary =
+        (brightness == 0 || brightness == 1) &&
+        brightness != (_lastHapticValue ?? base);
+    if (step != previous || boundary) {
+      _hasHapticStep = true;
+      AppHaptics.play(
+        context,
+        boundary ? HapticCue.boundary : HapticCue.detent,
+      );
+    }
+    _lastHapticStep = step;
+    _lastHapticValue = brightness;
     widget.onChanged(
-      widget.state.readerPreferences.copyWith(
-        brightness: (base - _delta / height).clamp(0.0, 1.0),
-      ),
+      widget.state.readerPreferences.copyWith(brightness: brightness),
       persist,
     );
   }
@@ -206,6 +225,11 @@ class _ReaderBrightnessGestureState extends State<ReaderBrightnessGesture> {
   Future<void> _start() async {
     final ticket = ++_ticket;
     _delta = 0;
+    _lastHapticStep = null;
+    _lastHapticValue = null;
+    _hasHapticStep = false;
+    _fineAdjustmentPending = false;
+    _pointerReleased = false;
     _base = widget.state.readerPreferences.brightness;
     if (_base == null) {
       try {
@@ -222,10 +246,23 @@ class _ReaderBrightnessGestureState extends State<ReaderBrightnessGesture> {
     }
   }
 
-  void _end() {
+  void _end({bool cancelled = false}) {
+    _fineAdjustmentPending =
+        !cancelled &&
+        !_hasHapticStep &&
+        _base != null &&
+        _lastHapticValue != null &&
+        _lastHapticValue != _base;
     _apply(true);
+    _confirmFineAdjustment();
     _ticket++;
     _base = null;
+  }
+
+  void _confirmFineAdjustment() {
+    if (!_pointerReleased || !_fineAdjustmentPending) return;
+    _fineAdjustmentPending = false;
+    AppHaptics.play(context, HapticCue.selection);
   }
 
   @override
@@ -233,16 +270,29 @@ class _ReaderBrightnessGestureState extends State<ReaderBrightnessGesture> {
     animation: widget.state.readerSettingsChanges,
     builder: (context, _) => !widget.state.readerPreferences.edgeBrightness
         ? const SizedBox.shrink()
-        : GestureDetector(
-            key: const ValueKey('reader-edge-brightness'),
+        : Listener(
             behavior: HitTestBehavior.translucent,
-            onVerticalDragStart: (_) => _start(),
-            onVerticalDragUpdate: (details) {
-              _delta += details.delta.dy;
-              _apply(false);
+            // Flutter ends an already-accepted drag on pointer cancellation;
+            // keep that path distinct from a deliberate fine-adjust release.
+            onPointerCancel: (_) {
+              _pointerReleased = false;
+              _fineAdjustmentPending = false;
             },
-            onVerticalDragEnd: (_) => _end(),
-            onVerticalDragCancel: _end,
+            onPointerUp: (_) {
+              _pointerReleased = true;
+              _confirmFineAdjustment();
+            },
+            child: GestureDetector(
+              key: const ValueKey('reader-edge-brightness'),
+              behavior: HitTestBehavior.translucent,
+              onVerticalDragStart: (_) => _start(),
+              onVerticalDragUpdate: (details) {
+                _delta += details.delta.dy;
+                _apply(false);
+              },
+              onVerticalDragEnd: (_) => _end(),
+              onVerticalDragCancel: () => _end(cancelled: true),
+            ),
           ),
   );
 }

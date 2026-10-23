@@ -157,7 +157,7 @@ class _FontSettingsPageState extends State<FontSettingsPage> {
       onPressed: busy ? null : () => _choose(reader: reader),
       child: Row(
         children: [
-          Icon(
+          ArchiveIcon(
             reader ? CupertinoIcons.book : CupertinoIcons.textformat,
             size: 21,
           ),
@@ -190,7 +190,7 @@ class _FontSettingsPageState extends State<FontSettingsPage> {
             ),
           ),
           const SizedBox(width: 8),
-          const Icon(CupertinoIcons.chevron_right, size: 14),
+          const ArchiveIcon(CupertinoIcons.chevron_right, size: 14),
         ],
       ),
     );
@@ -260,10 +260,10 @@ class _FontSettingsPageState extends State<FontSettingsPage> {
             ),
             if (download != null && !state.fonts.available(id)) ...[
               const SizedBox(width: 10),
-              const Icon(CupertinoIcons.arrow_down_to_line, size: 16),
+              const ArchiveIcon(CupertinoIcons.arrow_down_to_line, size: 16),
             ] else if (selected) ...[
               const SizedBox(width: 10),
-              const Icon(CupertinoIcons.checkmark, size: 16),
+              const ArchiveIcon(CupertinoIcons.checkmark, size: 16),
             ],
           ],
         ),

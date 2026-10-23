@@ -473,6 +473,8 @@ class _SeedEditorState extends State<_SeedEditor> {
       const SizedBox(height: 14),
       CupertinoTextField(
         key: const ValueKey('palette-hex'),
+        onTap: () => AppHaptics.play(context, HapticCue.selection),
+        onSubmitted: (_) => AppHaptics.play(context, HapticCue.action),
         controller: _hex,
         maxLength: 7,
         placeholder: '#607D71',
@@ -534,16 +536,26 @@ class _PaletteImagePickerPageState extends State<PaletteImagePickerPage> {
     width: 1024,
   );
   Offset? _point;
-  void _pick(Offset point, Size viewport) {
+  (int, int)? _lastSampleDetent;
+  void _pick(Offset point, Size viewport, {bool dragging = false}) {
     final color = widget.image.colorAt(point, viewport);
     if (color != null) {
+      final rect = widget.image.imageRect(viewport);
+      final sample = Offset(
+        (point.dx - rect.left) / rect.width,
+        (point.dy - rect.top) / rect.height,
+      );
+      final detent = ((sample.dx * 20).floor(), (sample.dy * 20).floor());
+      if (!dragging || detent != _lastSampleDetent) {
+        AppHaptics.play(
+          context,
+          dragging ? HapticCue.detent : HapticCue.selection,
+        );
+        _lastSampleDetent = detent;
+      }
       setState(() {
         _color = color;
-        final rect = widget.image.imageRect(viewport);
-        _point = Offset(
-          (point.dx - rect.left) / rect.width,
-          (point.dy - rect.top) / rect.height,
-        );
+        _point = sample;
       });
     }
   }
@@ -572,8 +584,13 @@ class _PaletteImagePickerPageState extends State<PaletteImagePickerPage> {
             builder: (context, box) => GestureDetector(
               key: const ValueKey('palette-image-sampling'),
               behavior: HitTestBehavior.opaque,
-              onTapDown: (d) => _pick(d.localPosition, box.biggest),
-              onPanUpdate: (d) => _pick(d.localPosition, box.biggest),
+              onTapUp: (d) => _pick(d.localPosition, box.biggest),
+              onPanStart: (d) {
+                _lastSampleDetent = null;
+                _pick(d.localPosition, box.biggest, dragging: true);
+              },
+              onPanUpdate: (d) =>
+                  _pick(d.localPosition, box.biggest, dragging: true),
               child: Stack(
                 fit: StackFit.expand,
                 children: [

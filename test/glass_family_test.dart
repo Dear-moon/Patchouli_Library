@@ -90,7 +90,7 @@ void main() {
       await _mount(tester);
       final plate = find.byKey(const ValueKey('dock-fluid-surface'));
       final tab = find.byKey(const ValueKey('dock-tab-0'));
-      final icon = find.descendant(of: tab, matching: find.byType(Icon));
+      final icon = find.descendant(of: tab, matching: find.byType(ArchiveIcon));
       final label = find.descendant(of: tab, matching: find.byType(Text));
       final initial = [
         tester.getRect(plate),
@@ -164,7 +164,7 @@ void main() {
       ),
     );
     final plate = find.byType(NativeBackdrop);
-    final icon = find.byType(Icon);
+    final icon = find.byType(ArchiveIcon);
     final originalPlate = tester.getRect(plate);
     final originalIcon = tester.getRect(icon);
     final gesture = await tester.startGesture(tester.getCenter(icon));
@@ -178,7 +178,7 @@ void main() {
     );
     expect(tester.getRect(icon).center, tester.getRect(plate).center);
     expect(tester.widget<NativeBackdrop>(plate).emission, greaterThan(0));
-    final foreground = tester.element(find.byType(Icon));
+    final foreground = tester.element(icon);
     expect(IconTheme.of(foreground).shadows, isNull);
     await gesture.up();
     await tester.pumpAndSettle();

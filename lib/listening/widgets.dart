@@ -647,7 +647,10 @@ class _ListeningPanelState extends State<ListeningPanel> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Icon(CupertinoIcons.chevron_forward, size: 14),
+                        const ArchiveIcon(
+                          CupertinoIcons.chevron_forward,
+                          size: 14,
+                        ),
                       ],
                     ),
                   ),
@@ -900,6 +903,7 @@ class ListeningParagraphHighlight extends StatelessWidget {
           );
           if (!state.own || !interactive) return plane;
           void activate() {
+            AppHaptics.play(context, HapticCue.action);
             unawaited(
               (onDoubleTap?.call() ??
                       controller.paragraphDoubleTap(

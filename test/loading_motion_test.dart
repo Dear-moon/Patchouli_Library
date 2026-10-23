@@ -151,7 +151,13 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(ReaderSkeleton), findsNothing);
-    expect(find.text('第一段正文。'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('paragraph-anchor-0-0')),
+        matching: find.text('第一段正文。'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
     semantics.dispose();
   });

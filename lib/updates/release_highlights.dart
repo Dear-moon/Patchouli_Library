@@ -76,27 +76,28 @@ Future<bool> showInstalledReleaseNotes(
   final appearance = GlassAppearance.of(context);
   final reduced = MediaQuery.disableAnimationsOf(context);
   final completed =
-      await showGeneralDialog<bool>(
-        context: context,
-        barrierDismissible: !automatic,
-        barrierLabel: '关闭更新说明',
-        barrierColor: Colors.black.withValues(alpha: .16),
-        transitionDuration: reduced ? Duration.zero : NovelMotion.enter,
-        transitionBuilder: (context, animation, secondary, child) =>
-            GlassOverlayTransition(
-              animation: animation,
-              kind: GlassOverlayKind.sheet,
-              reduceMotion: reduced,
-              child: child,
-            ),
-        pageBuilder: (context, _, _) => GlassAppearance(
-          blur: appearance.blur,
-          opacity: appearance.opacity,
-          child: PopScope(
-            canPop: !automatic,
-            child: _ReleaseDetails(
-              version: installed?.version ?? currentAppVersion,
-              build: installed?.build ?? currentAppBuild,
+      await Navigator.of(context, rootNavigator: true).push<bool>(
+        _ReleaseDetailsRoute(
+          barrierDismissible: !automatic,
+          barrierLabel: '关闭更新说明',
+          barrierColor: Colors.black.withValues(alpha: .16),
+          transitionDuration: reduced ? Duration.zero : NovelMotion.enter,
+          transitionBuilder: (context, animation, secondary, child) =>
+              GlassOverlayTransition(
+                animation: animation,
+                kind: GlassOverlayKind.sheet,
+                reduceMotion: reduced,
+                child: child,
+              ),
+          pageBuilder: (context, _, _) => GlassAppearance(
+            blur: appearance.blur,
+            opacity: appearance.opacity,
+            child: PopScope(
+              canPop: !automatic,
+              child: _ReleaseDetails(
+                version: installed?.version ?? currentAppVersion,
+                build: installed?.build ?? currentAppBuild,
+              ),
             ),
           ),
         ),
@@ -110,6 +111,18 @@ Future<bool> showInstalledReleaseNotes(
     }
   }
   return completed;
+}
+
+class _ReleaseDetailsRoute extends RawDialogRoute<bool>
+    with AppHapticModalBarrier<bool> {
+  _ReleaseDetailsRoute({
+    required super.pageBuilder,
+    required super.barrierDismissible,
+    required super.barrierLabel,
+    required super.barrierColor,
+    required super.transitionDuration,
+    required super.transitionBuilder,
+  });
 }
 
 class _ReleaseDetails extends StatefulWidget {
@@ -127,6 +140,7 @@ class _ReleaseDetailsState extends State<_ReleaseDetails> {
       .toList(growable: false);
   int _page = 0;
   bool _moving = false;
+  bool _userPaging = false;
   @override
   void dispose() {
     _pages.dispose();
@@ -135,6 +149,7 @@ class _ReleaseDetailsState extends State<_ReleaseDetails> {
 
   Future<void> _move(int page) async {
     if (_moving) return;
+    _userPaging = false;
     if (MediaQuery.disableAnimationsOf(context)) {
       _pages.jumpToPage(page);
     } else {
@@ -228,49 +243,71 @@ class _ReleaseDetailsState extends State<_ReleaseDetails> {
                     ),
                     const SizedBox(height: 18),
                     Expanded(
-                      child: PageView.builder(
-                        key: const ValueKey('release-details-pages'),
-                        controller: _pages,
-                        itemCount: _sections.length,
-                        onPageChanged: (page) => setState(() => _page = page),
-                        itemBuilder: (context, index) => SingleChildScrollView(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              AppText(
-                                _sections[index].title,
-                                key: ValueKey('release-section-$index'),
-                                style: const TextStyle(
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w600,
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (notification) {
+                          if (notification.depth != 0) return false;
+                          if (notification is ScrollStartNotification) {
+                            _userPaging = notification.dragDetails != null;
+                          } else if (notification is ScrollEndNotification) {
+                            _userPaging = false;
+                          }
+                          return false;
+                        },
+                        child: PageView.builder(
+                          key: const ValueKey('release-details-pages'),
+                          controller: _pages,
+                          itemCount: _sections.length,
+                          onPageChanged: (page) {
+                            if (_userPaging && page != _page) {
+                              AppHaptics.play(context, HapticCue.pageTurn);
+                            }
+                            setState(() => _page = page);
+                          },
+                          itemBuilder: (context, index) =>
+                              SingleChildScrollView(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    AppText(
+                                      _sections[index].title,
+                                      key: ValueKey('release-section-$index'),
+                                      style: const TextStyle(
+                                        fontSize: 19,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 14),
+                                    for (final item in _sections[index].items)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 16,
+                                        ),
+                                        child: ReleaseNotes(
+                                          item == currentReleaseSourcePolicy
+                                              ? '> **$item**'
+                                              : index == 0
+                                              ? item
+                                              : '- $item',
+                                          style: TextStyle(
+                                            fontSize:
+                                                item ==
+                                                    currentReleaseSourcePolicy
+                                                ? 16
+                                                : 14,
+                                            fontWeight:
+                                                item ==
+                                                    currentReleaseSourcePolicy
+                                                ? FontWeight.w700
+                                                : FontWeight.normal,
+                                            height: 1.75,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(height: 14),
-                              for (final item in _sections[index].items)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 16),
-                                  child: ReleaseNotes(
-                                    item == currentReleaseSourcePolicy
-                                        ? '> **$item**'
-                                        : index == 0
-                                        ? item
-                                        : '- $item',
-                                    style: TextStyle(
-                                      fontSize:
-                                          item == currentReleaseSourcePolicy
-                                          ? 16
-                                          : 14,
-                                      fontWeight:
-                                          item == currentReleaseSourcePolicy
-                                          ? FontWeight.w700
-                                          : FontWeight.normal,
-                                      height: 1.75,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
                         ),
                       ),
                     ),

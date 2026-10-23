@@ -158,8 +158,11 @@ class ListeningController {
   Timer? _sleep;
   Future<void>? _voiceRefresh;
   Future<void>? _disposing;
-  File? _currentFile, _nextFile;
-  (SpeechSegment, ListeningSource, String?, String, String)? _nextIdentity;
+  File? _currentFile;
+  final _preparedAhead =
+      <(SpeechSegment, ListeningSource, String?, String, String), File>{};
+  Object? _prefetchRun;
+  static const _lookAhead = 3;
   ReaderContent _chapterContent = const ReaderContent([]);
   List<SpeechSegment> _rawSegments = const [];
   Map<String, SpeechVoice> _languageVoices = const {};
@@ -186,7 +189,7 @@ class ListeningController {
   void _releaseFile(File? file) {
     if (file != null &&
         file.path != _currentFile?.path &&
-        file.path != _nextFile?.path &&
+        !_preparedAhead.values.any((ready) => ready.path == file.path) &&
         !_loadingFiles.containsKey(file.path)) {
       audio.unprotect(file);
     }
@@ -209,10 +212,32 @@ class ListeningController {
   }
 
   void _dropPrefetch() {
-    final file = _nextFile;
-    _nextFile = null;
-    _nextIdentity = null;
-    _releaseFile(file);
+    _prefetchRun = null;
+    final previous = _preparedAhead.values.toList();
+    _preparedAhead.clear();
+    for (final file in previous) {
+      _releaseFile(file);
+    }
+  }
+
+  void _prunePrefetch() {
+    final state = snapshot.value;
+    final wanted =
+        <(SpeechSegment, ListeningSource, String?, String, String)>{};
+    for (
+      var i = state.segment + 1;
+      i < state.segments.length && i <= state.segment + _lookAhead;
+      i++
+    ) {
+      final segment = state.segments[i];
+      final voice = _languageVoices[segment.language];
+      if (voice != null) wanted.add(_audioIdentity(segment, voice));
+    }
+    for (final key
+        in _preparedAhead.keys.where((key) => !wanted.contains(key)).toList()) {
+      final file = _preparedAhead.remove(key);
+      _releaseFile(file);
+    }
   }
 
   void _updateTimeline() {
@@ -377,7 +402,6 @@ class ListeningController {
 
   void _fail(Object error, int generation) {
     if (!_valid(generation) || error is SpeechCancelled) return;
-
     _desiredPlaying = false;
     _loading = false;
     _emit(
@@ -746,12 +770,8 @@ class ListeningController {
         currentVoice: voice,
       );
       progress.value = const ListeningProgress();
-      final prefetched = _nextIdentity == _audioIdentity(segment, voice)
-          ? _nextFile
-          : null;
+      final prefetched = _preparedAhead.remove(_audioIdentity(segment, voice));
       if (prefetched != null) {
-        _nextFile = null;
-        _nextIdentity = null;
         _retainLoad(prefetched);
       }
       File? protectedFile = prefetched;
@@ -806,12 +826,10 @@ class ListeningController {
           await output.setSpeed(snapshot.value.speed);
         });
         if (!_valid(generation)) return;
-        final previous = _currentFile, previousNext = _nextFile;
+        final previous = _currentFile;
         _currentFile = file;
-        _nextFile = null;
-        _nextIdentity = null;
         _releaseFile(previous);
-        _releaseFile(previousNext);
+        _prunePrefetch();
         _consecutiveFailures = 0;
         if (duration != null) {
           _clipDurations[segment] = duration!;
@@ -836,7 +854,7 @@ class ListeningController {
           }
         }
         unawaited(saveCursor());
-        unawaited(_prefetch(index + 1, generation, token));
+        unawaited(_prefetch(generation, token));
         return;
       } catch (error) {
         if (!_valid(generation) || error is SpeechCancelled) return;
@@ -873,6 +891,7 @@ class ListeningController {
         }
         if (decodeFailed && protectedFile != null) {
           final broken = protectedFile;
+          _dropPrefetch();
           if (_currentFile?.path == broken.path) _currentFile = null;
           _releaseLoad(broken);
           protectedFile = null;
@@ -952,26 +971,49 @@ class ListeningController {
     );
   }
 
-  Future<void> _prefetch(
-    int index,
-    int generation,
-    SpeechCancellation token,
-  ) async {
-    final state = snapshot.value;
-    if (index >= state.segments.length || !_valid(generation)) return;
-    final voice = _languageVoices[state.segments[index].language];
-    if (voice == null) return;
+  Future<void> _prefetch(int generation, SpeechCancellation token) async {
+    if (!_valid(generation) || !_desiredPlaying || _prefetchRun != null) return;
+    final run = Object();
+    _prefetchRun = run;
+    bool current() => _valid(generation) && identical(_prefetchRun, run);
     try {
-      final file = await _prepareAudio(state.segments[index], voice, token);
-      if (!_valid(generation) || index != snapshot.value.segment + 1) return;
-      final previous = _nextFile;
-      _nextFile = file;
-      _nextIdentity = _audioIdentity(state.segments[index], voice);
-      audio.protect(file);
-      _releaseFile(previous);
-      await audio.trimForPlayback();
+      while (current() && _desiredPlaying) {
+        _prunePrefetch();
+        final state = snapshot.value;
+        SpeechSegment? segment;
+        SpeechVoice? voice;
+        for (
+          var i = state.segment + 1;
+          i < state.segments.length && i <= state.segment + _lookAhead;
+          i++
+        ) {
+          final candidate = state.segments[i];
+          final matched = _languageVoices[candidate.language];
+          if (matched != null &&
+              !_preparedAhead.containsKey(_audioIdentity(candidate, matched))) {
+            segment = candidate;
+            voice = matched;
+            break;
+          }
+        }
+        if (segment == null || voice == null) return;
+        // One background synthesis at a time, without holding audible playback.
+        final key = _audioIdentity(segment, voice);
+        final file = await _prepareAudio(segment, voice, token);
+        if (!current()) return;
+        final live = snapshot.value;
+        final index = live.segments.indexOf(segment);
+        if (index <= live.segment || index > live.segment + _lookAhead) {
+          continue;
+        }
+        _preparedAhead[key] = file;
+        audio.protect(file);
+        await audio.trimForPlayback();
+      }
     } catch (_) {
       /* Playback reports a failure only if this segment is actually requested. */
+    } finally {
+      if (identical(_prefetchRun, run)) _prefetchRun = null;
     }
   }
 
@@ -1068,6 +1110,7 @@ class ListeningController {
       await _command(() async {
         if (_valid(generation) && _desiredPlaying) _play(output, generation);
       });
+      unawaited(_prefetch(generation, _cancel));
     }
   }
 
@@ -1085,11 +1128,10 @@ class ListeningController {
     await _command(() async {
       await _output?.stop();
     });
-    final previous = _currentFile, previousNext = _nextFile;
-    _currentFile = _nextFile = null;
-    _nextIdentity = null;
+    final previous = _currentFile;
+    _currentFile = null;
+    _dropPrefetch();
     _releaseFile(previous);
-    _releaseFile(previousNext);
   }
 
   Future<void> seek(Duration position) async {

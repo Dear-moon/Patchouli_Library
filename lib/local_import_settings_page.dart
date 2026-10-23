@@ -93,6 +93,8 @@ class _LocalImportSettingsPageState extends State<LocalImportSettingsPage> {
     padding: const EdgeInsets.only(top: 14),
     child: TextField(
       key: ValueKey(key),
+      onTap: () => AppHaptics.play(context, HapticCue.selection),
+      onTapAlwaysCalled: true,
       controller: controller,
       enabled: !busy,
       minLines: 1,
@@ -264,6 +266,8 @@ class _LocalImportSettingsPageState extends State<LocalImportSettingsPage> {
                   const SizedBox(height: 12),
                   TextField(
                     key: const ValueKey('import-toc-sample'),
+                    onTap: () => AppHaptics.play(context, HapticCue.selection),
+                    onTapAlwaysCalled: true,
                     controller: sample,
                     enabled: !busy,
                     minLines: 4,

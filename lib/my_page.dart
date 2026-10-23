@@ -77,7 +77,7 @@ class MyPage extends StatelessWidget {
                                   width: 56,
                                   height: 56,
                                   child: account?.avatar == null
-                                      ? const Icon(
+                                      ? const ArchiveIcon(
                                           CupertinoIcons.person_crop_circle,
                                           size: 40,
                                         )
@@ -90,10 +90,12 @@ class MyPage extends StatelessWidget {
                                                         context,
                                                       ))
                                                   .ceil(),
-                                          errorBuilder: (_, _, _) => const Icon(
-                                            CupertinoIcons.person_crop_circle,
-                                            size: 40,
-                                          ),
+                                          errorBuilder: (_, _, _) =>
+                                              const ArchiveIcon(
+                                                CupertinoIcons
+                                                    .person_crop_circle,
+                                                size: 40,
+                                              ),
                                         ),
                                 )
                               : Image.asset(
@@ -155,7 +157,10 @@ class MyPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Icon(CupertinoIcons.chevron_right, size: 14),
+                        const ArchiveIcon(
+                          CupertinoIcons.chevron_right,
+                          size: 14,
+                        ),
                       ],
                     ),
                   );

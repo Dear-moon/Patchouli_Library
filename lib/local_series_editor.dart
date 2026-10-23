@@ -270,6 +270,9 @@ class _LocalSeriesEditorState extends State<LocalSeriesEditor> {
                   const SizedBox(height: 8),
                   CupertinoTextField(
                     key: ValueKey('series-label-$id'),
+                    onTap: () => AppHaptics.play(context, HapticCue.selection),
+                    onSubmitted: (_) =>
+                        AppHaptics.play(context, HapticCue.action),
                     controller: _label(id),
                     enabled: !_busy,
                     maxLength: 160,
@@ -324,7 +327,10 @@ class _LocalSeriesEditorState extends State<LocalSeriesEditor> {
                       child: SizedBox(
                         width: 48,
                         height: 48,
-                        child: Icon(CupertinoIcons.line_horizontal_3, size: 19),
+                        child: ArchiveIcon(
+                          CupertinoIcons.line_horizontal_3,
+                          size: 19,
+                        ),
                       ),
                     ),
                   ),
@@ -338,7 +344,8 @@ class _LocalSeriesEditorState extends State<LocalSeriesEditor> {
   }
 
   void _move(int from, int to) {
-    if (_busy) return;
+    if (_busy || from == to) return;
+    AppHaptics.play(context, HapticCue.selection);
     setState(() => _order.insert(to, _order.removeAt(from)));
   }
 
@@ -411,6 +418,10 @@ class _LocalSeriesEditorState extends State<LocalSeriesEditor> {
                             const SizedBox(height: 9),
                             CupertinoTextField(
                               key: const ValueKey('series-title'),
+                              onTap: () =>
+                                  AppHaptics.play(context, HapticCue.selection),
+                              onSubmitted: (_) =>
+                                  AppHaptics.play(context, HapticCue.action),
                               controller: _title,
                               enabled: !_busy,
                               maxLength: 160,
@@ -447,6 +458,8 @@ class _LocalSeriesEditorState extends State<LocalSeriesEditor> {
                       sliver: SliverReorderableList(
                         itemCount: _order.length,
                         itemBuilder: _volume,
+                        onReorderStart: (_) =>
+                            AppHaptics.play(context, HapticCue.action),
                         onReorder: (from, to) =>
                             _move(from, to > from ? to - 1 : to),
                       ),
@@ -520,7 +533,7 @@ class _LocalSeriesEditorState extends State<LocalSeriesEditor> {
                                     }),
                               child: Row(
                                 children: [
-                                  const Icon(
+                                  const ArchiveIcon(
                                     CupertinoIcons.plus_circle,
                                     size: 20,
                                   ),

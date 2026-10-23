@@ -272,7 +272,7 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    Icon(
+                                    ArchiveIcon(
                                       chosen
                                           ? CupertinoIcons.checkmark_circle_fill
                                           : CupertinoIcons.circle,

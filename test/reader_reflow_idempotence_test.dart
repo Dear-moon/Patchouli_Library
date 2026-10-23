@@ -240,7 +240,13 @@ void main() {
           await tester.tapAt(const Offset(195, 422));
           await fixture.settleReader(tester);
           final hidden = signature();
-          expect(hidden, isNot(equals(visible)));
+          expect(
+            hidden,
+            mode.paginated ? isNot(equals(visible)) : equals(visible),
+            reason:
+                'Chrome reflow only changes paginated geometry; continuous '
+                'scrolling keeps the same viewport and source position.',
+          );
           await captureReview(
             tester,
             boundary,

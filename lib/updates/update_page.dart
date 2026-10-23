@@ -259,7 +259,8 @@ class _AppUpdateMonitorState extends State<AppUpdateMonitor>
       AppUpdatesScope(updates: widget.updates, child: widget.child);
 }
 
-class _AppUpdatePromptRoute extends PopupRoute<bool> {
+class _AppUpdatePromptRoute extends PopupRoute<bool>
+    with AppHapticModalBarrier<bool> {
   _AppUpdatePromptRoute({
     required this.release,
     required this.canDownload,
@@ -321,9 +322,10 @@ class _AppUpdatePromptRoute extends PopupRoute<bool> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(
+                                const ArchiveIcon(
                                   CupertinoIcons.arrow_up_circle,
                                   size: 28,
+                                  ambient: true,
                                 ),
                                 const SizedBox(height: 16),
                                 const AppText(

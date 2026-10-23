@@ -322,12 +322,11 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
       expanded: expanded,
       child: JellyTapSurface(
         key: ValueKey('reader-volume-${volume.key}'),
-        onTap: () {
-          if (_search.text.trim().isNotEmpty) return;
-          setState(() {
-            if (!_expanded.add(volume.key)) _expanded.remove(volume.key);
-          });
-        },
+        onTap: _search.text.trim().isNotEmpty
+            ? null
+            : () => setState(() {
+                if (!_expanded.add(volume.key)) _expanded.remove(volume.key);
+              }),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 18),
           child: Row(
@@ -347,7 +346,7 @@ class _ReaderCatalogueState extends State<ReaderCatalogue> {
                 style: const TextStyle(fontSize: 11),
               ),
               const SizedBox(width: 10),
-              Icon(
+              ArchiveIcon(
                 expanded
                     ? CupertinoIcons.chevron_down
                     : CupertinoIcons.chevron_right,

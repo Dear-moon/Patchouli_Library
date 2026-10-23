@@ -301,7 +301,7 @@ class _ReaderToolsState extends State<ReaderTools> {
             setState(() => _backgroundExpanded = !_backgroundExpanded),
         child: Row(
           children: [
-            const Icon(CupertinoIcons.photo, size: 20),
+            const ArchiveIcon(CupertinoIcons.photo, size: 20),
             const SizedBox(width: 12),
             const Expanded(
               child: AppText(
@@ -309,7 +309,7 @@ class _ReaderToolsState extends State<ReaderTools> {
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
               ),
             ),
-            Icon(
+            ArchiveIcon(
               _backgroundExpanded
                   ? CupertinoIcons.chevron_up
                   : CupertinoIcons.chevron_down,
@@ -333,67 +333,71 @@ class _ReaderToolsState extends State<ReaderTools> {
                   future: _backgrounds,
                   builder: (context, snapshot) => SizedBox(
                     height: 76,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: 1 + (snapshot.data?.length ?? 0),
-                      separatorBuilder: (_, _) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final id = index == 0
-                            ? null
-                            : snapshot.data![index - 1];
-                        return SizedBox(
-                          width: 64,
-                          child: GlassTextButton(
-                            key: ValueKey('reader-background-${id ?? 'plain'}'),
-                            selected: _readerPreferences.backgroundImage == id,
-                            onPressed: _backgroundBusy
-                                ? null
-                                : () => _preferences(
-                                    id == null
-                                        ? _readerPreferences.copyWith(
-                                            clearBackground: true,
-                                          )
-                                        : _readerPreferences.copyWith(
-                                            backgroundImage: id,
-                                          ),
-                                  ),
-                            child: id == null
-                                ? const AppText(
-                                    '纯色',
-                                    style: TextStyle(fontSize: 12),
-                                  )
-                                : FutureBuilder(
-                                    future: _backgroundFiles.putIfAbsent(
-                                      id,
-                                      () => widget.state.backgrounds.file(id),
+                    child: AppScrollHaptics(
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: 1 + (snapshot.data?.length ?? 0),
+                        separatorBuilder: (_, _) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final id = index == 0
+                              ? null
+                              : snapshot.data![index - 1];
+                          return SizedBox(
+                            width: 64,
+                            child: GlassTextButton(
+                              key: ValueKey(
+                                'reader-background-${id ?? 'plain'}',
+                              ),
+                              selected:
+                                  _readerPreferences.backgroundImage == id,
+                              onPressed: _backgroundBusy
+                                  ? null
+                                  : () => _preferences(
+                                      id == null
+                                          ? _readerPreferences.copyWith(
+                                              clearBackground: true,
+                                            )
+                                          : _readerPreferences.copyWith(
+                                              backgroundImage: id,
+                                            ),
                                     ),
-                                    builder: (context, file) =>
-                                        file.data == null
-                                        ? const Icon(
-                                            CupertinoIcons.photo,
-                                            size: 20,
-                                          )
-                                        : ClipRRect(
-                                            borderRadius: BorderRadius.circular(
-                                              6,
+                              child: id == null
+                                  ? const AppText(
+                                      '纯色',
+                                      style: TextStyle(fontSize: 12),
+                                    )
+                                  : FutureBuilder(
+                                      future: _backgroundFiles.putIfAbsent(
+                                        id,
+                                        () => widget.state.backgrounds.file(id),
+                                      ),
+                                      builder: (context, file) =>
+                                          file.data == null
+                                          ? const ArchiveIcon(
+                                              CupertinoIcons.photo,
+                                              size: 20,
+                                            )
+                                          : ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              child: Image.file(
+                                                file.data!,
+                                                width: 44,
+                                                height: 54,
+                                                fit: BoxFit.cover,
+                                                cacheWidth: 132,
+                                                errorBuilder: (_, _, _) =>
+                                                    const ArchiveIcon(
+                                                      CupertinoIcons.photo,
+                                                      size: 20,
+                                                    ),
+                                              ),
                                             ),
-                                            child: Image.file(
-                                              file.data!,
-                                              width: 44,
-                                              height: 54,
-                                              fit: BoxFit.cover,
-                                              cacheWidth: 132,
-                                              errorBuilder: (_, _, _) =>
-                                                  const Icon(
-                                                    CupertinoIcons.photo,
-                                                    size: 20,
-                                                  ),
-                                            ),
-                                          ),
-                                  ),
-                          ),
-                        );
-                      },
+                                    ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
@@ -833,7 +837,7 @@ class _ReaderToolsState extends State<ReaderTools> {
               ),
               child: Row(
                 children: [
-                  const Icon(CupertinoIcons.textformat, size: 20),
+                  const ArchiveIcon(CupertinoIcons.textformat, size: 20),
                   const SizedBox(width: 12),
                   const Expanded(
                     child: AppText(
@@ -845,7 +849,7 @@ class _ReaderToolsState extends State<ReaderTools> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(CupertinoIcons.chevron_forward, size: 14),
+                  const ArchiveIcon(CupertinoIcons.chevron_forward, size: 14),
                 ],
               ),
             ),
@@ -986,7 +990,7 @@ class _ReaderToolsState extends State<ReaderTools> {
                   const Expanded(
                     child: AppText('文字细节', style: TextStyle(fontSize: 14)),
                   ),
-                  Icon(
+                  ArchiveIcon(
                     _textDetails
                         ? CupertinoIcons.chevron_up
                         : CupertinoIcons.chevron_down,
@@ -1645,25 +1649,29 @@ class _ReaderValueSliderState extends State<ReaderValueSlider> {
   bool _dragging = false;
   bool _pointerCancelled = false;
   bool _previewChanged = false;
-  int? _detent;
-  final _hapticClock = Stopwatch()..start();
-  int _lastHaptic = -100;
   double get _unit => (widget.max - widget.min) / (widget.divisions ?? 20);
+  int _notch(double value) =>
+      ((value - widget.min) /
+              (widget.max - widget.min) *
+              (widget.hapticSteps ?? widget.divisions ?? 20))
+          .round();
 
   void _change(double value) {
     final next = value.clamp(widget.min, widget.max);
+    final previous = _draft;
+    final firstDragChange = _dragging && !_previewChanged;
     if (_dragging && next != _draft) _previewChanged = true;
     setState(() => _draft = next);
-    if (_dragging && widget.hapticSteps != null) {
-      final steps = widget.hapticSteps!;
-      final notch = ((next - widget.min) / (widget.max - widget.min) * steps)
-          .round();
-      if (_detent != notch &&
-          _hapticClock.elapsedMilliseconds - _lastHaptic >= 65) {
-        _lastHaptic = _hapticClock.elapsedMilliseconds;
-        unawaited(HapticFeedback.selectionClick());
-      }
-      _detent = notch;
+    // The reader owns both its explicit progress cadence and semantic steps;
+    // the glass adapter is muted so one changed value cannot pulse twice.
+    if (next != previous &&
+        (firstDragChange || !_dragging || _notch(next) != _notch(previous))) {
+      AppHaptics.play(
+        context,
+        next == widget.min || next == widget.max
+            ? HapticCue.boundary
+            : HapticCue.detent,
+      );
     }
     // Accessibility increments have no pointer drag/end callback.
     if (_dragging) {
@@ -1758,17 +1766,12 @@ class _ReaderValueSliderState extends State<ReaderValueSlider> {
                   min: widget.min,
                   max: widget.max,
                   divisions: widget.divisions,
+                  haptics: false,
                   onChanged: widget.onCommitted == null ? null : _change,
                   onChangeStart: (_) {
                     _pointerCancelled = false;
                     _dragging = true;
                     _previewChanged = false;
-                    _detent = widget.hapticSteps == null
-                        ? null
-                        : ((_draft - widget.min) /
-                                  (widget.max - widget.min) *
-                                  widget.hapticSteps!)
-                              .round();
                     widget.onInteractionChanged?.call(true);
                   },
                   onChangeEnd: (value) {

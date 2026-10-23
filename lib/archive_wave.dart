@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 import 'app_ui.dart';
 import 'app_palette.dart';
 import 'archive_scroll_simulation.dart';
@@ -48,7 +47,6 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
   bool _reduced = false;
   bool _hapticGesture = false;
   int? _lastDetent;
-  int _lastPulse = -1000;
   late final _entrance = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 520),
@@ -99,19 +97,22 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
     if (_active.value != lane) {
       _active.value = lane;
     }
-    // One light detent on entering a centre, not continuous vibration or one
-    // pulse per rendered frame. Flutter respects the system haptic preference.
-    final now =
-        SchedulerBinding.instance.currentSystemFrameTimeStamp.inMilliseconds;
-    if (_hapticGesture &&
-        widget.books.length > 1 &&
-        (_pose.logicalFocus - lane).abs() < .12 &&
-        lane != _lastDetent &&
-        now - _lastPulse >= 65) {
-      _lastDetent = lane;
-      _lastPulse = now;
-      unawaited(HapticFeedback.selectionClick());
-    }
+    if (!_hapticGesture || widget.books.length < 2) return;
+    // 0.4.6's click belonged to the approaching book centre, not to the
+    // halfway selection boundary. Detect the crossed centre interval too, so
+    // a fast frame cannot skip it. The last centre prevents reversal chatter.
+    final previous = _lastDetent ?? lane;
+    final focus = _pose.logicalFocus;
+    final crossed = focus > previous
+        ? (focus + .12).floor()
+        : focus < previous
+        ? (focus - .12).ceil()
+        : previous;
+    if (crossed == previous) return;
+    // Always consume crossings, even when frequency gating drops a fast tick.
+    // Never replay skipped books on release, snapping, or a later idle frame.
+    _lastDetent = crossed;
+    AppHaptics.play(context, HapticCue.shelfStep);
   }
 
   void _tap(int index) {
@@ -152,6 +153,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
       unawaited(_centre((_targetIndex ?? _active.value) + delta));
   void _open(int index) {
     if (widget.books.isEmpty) return;
+    AppHaptics.play(context, HapticCue.action);
     _finishEntrance();
     _command++;
     _targetIndex = null;
@@ -284,6 +286,9 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                           ),
                           child: JellyTapSurface(
                             key: const ValueKey('archive-shelf-open'),
+                            // Opening from the cover, caption, or semantics
+                            // uses the same committed-action feedback in _open.
+                            haptic: null,
                             onTap: () => _open(_pose.focus.round()),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -320,7 +325,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  const Icon(
+                                  const ArchiveIcon(
                                     CupertinoIcons.arrow_up_right,
                                     size: 20,
                                   ),
@@ -338,10 +343,11 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                       children: [
                         const Spacer(),
                         if (widget.books.length > 1) ...[
-                          IconButton(
+                          ArchiveIconButton(
                             tooltip: '上一份档案',
+                            haptic: null,
                             onPressed: () => _step(-1),
-                            icon: const Icon(
+                            icon: const ArchiveIcon(
                               CupertinoIcons.chevron_left,
                               size: 13,
                             ),
@@ -354,10 +360,11 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                               '${(index % widget.books.length + 1).toString().padLeft(2, '0')} / ${widget.books.length.toString().padLeft(2, '0')}',
                             ),
                           ),
-                          IconButton(
+                          ArchiveIconButton(
                             tooltip: '下一份档案',
+                            haptic: null,
                             onPressed: () => _step(1),
-                            icon: const Icon(
+                            icon: const ArchiveIcon(
                               CupertinoIcons.chevron_right,
                               size: 13,
                             ),
@@ -419,6 +426,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
             child: ink(
               ContentPanel(
                 key: ValueKey('archive-spine-$index'),
+                haptic: null,
                 radius: 0,
                 padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 9),
                 // Solid physical faces occlude other files; milk comes from shading,
@@ -439,7 +447,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                         child: Center(child: ArchiveSpineTitle(book.title)),
                       ),
                       const SizedBox(height: 6),
-                      Icon(
+                      ArchiveIcon(
                         CupertinoIcons.circle,
                         size: 6,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -457,6 +465,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
             child: ink(
               ContentPanel(
                 key: ValueKey('archive-cover-$index'),
+                haptic: null,
                 radius: 0,
                 padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
                 backgroundColor: dark
@@ -524,6 +533,7 @@ class _FlatArchiveCarousel extends StatefulWidget {
 
 class _FlatArchiveCarouselState extends State<_FlatArchiveCarousel> {
   final _heroSource = Object();
+  bool _userPaging = false;
   late final _start = widget.books.length * 10000;
   late final _pages = PageController(
     initialPage: _start,
@@ -543,86 +553,102 @@ class _FlatArchiveCarouselState extends State<_FlatArchiveCarousel> {
     child: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 440),
-        child: PageView.builder(
-          controller: _pages,
-          physics: widget.books.length == 1
-              ? const NeverScrollableScrollPhysics()
-              : null,
-          itemBuilder: (context, index) {
-            final book = widget.books[index % widget.books.length];
-            final tag = (_heroSource, index, book.id);
-            return Semantics(
-              label: '${book.title}，${book.author}',
-              button: true,
-              child: GestureDetector(
-                onTap: () => widget.onOpen(book, tag),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Center(
-                          child: FittedBox(
-                            fit: BoxFit.contain,
-                            child: Stack(
-                              children: [
-                                NovelCover(
-                                  book,
-                                  width: 154,
-                                  height: 220,
-                                  heroTag: tag,
-                                ),
-                                if (widget.sourceLabel?.call(book)
-                                    case final label?)
-                                  Positioned(
-                                    top: 5,
-                                    right: 5,
-                                    child: BookSourceBadge(label),
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification is ScrollStartNotification &&
+                notification.dragDetails != null) {
+              _userPaging = true;
+            } else if (notification is ScrollEndNotification) {
+              _userPaging = false;
+            }
+            return false;
+          },
+          child: PageView.builder(
+            controller: _pages,
+            onPageChanged: (_) {
+              if (_userPaging) AppHaptics.play(context, HapticCue.shelfStep);
+            },
+            physics: widget.books.length == 1
+                ? const NeverScrollableScrollPhysics()
+                : null,
+            itemBuilder: (context, index) {
+              final book = widget.books[index % widget.books.length];
+              final tag = (_heroSource, index, book.id);
+              return Semantics(
+                label: '${book.title}，${book.author}',
+                button: true,
+                child: JellyTapSurface(
+                  onTap: () {
+                    widget.onOpen(book, tag);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Center(
+                            child: FittedBox(
+                              fit: BoxFit.contain,
+                              child: Stack(
+                                children: [
+                                  NovelCover(
+                                    book,
+                                    width: 154,
+                                    height: 220,
+                                    heroTag: tag,
                                   ),
+                                  if (widget.sourceLabel?.call(book)
+                                      case final label?)
+                                    Positioned(
+                                      top: 5,
+                                      right: 5,
+                                      child: BookSourceBadge(label),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Center(
+                          child: SizedBox(
+                            width: 154,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                AppText(
+                                  book.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                AppText(
+                                  book.author,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Center(
-                        child: SizedBox(
-                          width: 154,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              AppText(
-                                book.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.4,
-                                ),
-                              ),
-                              AppText(
-                                book.author,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
+                        const SizedBox(height: 8),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     ),
@@ -1214,7 +1240,6 @@ class ArchiveBoxDepthRender extends RenderBox
   ) {
     _capTap = TapGestureRecognizer(debugOwner: this)
       ..onTap = () {
-        HapticFeedback.selectionClick();
         _onTap();
       };
   }

@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
 import 'app_ui.dart';
 import 'app_search_field.dart';
 import 'catalog.dart';
@@ -129,9 +128,9 @@ class _DiscoveryFiltersState extends State<DiscoveryFilters> {
               hint: '搜索或添加标签',
               onChanged: (_) => setState(() {}),
               onSubmitted: addTags,
-              trailing: IconButton(
+              trailing: ArchiveIconButton(
                 tooltip: appText(context, '加入标签'),
-                icon: const Icon(CupertinoIcons.plus, size: 18),
+                icon: const ArchiveIcon(CupertinoIcons.plus, size: 18),
                 onPressed: query.text.trim().isEmpty
                     ? null
                     : () => addTags(query.text),

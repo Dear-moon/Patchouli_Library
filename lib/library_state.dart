@@ -12,6 +12,7 @@ import 'reader_preferences.dart';
 import 'reader_book_style.dart';
 import 'library_backup.dart';
 import 'performance_preferences.dart';
+import 'haptic_preferences.dart';
 import 'app_typography.dart';
 import 'font_catalog.dart';
 import 'app_language.dart';
@@ -328,6 +329,11 @@ class LibraryState extends ChangeNotifier {
     );
     _lineHeight = preference('readerLineHeight', 1.72, 1.3, 2.2);
     _reduceMotion = _prefs.get('reduceMotion') == true;
+    _haptics = HapticPreferences.fromRecords({
+      HapticPreferences.preferenceKey: _prefs.get(
+        HapticPreferences.preferenceKey,
+      ),
+    });
     _appTypeface = AppTypeface.fromRecord(_prefs.get('appTypeface'));
     final custom = _prefs.get('appCustomFont');
     _appCustomFont =
@@ -574,6 +580,7 @@ class LibraryState extends ChangeNotifier {
   double _fontSize = 19;
   double _lineHeight = 1.72;
   bool _reduceMotion = false;
+  HapticPreferences _haptics = const HapticPreferences();
   AppTypeface _appTypeface = AppTypeface.system;
   String? _appCustomFont;
   String _readerTypeface = followAppFont;
@@ -775,6 +782,7 @@ class LibraryState extends ChangeNotifier {
   double get lineHeight => _lineHeight;
   int get debugMetadataEncodeCount => _metadataEncodes;
   bool get reduceMotion => _reduceMotion;
+  HapticPreferences get haptics => _haptics;
   AppTypeface get appTypeface => _appTypeface;
   String get appFontChoice => _appCustomFont ?? _appTypeface.name;
   String get appFontId =>
@@ -2129,6 +2137,22 @@ class LibraryState extends ChangeNotifier {
     }
   }
 
+  /// Persist before notifying so failed writes never change the active pulses.
+  Future<void> setHaptics(HapticPreferences value) async {
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then((_) => setHaptics(value));
+    }
+    await _queuePositionWrite(() async {
+      if (_haptics == value) return;
+      await _commitLibraryRecords(value.toRecords());
+      _haptics = value;
+      if (!_disposed) {
+        _application.notifyListeners();
+        _settings.notifyListeners();
+      }
+    });
+  }
+
   Future<void> setPerformance(PerformancePreferences value) async {
     if (_restoreBarrier case final barrier?) {
       return barrier.future.then((_) => setPerformance(value));
@@ -2224,6 +2248,7 @@ class LibraryState extends ChangeNotifier {
     'appLanguage': language.name,
     'readerLineHeight': _lineHeight,
     'reduceMotion': _reduceMotion,
+    ..._haptics.toRecords(),
     'appTypeface': _appTypeface.name,
     'appCustomFont': _appCustomFont ?? '',
     'readerTypeface': _readerTypeface,
@@ -2550,6 +2575,9 @@ class LibraryState extends ChangeNotifier {
           }
           if (records['reduceMotion'] case final bool value) {
             _reduceMotion = value;
+          }
+          if (records.containsKey(HapticPreferences.preferenceKey)) {
+            _haptics = HapticPreferences.fromRecords(records);
           }
           if (records['appTypeface'] case final String value) {
             _appTypeface = AppTypeface.fromRecord(value);

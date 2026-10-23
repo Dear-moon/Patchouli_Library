@@ -70,6 +70,43 @@ void main({Future<void> Function(WidgetTester, GlobalKey, String)? capture}) {
     await tester.pump();
   }
 
+  for (final reflow in [true, false]) {
+    testWidgets(
+      'scroll geometry and prose do not move when chrome toggles with reflow $reflow',
+      (tester) async {
+        await state.setReaderPreferences(
+          state.readerPreferences.copyWith(reflowOnChrome: reflow),
+          persist: false,
+        );
+        await mount(tester);
+        scroll(tester).position.jumpTo(4500);
+        await tester.pumpAndSettle();
+        final pixels = scroll(tester).position.pixels;
+        final viewport = find.byKey(
+          const ValueKey('reader-scroll-safe-viewport'),
+        );
+        final viewportRect = tester.getRect(viewport);
+        final paragraph = find.byKey(
+          tester
+              .widget<ReaderParagraph>(find.byType(ReaderParagraph).first)
+              .key!,
+        );
+        final element = tester.element(paragraph);
+        final paragraphRect = tester.getRect(paragraph);
+        for (var turn = 0; turn < 6; turn++) {
+          await tester.tapAt(const Offset(210, 280));
+          await tester.pumpAndSettle();
+          expect(tester.getRect(viewport), viewportRect);
+          expect(scroll(tester).position.pixels, pixels);
+          expect(tester.element(paragraph), same(element));
+          expect(tester.getRect(paragraph), paragraphRect);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final brightness in [Brightness.light, Brightness.dark]) {
     testWidgets(
       '120 drag/reversal frames keep exact finger deltas with hidden ${brightness.name} blur',

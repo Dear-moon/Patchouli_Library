@@ -33,7 +33,7 @@ class LibraryToolbar extends StatelessWidget {
           onPressed: onCategory,
           child: Row(
             children: [
-              const Icon(CupertinoIcons.folder, size: 16),
+              const ArchiveIcon(CupertinoIcons.folder, size: 16),
               const SizedBox(width: 8),
               Expanded(
                 child: AppText(
@@ -44,7 +44,7 @@ class LibraryToolbar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              const Icon(CupertinoIcons.chevron_down, size: 11),
+              const ArchiveIcon(CupertinoIcons.chevron_down, size: 11),
             ],
           ),
         ),

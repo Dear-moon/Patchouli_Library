@@ -333,7 +333,7 @@ class _LocalScanPageState extends State<LocalScanPage> {
                           style: TextStyle(fontSize: 13),
                         ),
                       ),
-                      Icon(
+                      ArchiveIcon(
                         _showFormats
                             ? CupertinoIcons.chevron_up
                             : CupertinoIcons.chevron_down,
