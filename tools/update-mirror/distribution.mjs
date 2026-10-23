@@ -6,8 +6,9 @@ export const APPROVED_RELEASES = Object.freeze({
   'v0.4.5': [662506455, 662506464, 662506466],
   'v0.4.6': [664348565, 664348569, 664348567],
   'v0.4.7': [666639833, 666639832, 666639835],
+  'v0.4.8': [668575508, 668575503, 668575505],
 });
-export const CACHE_NAMESPACE = 'distribution-0.4.7-183';
+export const CACHE_NAMESPACE = 'distribution-0.4.8-192';
 
 export function approvedTag(tag, policy = APPROVED_RELEASES) {
   const version = /^v?(\d+)\.(\d+)\.(\d+)(?:\+\d+)?$/.exec(tag);
