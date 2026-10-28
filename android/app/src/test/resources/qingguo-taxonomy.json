@@ -1,0 +1,484 @@
+{
+  "tabs": [
+    {
+      "groups": [
+        {
+          "title": "热门标签",
+          "sections": [
+            {
+              "tag_items": [
+                {
+                  "title": "最近更新",
+                  "filter_payload": {
+                    "q": "最近更新"
+                  }
+                },
+                {
+                  "title": "WEB",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "WEB"
+                  }
+                },
+                {
+                  "title": "文库",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "文库"
+                  }
+                },
+                {
+                  "title": "异世界",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "异世界"
+                  }
+                },
+                {
+                  "title": "校园",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "校园"
+                  }
+                },
+                {
+                  "title": "恋爱",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "恋爱"
+                  }
+                },
+                {
+                  "title": "青春",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "青春"
+                  }
+                },
+                {
+                  "title": "日常",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "日常"
+                  }
+                },
+                {
+                  "title": "百合",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "百合"
+                  }
+                },
+                {
+                  "title": "后宫",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "后宫"
+                  }
+                },
+                {
+                  "title": "搞笑",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "搞笑"
+                  }
+                },
+                {
+                  "title": "恋爱喜剧",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "恋爱喜剧"
+                  }
+                },
+                {
+                  "title": "悬疑",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "悬疑"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "主题",
+          "sections": [
+            {
+              "tag_items": [
+                {
+                  "title": "学园",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "学园"
+                  }
+                },
+                {
+                  "title": "治愈",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "治愈"
+                  }
+                },
+                {
+                  "title": "推理",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "推理"
+                  }
+                },
+                {
+                  "title": "黑暗",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "黑暗"
+                  }
+                },
+                {
+                  "title": "奇幻",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "奇幻"
+                  }
+                },
+                {
+                  "title": "科幻",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "科幻"
+                  }
+                },
+                {
+                  "title": "冒险",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "冒险"
+                  }
+                },
+                {
+                  "title": "转生",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "转生"
+                  }
+                },
+                {
+                  "title": "地下城",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "地下城"
+                  }
+                },
+                {
+                  "title": "时空",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "时空"
+                  }
+                },
+                {
+                  "title": "魔法",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "魔法"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "角色",
+          "sections": [
+            {
+              "tag_items": [
+                {
+                  "title": "青梅竹马",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "青梅竹马"
+                  }
+                },
+                {
+                  "title": "精灵",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "精灵"
+                  }
+                },
+                {
+                  "title": "学姐",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "学姐"
+                  }
+                },
+                {
+                  "title": "勇者",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "勇者"
+                  }
+                },
+                {
+                  "title": "魔王",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "魔王"
+                  }
+                },
+                {
+                  "title": "圣女",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "圣女"
+                  }
+                },
+                {
+                  "title": "恶役千金",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "恶役千金"
+                  }
+                },
+                {
+                  "title": "反派千金",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "反派千金"
+                  }
+                },
+                {
+                  "title": "双胞胎",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "双胞胎"
+                  }
+                },
+                {
+                  "title": "奴隶少女",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "奴隶少女"
+                  }
+                },
+                {
+                  "title": "女勇者",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "女勇者"
+                  }
+                },
+                {
+                  "title": "魔女",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "魔女"
+                  }
+                },
+                {
+                  "title": "皇帝",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "皇帝"
+                  }
+                },
+                {
+                  "title": "前女友",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "前女友"
+                  }
+                },
+                {
+                  "title": "公主",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "公主"
+                  }
+                },
+                {
+                  "title": "美少女",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "美少女"
+                  }
+                },
+                {
+                  "title": "义妹",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "义妹"
+                  }
+                },
+                {
+                  "title": "妹妹",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "妹妹"
+                  }
+                },
+                {
+                  "title": "女装",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "女装"
+                  }
+                },
+                {
+                  "title": "loli",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "loli"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "情节",
+          "sections": [
+            {
+              "tag_items": [
+                {
+                  "title": "复仇",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "复仇"
+                  }
+                },
+                {
+                  "title": "穿越",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "穿越"
+                  }
+                },
+                {
+                  "title": "召唤",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "召唤"
+                  }
+                },
+                {
+                  "title": "游戏世界",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "游戏世界"
+                  }
+                },
+                {
+                  "title": "放逐",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "放逐"
+                  }
+                },
+                {
+                  "title": "同居",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "同居"
+                  }
+                },
+                {
+                  "title": "退队",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "退队"
+                  }
+                },
+                {
+                  "title": "后宫展开",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "后宫展开"
+                  }
+                },
+                {
+                  "title": "校园恋爱",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "校园恋爱"
+                  }
+                },
+                {
+                  "title": "赌命游戏",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "赌命游戏"
+                  }
+                },
+                {
+                  "title": "讨伐魔王",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "讨伐魔王"
+                  }
+                },
+                {
+                  "title": "悠闲生活",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "悠闲生活"
+                  }
+                },
+                {
+                  "title": "婚约",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "婚约"
+                  }
+                },
+                {
+                  "title": "队伍驱逐",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "队伍驱逐"
+                  }
+                },
+                {
+                  "title": "结婚",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "结婚"
+                  }
+                },
+                {
+                  "title": "病娇",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "病娇"
+                  }
+                },
+                {
+                  "title": "校园喜剧",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "校园喜剧"
+                  }
+                },
+                {
+                  "title": "迷惑系",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "迷惑系"
+                  }
+                },
+                {
+                  "title": "怪谈",
+                  "filter_payload": {
+                    "q": "",
+                    "primary_tag": "怪谈"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

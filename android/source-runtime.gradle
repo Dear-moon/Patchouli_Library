@@ -1,0 +1,34 @@
+// JNI plugins need explicit namespaces with AGP 8; all plugins share the installed NDK.
+subprojects { project ->
+    ['com.android.application', 'com.android.library'].each { pluginId ->
+        project.plugins.withId(pluginId) {
+            project.extensions.getByName('androidComponents').finalizeDsl { android ->
+                android.ndkVersion = "29.0.14206865"
+                if (['jni', 'jni_flutter'].contains(project.name)) {
+                    android.namespace = project.group.toString()
+                }
+            }
+        }
+    }
+}
+subprojects { project ->
+    project.plugins.withId('com.android.application') {
+        project.tasks.withType(org.gradle.api.tasks.compile.JavaCompile).configureEach { task ->
+            if (task.name == 'compileReleaseJavaWithJavac') {
+                task.doFirst {
+                    def registrant = project.file('src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java')
+                    def generated = registrant.getText('UTF-8')
+                    def devRegistration = /(?ms)^    try \{\r?\n      flutterEngine\.getPlugins\(\)\.add\(new dev\.flutter\.plugins\.integration_test\.IntegrationTestPlugin\(\)\);\r?\n    \} catch \(Exception e\) \{\r?\n      Log\.e\(TAG, "Error registering plugin integration_test, dev\.flutter\.plugins\.integration_test\.IntegrationTestPlugin", e\);\r?\n    \}\r?\n/
+                    def releaseOnly = generated.replaceAll(devRegistration, '')
+                    if (releaseOnly.contains('IntegrationTestPlugin')) {
+                        throw new GradleException('Unexpected test registration in the generated release registrant.')
+                    }
+                    if (releaseOnly != generated) {
+                        registrant.setText(releaseOnly, 'UTF-8')
+                        project.logger.lifecycle('Excluded integration_test from the generated release registrant')
+                    }
+                }
+            }
+        }
+    }
+}

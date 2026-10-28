@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="root" path="app_webview" />
+    <exclude domain="file" path="wenku8-offline-v1" />
+    <exclude domain="file" path="wenku8-illustrations-v1" />
+    <exclude domain="file" path="book-source-images-v1" />
+    <exclude domain="file" path="custom-sources-v1" />
+    <exclude domain="root" path="app_webview_book_sources" />
+    <exclude domain="sharedpref" path="book_source_sessions.xml" />
+    <exclude domain="sharedpref" path="wenku_account_session.xml" />
+    <exclude domain="sharedpref" path="wenku_web_session.xml" />
+    <exclude domain="sharedpref" path="wenku_official_identity.xml" />
+    <exclude domain="sharedpref" path="book_scan_folders.xml" />
+    <exclude domain="sharedpref" path="cloud_sources_secure.xml" />
+    <exclude domain="sharedpref" path="custom_speech_secure.xml" />
+    <exclude domain="sharedpref" path="lan_reading_secure.xml" />
+</full-backup-content>
