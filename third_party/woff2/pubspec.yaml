@@ -1,0 +1,8 @@
+name: woff2
+version: 0.1.0
+description: WOFF2 to SFNT decoder with portable Brotli decompression.
+publish_to: none
+environment:
+  sdk: ^3.8.0
+dependencies:
+  brotli: 0.6.0
