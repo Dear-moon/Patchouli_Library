@@ -15,6 +15,8 @@ class ReaderHandoffNavigation extends NavigatorObserver with ChangeNotifier {
   final _routes = <Route<dynamic>>[];
   final _targets = <Route<dynamic>, _ReaderTarget>{};
   bool _disposed = false, _queued = false;
+  bool get hasReader =>
+      _routes.any((route) => route.isActive && _targets.containsKey(route));
   int? get currentBookId {
     final page = _routes.reversed.whereType<PageRoute<dynamic>>().firstOrNull;
     return _targets[page]?.bookId;
@@ -52,6 +54,7 @@ class ReaderHandoffNavigation extends NavigatorObserver with ChangeNotifier {
     required ReadingPosition position,
     required Widget page,
     required bool reduceMotion,
+    bool reuseCurrentReader = true,
   }) async {
     final nav = navigator;
     if (nav == null || !nav.mounted) {
@@ -73,7 +76,9 @@ class ReaderHandoffNavigation extends NavigatorObserver with ChangeNotifier {
       if (!nav.mounted || !old.isActive || !identical(_targets[old], target)) {
         throw const FormatException('书页已关闭，请再点一次继续阅读');
       }
-      if (target.bookId == bookId) {
+      // An online handoff validated a fresh catalogue/body. Do not keep an
+      // already-open reader's stale chapter indices or in-memory body cache.
+      if (reuseCurrentReader && target.bookId == bookId) {
         target.resume(position);
         return;
       }

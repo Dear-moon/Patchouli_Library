@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'languages.dart';
+import 'enhancement.dart';
 
 /// Speech preferences/cursors are separate from reading anchors and existing backup schema.
 class ListeningStore {
@@ -38,6 +39,31 @@ class ListeningStore {
     listeningMaximumSpeed,
   );
   bool get follow => preferences.getBool('listening.follow.v1') ?? true;
+  int get paragraphGapMs => normalizeListeningParagraphGap(
+    preferences.getInt('listening.paragraphGapMs.v1') ?? 0,
+  );
+
+  /// Enhancement preferences do not alter voice caches or reading backups.
+  ListeningEnhancementPreference get enhancement {
+    try {
+      final raw = preferences.getString('listening.enhancement.v1');
+      if (raw != null) {
+        final value = jsonDecode(raw);
+        if (value is Map) return ListeningEnhancementPreference.fromJson(value);
+      }
+    } catch (_) {
+      // A damaged optional gain preference must leave ordinary playback usable.
+    }
+    return const ListeningEnhancementPreference();
+  }
+
+  Future<void> saveEnhancement(ListeningEnhancementPreference value) => _write(
+    () => preferences.setString(
+      'listening.enhancement.v1',
+      jsonEncode(value.toJson()),
+    ),
+    '声音增强设置保存失败',
+  );
   String? spokenLanguage(int novelId) {
     final code = speechLanguageCode(
       preferences.getString('listening.language.v1.$novelId') ?? '',
@@ -134,6 +160,13 @@ class ListeningStore {
   Future<void> saveFollow(bool value) => _write(
     () => preferences.setBool('listening.follow.v1', value),
     '跟读设置保存失败',
+  );
+  Future<void> saveParagraphGap(int value) => _write(
+    () => preferences.setInt(
+      'listening.paragraphGapMs.v1',
+      normalizeListeningParagraphGap(value),
+    ),
+    '段落间隔保存失败',
   );
   ListeningCursor? cursor(int novelId) {
     try {

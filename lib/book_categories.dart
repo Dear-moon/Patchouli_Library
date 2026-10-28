@@ -13,6 +13,7 @@ Future<void> showBookCategories(
   bool shelf = false,
   bool reduceMotion = false,
   Iterable<Novel> books = const [],
+  int unknownAuthorCount = 0,
 }) async {
   final selected = shelf ? organization.shelfSelected : organization.selected;
   final result = await showJellySheet<String>(
@@ -86,6 +87,9 @@ Future<void> showBookCategories(
       for (final book in books) {
         final author = LocalLibraryPreferences.authorName(book.author);
         counts[author] = (counts[author] ?? 0) + 1;
+      }
+      if (unknownAuthorCount > 0) {
+        counts['未知作者'] = (counts['未知作者'] ?? 0) + unknownAuthorCount;
       }
       final authors = counts.keys.toList()..sort();
       final category = await showJellySheet<String>(

@@ -75,9 +75,9 @@ class CloudLibraryPage extends StatelessWidget {
                     children: [
                       Expanded(
                         child: AppText(
-                          kind == CloudSourceKind.webdav
-                              ? 'OpenList / WebDAV'
-                              : '夸克网盘 · 实验性',
+                          kind == CloudSourceKind.quark
+                              ? '夸克网盘 · 实验性'
+                              : kind.label,
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -85,7 +85,7 @@ class CloudLibraryPage extends StatelessWidget {
                         ),
                       ),
                       ArchiveIcon(
-                        kind == CloudSourceKind.webdav
+                        kind != CloudSourceKind.quark
                             ? CupertinoIcons.cloud
                             : CupertinoIcons.folder,
                         size: 22,
@@ -93,16 +93,17 @@ class CloudLibraryPage extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 10),
-                  AppText(
-                    kind == CloudSourceKind.webdav
-                        ? '连接 OpenList、AList、NAS 或其他 WebDAV 服务。百度网盘等可先在 OpenList 挂载。'
-                        : '使用本人网页 Cookie 直连，无需另搭服务。接口变化或登录失效时需要重新配置。',
-                    style: const TextStyle(fontSize: 13, height: 1.65),
-                  ),
+                  AppText(switch (kind) {
+                    CloudSourceKind.webdav =>
+                      '连接 OpenList、AList、NAS 或其他 WebDAV 服务。百度网盘等可先在 OpenList 挂载。',
+                    CloudSourceKind.quark =>
+                      '使用本人网页 Cookie 直连，无需另搭服务。接口变化或登录失效时需要重新配置。',
+                    CloudSourceKind.s3 => '连接 Amazon S3 或 S3 兼容存储，按文件夹浏览并导入书籍。',
+                  }, style: const TextStyle(fontSize: 13, height: 1.65)),
                   const SizedBox(height: 12),
                   if (settings[kind] case final config?) ...[
                     AppText(
-                      kind == CloudSourceKind.webdav
+                      kind != CloudSourceKind.quark
                           ? config.endpoint.host
                           : '已保存本机连接',
                       style: TextStyle(
@@ -144,9 +145,11 @@ class CloudLibraryPage extends StatelessWidget {
                     GlassPillButton(
                       key: ValueKey('cloud-add-${kind.name}'),
                       icon: CupertinoIcons.plus,
-                      label: kind == CloudSourceKind.webdav
-                          ? '添加 WebDAV 连接'
-                          : '配置夸克 Cookie',
+                      label: switch (kind) {
+                        CloudSourceKind.webdav => '添加 WebDAV 连接',
+                        CloudSourceKind.quark => '配置夸克 Cookie',
+                        CloudSourceKind.s3 => '添加 S3 连接',
+                      },
                       onPressed: () => _edit(context, kind),
                     ),
                 ],
@@ -165,9 +168,11 @@ class CloudConnectionPage extends StatefulWidget {
     super.key,
     required this.settings,
     required this.kind,
-  });
+    this.syncConnection = false,
+  }) : assert(!syncConnection || kind == CloudSourceKind.s3);
   final CloudSourceSettings settings;
   final CloudSourceKind kind;
+  final bool syncConnection;
   @override
   State<CloudConnectionPage> createState() => _CloudConnectionPageState();
 }
@@ -177,24 +182,47 @@ class _CloudConnectionPageState extends State<CloudConnectionPage> {
       _user = TextEditingController(),
       _password = TextEditingController(),
       _cookie = TextEditingController();
+  final _bucket = TextEditingController(),
+      _region = TextEditingController(),
+      _prefix = TextEditingController(),
+      _token = TextEditingController(),
+      _syncPath = TextEditingController();
+  bool _pathStyle = true;
   bool _http = false, _busy = false;
   String? _error;
   CloudBookClient? _testing;
   @override
   void initState() {
     super.initState();
-    final config = widget.settings[widget.kind];
+    final savedSync = widget.syncConnection ? widget.settings.s3Sync : null;
+    final config = savedSync?.config ?? widget.settings[widget.kind];
     _address.text = config?.address ?? '';
     _user.text = config?.username ?? '';
     _password.text = config?.password ?? '';
     _cookie.text = config?.cookie ?? '';
     _http = config?.allowHttp ?? false;
+    _bucket.text = config?.bucket ?? '';
+    _region.text = config?.region ?? 'us-east-1';
+    _prefix.text = config?.prefix ?? '';
+    _token.text = config?.sessionToken ?? '';
+    _pathStyle = config?.pathStyle ?? true;
+    _syncPath.text = savedSync?.path ?? 'wenku8/library.wenku8sync';
   }
 
   @override
   void dispose() {
     _testing?.close();
-    for (final c in [_address, _user, _password, _cookie]) {
+    for (final c in [
+      _address,
+      _user,
+      _password,
+      _cookie,
+      _bucket,
+      _region,
+      _prefix,
+      _token,
+      _syncPath,
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -214,8 +242,23 @@ class _CloudConnectionPageState extends State<CloudConnectionPage> {
         password: _password.text,
         cookie: _cookie.text.trim(),
         allowHttp: _http,
+        bucket: _bucket.text.trim(),
+        region: _region.text.trim(),
+        prefix: _prefix.text.trim(),
+        sessionToken: _token.text.trim(),
+        pathStyle: _pathStyle,
       );
       config.validate();
+      if (widget.syncConnection) {
+        final connection = S3SyncConnection(
+          config: config,
+          path: _syncPath.text.trim(),
+        );
+        connection.validate();
+        await widget.settings.saveS3Sync(connection);
+        if (mounted) Navigator.pop(context, config);
+        return;
+      }
       final client = _testing = CloudBookClient(config);
       await client.list(client.root);
       if (client is QuarkBookClient) config = client.config;
@@ -235,6 +278,7 @@ class _CloudConnectionPageState extends State<CloudConnectionPage> {
     String label,
     TextEditingController controller, {
     String? hint,
+    String? helper,
     bool secret = false,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 20),
@@ -268,79 +312,180 @@ class _CloudConnectionPageState extends State<CloudConnectionPage> {
             borderRadius: BorderRadius.circular(ArchiveDesign.panelRadius),
           ),
         ),
+        if (helper != null) ...[
+          const SizedBox(height: 7),
+          AppText(
+            helper,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     ),
   );
   @override
   Widget build(BuildContext context) => _CloudScaffold(
-    title: widget.kind == CloudSourceKind.webdav ? '连接 WebDAV' : '连接夸克网盘',
-    code: 'LOCAL / CONNECTION',
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (widget.kind == CloudSourceKind.webdav) ...[
-          const AppText(
-            'OpenList 地址一般以 /dav/ 结尾。账号需要 WebDAV 读取权限。',
-            style: TextStyle(height: 1.65),
-          ),
-          const SizedBox(height: 24),
-          _field('WebDAV 地址', _address, hint: 'https://你的域名/dav/'),
-          _field('用户名', _user),
-          _field('密码', _password, secret: true),
-          Row(
-            children: [
-              const Expanded(child: AppText('允许 HTTP 连接')),
-              AppControls.toggle(
-                context,
-                value: _http,
-                onChanged: _busy ? null : (v) => setState(() => _http = v),
+    title: widget.syncConnection
+        ? 'S3 云端同步'
+        : '连接 ${widget.kind == CloudSourceKind.webdav
+              ? 'WebDAV'
+              : widget.kind == CloudSourceKind.s3
+              ? 'S3'
+              : '夸克网盘'}',
+    code: widget.syncConnection ? 'LIBRARY / S3 SYNC' : 'LOCAL / CONNECTION',
+    child: Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.kind == CloudSourceKind.webdav) ...[
+              const AppText(
+                'OpenList 地址一般以 /dav/ 结尾。账号需要 WebDAV 读取权限。',
+                style: TextStyle(height: 1.65),
+              ),
+              const SizedBox(height: 24),
+              _field('WebDAV 地址', _address, hint: 'https://你的域名/dav/'),
+              _field('用户名', _user),
+              _field('密码', _password, secret: true),
+              Row(
+                children: [
+                  const Expanded(child: AppText('允许 HTTP 连接')),
+                  AppControls.toggle(
+                    context,
+                    value: _http,
+                    onChanged: _busy ? null : (v) => setState(() => _http = v),
+                  ),
+                ],
+              ),
+              AnimatedOptionSection(
+                expanded: _http,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: AppText(
+                    'HTTP 不加密传输账号和书籍，仅在可信局域网中使用。',
+                    style: TextStyle(height: 1.6),
+                  ),
+                ),
+              ),
+            ] else if (widget.kind == CloudSourceKind.s3) ...[
+              AppText(
+                widget.syncConnection
+                    ? '两台设备填写相同的桶与同步文件路径。同步需要读取、写入此文件的权限，只有点按「立即同步」才会传输。'
+                    : '填写存储服务的 Endpoint 和桶名。连接只需列目录、读取对象的权限。',
+                style: const TextStyle(height: 1.65),
+              ),
+              const SizedBox(height: 24),
+              _field(
+                'Endpoint 地址',
+                _address,
+                hint: 'https://s3.us-east-1.amazonaws.com',
+              ),
+              _field('存储桶 Bucket', _bucket),
+              _field('区域 Region', _region, hint: 'us-east-1'),
+              _field('Access Key ID', _user),
+              _field('Secret Access Key', _password, secret: true),
+              _field('目录前缀（可选）', _prefix, hint: 'books/'),
+              if (widget.syncConnection)
+                _field(
+                  '同步文件路径',
+                  _syncPath,
+                  hint: 'wenku8/library.wenku8sync',
+                  helper: '位于目录前缀内；使用独立的 .wenku8sync 文件。',
+                ),
+              _field('Session Token（可选）', _token, secret: true),
+              Row(
+                children: [
+                  const Expanded(child: AppText('路径式寻址')),
+                  AppControls.toggle(
+                    context,
+                    value: _pathStyle,
+                    onChanged: _busy
+                        ? null
+                        : (v) => setState(() => _pathStyle = v),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Expanded(child: AppText('允许 HTTP 连接')),
+                  AppControls.toggle(
+                    context,
+                    value: _http,
+                    onChanged: _busy ? null : (v) => setState(() => _http = v),
+                  ),
+                ],
+              ),
+              AnimatedOptionSection(
+                expanded: _http,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: AppText(
+                    'HTTP 不加密传输连接信息和书籍，仅在可信局域网中使用。',
+                    style: TextStyle(height: 1.6),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const AppText(
+                '凭据只保存在本机加密存储，不写入阅读备份。',
+                style: TextStyle(fontSize: 12, height: 1.6),
+              ),
+            ] else ...[
+              const AppText(
+                '在电脑登录 pan.quark.cn，打开开发者工具的「网络」，复制网盘请求中的 Cookie 请求头。只填写 Cookie 的值。',
+                style: TextStyle(height: 1.7),
+              ),
+              const SizedBox(height: 24),
+              _field(
+                'Cookie',
+                _cookie,
+                hint: '__pus=…; __puus=…',
+                secret: true,
+              ),
+              const AppText(
+                '登录凭据仅加密保存在这台设备。导入只读取文件，不移动或删除网盘内容。',
+                style: TextStyle(height: 1.65),
               ),
             ],
-          ),
-          AnimatedOptionSection(
-            expanded: _http,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: AppText(
-                'HTTP 不加密传输账号和书籍，仅在可信局域网中使用。',
-                style: TextStyle(height: 1.6),
+            const SizedBox(height: 20),
+            if (_busy)
+              BookRowSkeleton(
+                label: widget.syncConnection ? '正在保存同步连接' : '正在检查目录读取权限',
               ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: AppText(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            GlassPillButton(
+              key: const ValueKey('cloud-connect'),
+              icon: CupertinoIcons.link,
+              label: _busy
+                  ? widget.syncConnection
+                        ? '正在保存'
+                        : '正在连接'
+                  : widget.syncConnection
+                  ? '保存同步连接'
+                  : '连接并浏览',
+              onPressed: _busy ? null : _connect,
             ),
-          ),
-        ] else ...[
-          const AppText(
-            '在电脑登录 pan.quark.cn，打开开发者工具的「网络」，复制网盘请求中的 Cookie 请求头。只填写 Cookie 的值。',
-            style: TextStyle(height: 1.7),
-          ),
-          const SizedBox(height: 24),
-          _field('Cookie', _cookie, hint: '__pus=…; __puus=…', secret: true),
-          const AppText(
-            '登录凭据仅加密保存在这台设备。导入只读取文件，不移动或删除网盘内容。',
-            style: TextStyle(height: 1.65),
-          ),
-        ],
-        const SizedBox(height: 20),
-        if (_busy) const BookRowSkeleton(label: '正在检查目录读取权限'),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: AppText(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        GlassPillButton(
-          key: const ValueKey('cloud-connect'),
-          icon: CupertinoIcons.link,
-          label: _busy ? '正在连接' : '连接并浏览',
-          onPressed: _busy ? null : _connect,
+            if (_busy && !widget.syncConnection)
+              GlassTextButton(
+                onPressed: () => _testing?.cancel(),
+                child: const AppText('取消连接'),
+              ),
+          ],
         ),
-        if (_busy)
-          GlassTextButton(
-            onPressed: () => _testing?.cancel(),
-            child: const AppText('取消连接'),
-          ),
-      ],
+      ),
     ),
   );
 }

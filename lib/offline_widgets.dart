@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -223,6 +225,283 @@ Future<bool> _confirmClear(
 
 void _storageFailure(BuildContext context) =>
     showNovelFeedback(context, '缓存操作失败，请重试');
+
+/// Uses the same queue and durable byte inventory as the cache-management page.
+class OfflineVolumeCacheSheet extends StatefulWidget {
+  const OfflineVolumeCacheSheet({
+    super.key,
+    required this.repository,
+    required this.novel,
+  });
+  final OfflineNovelRepository repository;
+  final Novel novel;
+
+  @override
+  State<OfflineVolumeCacheSheet> createState() =>
+      _OfflineVolumeCacheSheetState();
+}
+
+class _OfflineVolumeCacheSheetState extends State<OfflineVolumeCacheSheet> {
+  late Future<void> _loaded = widget.repository.loadCache();
+  late final _volumes = NovelVolume.of(widget.novel.chapters);
+  late final _ids = {
+    for (final volume in _volumes)
+      volume.key: widget.novel.chapters
+          .skip(volume.start)
+          .take(volume.length)
+          .map((c) => c.id)
+          .toSet(),
+  };
+  final _selected = <String>{};
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: math.min(650, MediaQuery.sizeOf(context).height * .76),
+    child: FutureBuilder<void>(
+      future: _loaded,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: GlassTextButton(
+              onPressed: () =>
+                  setState(() => _loaded = widget.repository.loadCache()),
+              child: const AppText('缓存信息读取失败，点按重试'),
+            ),
+          );
+        }
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CupertinoActivityIndicator());
+        }
+        return AnimatedBuilder(
+          animation: widget.repository.bookChanges(widget.novel.id),
+          builder: (context, _) => _contents(context),
+        );
+      },
+    ),
+  );
+
+  Widget _contents(BuildContext context) {
+    final repository = widget.repository;
+    final saved = repository.cache.book(widget.novel.id);
+    final sizes = saved?.chapterBytes ?? const <int, int>{};
+    final job = repository.jobFor(widget.novel.id);
+    final active = job?.active == true;
+    final missingVolumes = _volumes
+        .where((v) => _ids[v.key]!.any((id) => !sizes.containsKey(id)))
+        .toList();
+    final selected = missingVolumes
+        .where((v) => _selected.contains(v.key))
+        .toList();
+    final missingIds = {
+      for (final volume in selected)
+        for (final id in _ids[volume.key]!)
+          if (!sizes.containsKey(id)) id,
+    };
+    final samples = widget.novel.chapters
+        .map((c) => sizes[c.id])
+        .whereType<int>()
+        .toList();
+    final estimate = samples.isEmpty
+        ? null
+        : (samples.fold<int>(0, (a, b) => a + b) /
+                  samples.length *
+                  missingIds.length)
+              .ceil();
+    final allSelected =
+        missingVolumes.isNotEmpty && selected.length == missingVolumes.length;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final primaryLabel = active
+        ? '正在缓存'
+        : missingVolumes.isEmpty
+        ? '已全部缓存'
+        : selected.isEmpty
+        ? '请选择卷'
+        : '缓存 ${selected.length} 卷\n${estimate == null ? '大小待下载后统计' : '正文约 ${formatCacheBytes(estimate)}'}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 14, 4),
+          child: Row(
+            children: [
+              const Expanded(
+                child: AppText(
+                  '离线缓存',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (active)
+                GlassTextButton(
+                  onPressed: () => repository.cancel(widget.novel.id),
+                  child: const AppText('取消缓存'),
+                ),
+              GlassIconButton(
+                icon: CupertinoIcons.xmark,
+                label: '关闭缓存列表',
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+          child: AppText(
+            '已占用 ${formatCacheBytes(saved?.bytes ?? 0)} · 含已缓存插图',
+            style: TextStyle(fontSize: 12, color: muted),
+          ),
+        ),
+        if (job != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: AppText(
+                    job.label,
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                ),
+                if (!active &&
+                    (job.phase == DownloadPhase.failed ||
+                        job.phase == DownloadPhase.cancelled))
+                  GlassTextButton(
+                    onPressed: () => repository.retry(widget.novel.id),
+                    child: const AppText('继续缓存'),
+                  ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            itemCount: _volumes.length,
+            separatorBuilder: (_, _) =>
+                Divider(height: 1, color: Theme.of(context).dividerColor),
+            itemBuilder: (context, index) {
+              final volume = _volumes[index];
+              final ids = _ids[volume.key]!;
+              final count = ids.where(sizes.containsKey).length;
+              final bytes = ids.fold<int>(
+                0,
+                (total, id) => total + (sizes[id] ?? 0),
+              );
+              final cached = count == ids.length;
+              final checked = cached || _selected.contains(volume.key);
+              return Semantics(
+                checked: checked,
+                enabled: !cached && !active,
+                child: JellyTapSurface(
+                  key: ValueKey('cache-volume-${volume.key}'),
+                  onTap: cached || active
+                      ? null
+                      : () => setState(() {
+                          if (!_selected.add(volume.key)) {
+                            _selected.remove(volume.key);
+                          }
+                        }),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              AppText(
+                                volume.title.isEmpty ? '全部章节' : volume.title,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              AppText(
+                                count == 0
+                                    ? '${ids.length} 章 · 未缓存'
+                                    : '${cached ? '已缓存' : '已缓存 $count / ${ids.length} 章'} · 正文占用 ${formatCacheBytes(bytes)}',
+                                style: TextStyle(fontSize: 12, color: muted),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        ArchiveIcon(
+                          checked
+                              ? CupertinoIcons.check_mark_circled_solid
+                              : CupertinoIcons.circle,
+                          size: 22,
+                          color: cached ? muted : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (estimate != null && selected.isNotEmpty && !active)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: AppText(
+                    '正文大小按已缓存章节估算，插图以下载后实际占用为准。',
+                    style: TextStyle(fontSize: 11, color: muted),
+                  ),
+                ),
+              Row(
+                children: [
+                  GlassTextButton(
+                    key: const ValueKey('cache-select-uncached'),
+                    onPressed: active || missingVolumes.isEmpty
+                        ? null
+                        : () => setState(() {
+                            if (allSelected) {
+                              _selected.clear();
+                            } else {
+                              _selected.addAll(
+                                missingVolumes.map((v) => v.key),
+                              );
+                            }
+                          }),
+                    child: AppText(
+                      allSelected ? '取消全选' : '全选未缓存',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GlassPillButton(
+                      key: const ValueKey('cache-selected-volumes'),
+                      icon: active
+                          ? CupertinoIcons.arrow_down
+                          : CupertinoIcons.cloud_download,
+                      label: primaryLabel,
+                      fontSize: 12,
+                      onPressed: active || missingIds.isEmpty
+                          ? null
+                          : () => repository.download(
+                              widget.novel,
+                              chapterIds: {
+                                for (final volume in selected)
+                                  ..._ids[volume.key]!,
+                              },
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class OfflineCachePage extends StatefulWidget {
   const OfflineCachePage({

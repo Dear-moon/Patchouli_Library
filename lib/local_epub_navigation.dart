@@ -1,9 +1,43 @@
 import 'package:html/dom.dart' as html;
-import 'package:html/parser.dart' as html;
 import 'package:xml/xml.dart';
 
-typedef EpubNavigationLink = ({String key, String title, int depth});
+import 'local_epub_markup.dart';
+
+typedef EpubNavigationLink = ({
+  String key,
+  String documentKey,
+  String title,
+  int depth,
+});
 typedef EpubNavigationTarget = ({String path, String fragment});
+
+bool hasEpubToken(String? value, String token) =>
+    (value ?? '').split(RegExp(r'\s+')).contains(token);
+
+/// Chapter labels and authored navigation must recognize the same TOC.
+/// Landmarks and page/table lists cannot stand in for it.
+html.Element? epubTableOfContents(html.Document document) => document
+    .querySelectorAll('nav')
+    .where(
+      (nav) =>
+          hasEpubToken(nav.attributes['epub:type'], 'toc') ||
+          hasEpubToken(nav.attributes['role'], 'doc-toc'),
+    )
+    .firstOrNull;
+
+String epubNavigationLabel(html.Element? element) {
+  if (element == null) return '';
+  final text = element.text.trim();
+  if (text.isNotEmpty) return text;
+  return element
+      .querySelectorAll('img')
+      .map(
+        (image) => image.attributes['alt'] ?? image.attributes['title'] ?? '',
+      )
+      .where((label) => label.trim().isNotEmpty)
+      .join(' ')
+      .trim();
+}
 
 /// Authored navigation is independent of spine chapter boundaries. EPUB3 TOC
 /// wins over NCX; page-list/landmarks never become a substitute table of contents.
@@ -14,6 +48,7 @@ List<EpubNavigationLink> readEpubNavigation({
   required EpubNavigationTarget Function(String, String) resolve,
   required bool Function(String) contains,
   required List<String> warnings,
+  bool normalizeMarkup = true,
 }) {
   final result = <EpubNavigationLink>[];
   void add(String base, String? href, String title, int depth) {
@@ -31,6 +66,7 @@ List<EpubNavigationLink> readEpubNavigation({
         }
         result.add((
           key: '${target.path}#${target.fragment}',
+          documentKey: '${target.path}#',
           title: title,
           depth: depth.clamp(0, 32),
         ));
@@ -42,21 +78,15 @@ List<EpubNavigationLink> readEpubNavigation({
 
   if (navPath != null) {
     try {
-      final doc = html.parse(read(navPath));
-      final nav = doc
-          .querySelectorAll('nav')
-          .where(
-            (n) =>
-                (n.attributes['epub:type'] ?? '')
-                    .split(RegExp(r'\s+'))
-                    .contains('toc') ||
-                n.attributes['role'] == 'doc-toc',
-          )
-          .firstOrNull;
+      final doc = parseLocalEpubMarkup(
+        read(navPath),
+        normalizeEmptyRawText: normalizeMarkup,
+      );
+      final nav = epubTableOfContents(doc);
       void walk(html.Element root, int depth) {
         for (final li in root.children.where((e) => e.localName == 'li')) {
           final a = li.children.where((e) => e.localName == 'a').firstOrNull;
-          add(navPath, a?.attributes['href'], a?.text ?? '', depth);
+          add(navPath, a?.attributes['href'], epubNavigationLabel(a), depth);
           final ol = li.children.where((e) => e.localName == 'ol').firstOrNull;
           if (ol != null && depth < 32) walk(ol, depth + 1);
         }

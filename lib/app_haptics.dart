@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import 'haptic_preferences.dart';
+import 'route_identity.dart';
 
 /// Meaning, not motor duration: each platform chooses its native sensation.
 enum HapticCue {
@@ -73,6 +74,7 @@ abstract final class AppHaptics {
   static final _clock = Stopwatch()..start();
   static Duration Function() _now = () => _clock.elapsed;
   static HapticGate _gate = HapticGate();
+  static bool get _isHarmony => defaultTargetPlatform.name == 'ohos';
 
   /// Call only for a committed user interaction or its visible outcome. Loading,
   /// restored settings, background downloads and automatic page turns stay quiet.
@@ -86,6 +88,24 @@ abstract final class AppHaptics {
     required HapticPreferences preferences,
   }) => _play(context, cue, preferences: preferences);
 
+  /// Host diagnostics only; this never claims that a physical motor fired.
+  static Future<Map<Object?, Object?>?> capabilities() async {
+    if (kIsWeb ||
+        (defaultTargetPlatform != TargetPlatform.android &&
+            defaultTargetPlatform != TargetPlatform.iOS &&
+            !_isHarmony)) {
+      return null;
+    }
+    try {
+      final value = await channel.invokeMethod<Object?>('capabilities');
+      return value is Map ? Map<Object?, Object?>.from(value) : null;
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   static void _play(
     BuildContext context,
     HapticCue? cue, {
@@ -93,13 +113,14 @@ abstract final class AppHaptics {
   }) {
     if (cue == null || !context.mounted || kIsWeb) return;
     if (defaultTargetPlatform != TargetPlatform.android &&
-        defaultTargetPlatform != TargetPlatform.iOS) {
+        defaultTargetPlatform != TargetPlatform.iOS &&
+        !_isHarmony) {
       return;
     }
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
-    if (ModalRoute.isCurrentOf(context) == false ||
-        !TickerMode.valuesOf(context).enabled) {
+    if (RouteIdentity.read(context)?.isCurrent == false ||
+        !TickerMode.getValuesNotifier(context).value.enabled) {
       return;
     }
     final strength = (preferences ?? HapticScope.of(context)).levelFor(

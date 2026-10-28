@@ -50,32 +50,35 @@ internal class BookTextLinks(private val context: Context) {
 
     /** A live, read-only descriptor lease, not a second file or saved path.
      * Dart and native parsers share this process; the URI grant remains private.
+     * Only text-index leases include a logical start offset for bounded positional reads.
      * Non-seekable providers need an explicit managed copy instead. */
-    fun openDocument(reference: String, expectedSize: Long? = null, expectedModified: Long? = null): Map<String, Any> {
+    fun openDocument(reference: String, expectedSize: Long? = null, expectedModified: Long? = null,
+        purpose: String? = null): Map<String, Any> {
         val uri = source(reference)
         val before = modified(uri)
         var owner: java.io.Closeable? = null
         try {
             val fd: Int
-            val size: Long
+            val range: LinkedDocumentRange
             if (uri.scheme == "file") {
                 val file = File(uri.path!!)
                 val descriptor = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
                 owner = descriptor
-                size = android.system.Os.fstat(descriptor.fileDescriptor).st_size
+                val size = android.system.Os.fstat(descriptor.fileDescriptor).st_size
+                range = linkedDocumentRange(0, size, size, purpose)
                 fd = descriptor.fd
             } else {
                 require(uri.scheme == "content") { "原文件位置有误，请重新定位" }
                 val descriptor = context.contentResolver.openAssetFileDescriptor(uri, "r")
                     ?: error("无法读取原文件，请重新定位原文件")
                 owner = descriptor
-                require(descriptor.startOffset == 0L) { "这个文件提供方不支持原位读取，请选择「复制到应用」" }
-                size = if (descriptor.declaredLength >= 0) descriptor.declaredLength
-                    else android.system.Os.fstat(descriptor.fileDescriptor).st_size
-                android.system.Os.lseek(descriptor.fileDescriptor, 0L, android.system.OsConstants.SEEK_SET)
+                range = linkedDocumentRange(descriptor.startOffset, descriptor.declaredLength,
+                    if (descriptor.declaredLength >= 0) 0L else android.system.Os.fstat(descriptor.fileDescriptor).st_size,
+                    purpose)
+                android.system.Os.lseek(descriptor.fileDescriptor, range.offset, android.system.OsConstants.SEEK_SET)
                 fd = descriptor.parcelFileDescriptor.fd
             }
-            require(size in 1..BookArchiveImport.MAX_ARCHIVE) { "原文件为空或超过 512 MiB" }
+            val size = range.size
             check((expectedSize == null || size == expectedSize) &&
                 (expectedModified == null || before == expectedModified) && modified(uri) == before) {
                 "原文件已变化，请重新定位原文件"
@@ -85,7 +88,9 @@ internal class BookTextLinks(private val context: Context) {
                 check(!closed) { "文件页面已关闭，请重新打开书库" }
                 opened[key] = owner!!; owner = null
             }
-            return mapOf("lease" to key, "size" to size, "modified" to before, "descriptor" to fd)
+            val response = mutableMapOf<String, Any>("lease" to key, "size" to size, "modified" to before, "descriptor" to fd)
+            if (purpose == "text-index") response["offset"] = range.offset
+            return response
         } catch (failure: android.system.ErrnoException) {
             if (failure.errno == android.system.OsConstants.ESPIPE)
                 error("这个文件提供方不支持原位读取，请选择「复制到应用」")
@@ -151,4 +156,21 @@ internal class BookTextLinks(private val context: Context) {
         }
     fun bytes(reference: String, offset: Long, size: Long, modified: Long): ByteArray =
         read(reference, size, modified) { file, _ -> file.bytes(offset) }
+}
+
+internal data class LinkedDocumentRange(val offset: Long, val size: Long)
+
+/** Text indexing uses bounded positional reads; archive callers still require a whole-file descriptor. */
+internal fun linkedDocumentRange(startOffset: Long, declaredLength: Long, descriptorSize: Long,
+    purpose: String? = null): LinkedDocumentRange {
+    require(purpose == null || purpose == "text-index") { "原文件读取用途无效" }
+    require(purpose == "text-index" || startOffset == 0L) { "这个文件提供方不支持原位读取，请选择「复制到应用」" }
+    require(startOffset >= 0) { "原文件位置有误，请重新定位" }
+    val size = if (declaredLength >= 0) declaredLength else {
+        require(descriptorSize >= startOffset) { "原文件为空或超过 512 MiB" }
+        descriptorSize - startOffset
+    }
+    require(size in 1..BookArchiveImport.MAX_ARCHIVE) { "原文件为空或超过 512 MiB" }
+    require(startOffset <= Long.MAX_VALUE - size) { "原文件位置有误，请重新定位" }
+    return LinkedDocumentRange(startOffset, size)
 }

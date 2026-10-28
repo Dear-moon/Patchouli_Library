@@ -4,6 +4,21 @@ import 'local_import_options.dart';
 
 const localHeadingNone = 0, localHeadingVolume = 1, localHeadingChapter = 2;
 
+final _decoratedDefaultHeading = RegExp(r'^(={2,})\s*(.*?)\s*\1$');
+
+/// Some TXT exports surround directory lines with matching `===` markers.
+/// Use this candidate only for default heading recognition; unmatched prose and
+/// custom expressions retain their exact text and original source coordinates.
+String defaultLocalHeadingCandidate(String line) {
+  final candidate = _decoratedDefaultHeading.firstMatch(line)?.group(2)?.trim();
+  if (candidate == null ||
+      candidate.startsWith('=') ||
+      candidate.endsWith('=')) {
+    return line;
+  }
+  return candidate;
+}
+
 /// A custom expression runs in one small, persistent rule worker per import.
 /// Only matching is timed: slow file I/O never looks like a stuck expression,
 /// and a bad rule cannot freeze the UI or strand the book-import worker.
@@ -121,19 +136,22 @@ void _ruleWorker((SendPort, Map<String, Object>) job) {
   final volume = volumeText.isEmpty
       ? null
       : RegExp(volumeText, caseSensitive: false);
+  int classify(String line) {
+    if (line.isEmpty || line.length > 90) return localHeadingNone;
+    final candidate = options.customToc
+        ? line
+        : defaultLocalHeadingCandidate(line);
+    return volume?.hasMatch(candidate) == true
+        ? localHeadingVolume
+        : chapter.hasMatch(candidate)
+        ? localHeadingChapter
+        : localHeadingNone;
+  }
+
   final requests = ReceivePort();
   requests.listen((message) {
     final lines = message as List<String>;
-    reply.send(<int>[
-      for (final line in lines)
-        line.isEmpty || line.length > 90
-            ? localHeadingNone
-            : volume?.hasMatch(line) == true
-            ? localHeadingVolume
-            : chapter.hasMatch(line)
-            ? localHeadingChapter
-            : localHeadingNone,
-    ]);
+    reply.send(<int>[for (final line in lines) classify(line)]);
   });
   reply.send(requests.sendPort);
 }
@@ -154,7 +172,12 @@ Future<List<({String title, bool volume})>> previewLocalDirectory(
     return [
       for (var i = 0; i < matches.length; i++)
         if (matches[i] != localHeadingNone)
-          (title: lines[i], volume: matches[i] == localHeadingVolume),
+          (
+            title: options.customToc
+                ? lines[i]
+                : defaultLocalHeadingCandidate(lines[i]),
+            volume: matches[i] == localHeadingVolume,
+          ),
     ];
   } finally {
     await matcher.close();

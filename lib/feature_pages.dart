@@ -112,34 +112,39 @@ class FeatureEntry extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ContentPanel(
     onTap: onTap,
-    child: Row(
-      children: [
-        ArchiveIcon(icon, size: 21),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AppText(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 5),
+    child: ArchivePart(
+      start: .18,
+      end: .84,
+      travel: const Offset(0, 6),
+      child: Row(
+        children: [
+          ArchiveIcon(icon, size: 21),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 AppText(
-                  subtitle!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 5),
+                  AppText(
+                    subtitle!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        const ArchiveIcon(CupertinoIcons.chevron_right, size: 14),
-      ],
+          const SizedBox(width: 8),
+          const ArchiveIcon(CupertinoIcons.chevron_right, size: 14),
+        ],
+      ),
     ),
   );
 }

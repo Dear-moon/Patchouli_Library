@@ -1,7 +1,5 @@
 import 'package:flutter/cupertino.dart';
 
-import 'app_interactions.dart';
-import 'app_ui.dart';
 import 'catalog.dart';
 import 'feature_pages.dart';
 import 'library_state.dart';
@@ -11,57 +9,13 @@ import 'local_series_actions.dart';
 
 enum LocalBookRemoval { shelfOnly, files }
 
-Future<LocalBookRemoval?> _chooseRemoval(
-  BuildContext context, {
-  required String title,
-  required LibraryState library,
-}) => showJellySheet<LocalBookRemoval>(
-  context: context,
-  reduceMotion: library.reduceMotion,
-  builder: (sheet) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        ArchiveSection(title: title, code: 'LOCAL / LIBRARY'),
-        const SizedBox(height: 20),
-        FeatureEntry(
-          key: const ValueKey('local-remove-shelf-only'),
-          title: '仅移出书架',
-          subtitle: '保留本机文件、进度与书签，可在数据与存储中恢复',
-          icon: CupertinoIcons.book,
-          onTap: () => Navigator.pop(sheet, LocalBookRemoval.shelfOnly),
-        ),
-        const SizedBox(height: 14),
-        FeatureEntry(
-          key: const ValueKey('local-remove-files'),
-          title: '同时删除本机文件',
-          subtitle: '删除 App 内的书籍副本；下载目录与网盘原文件保留',
-          icon: CupertinoIcons.trash,
-          onTap: () => Navigator.pop(sheet, LocalBookRemoval.files),
-        ),
-      ],
-    ),
-  ),
-);
-
 Future<LocalBookRemoval?> chooseLocalBookRemoval(
   BuildContext context, {
   required Novel book,
   required LocalBookStore books,
   required LibraryState library,
 }) async {
-  final choice = await _chooseRemoval(
-    context,
-    title: '移除《${book.title}》',
-    library: library,
-  );
-  if (!context.mounted || choice == null) return null;
-  if (choice == LocalBookRemoval.shelfOnly) {
-    await library.setLocalBookHidden(book.id, true);
-    return choice;
-  }
+  const choice = LocalBookRemoval.files;
   final series = books.seriesFor(book.id);
   if (!await confirmNovelAction(
     context,
@@ -90,8 +44,7 @@ typedef LocalBooksRemovalResult = ({
   Set<int> failed,
 });
 
-/// One preference commit for shelf-only removal; bounded sequential file I/O
-/// for deletion. A failed book remains selected and does not block the others.
+/// Bounded file removal. A failed book remains selected and keeps its records.
 Future<LocalBooksRemovalResult> removeLocalBooks({
   required Iterable<int> ids,
   required LocalBookRemoval choice,
@@ -99,6 +52,9 @@ Future<LocalBooksRemovalResult> removeLocalBooks({
   required LibraryState library,
   void Function(int completed, int total)? onProgress,
 }) async {
+  if (choice == LocalBookRemoval.shelfOnly) {
+    throw const FormatException('仅移出功能已取消，书籍和文件未变动');
+  }
   final selected = ids.where(isLocalBook).where(books.contains).toSet();
   final targets = selected
       .where((id) {
@@ -107,24 +63,14 @@ Future<LocalBooksRemovalResult> removeLocalBooks({
       })
       .toList(growable: false);
   final removed = <int>{}, failed = <int>{};
-  if (choice == LocalBookRemoval.shelfOnly) {
+  for (final (index, id) in targets.indexed) {
     try {
-      await library.setLocalBooksHidden(targets, true);
-      removed.addAll(targets);
+      await removeLocalBook(books: books, library: library, id: id);
+      removed.add(id);
     } catch (_) {
-      failed.addAll(targets);
+      failed.add(id);
     }
-    onProgress?.call(targets.length, targets.length);
-  } else {
-    for (final (index, id) in targets.indexed) {
-      try {
-        await removeLocalBook(books: books, library: library, id: id);
-        removed.add(id);
-      } catch (_) {
-        failed.add(id);
-      }
-      onProgress?.call(index + 1, targets.length);
-    }
+    onProgress?.call(index + 1, targets.length);
   }
   return (choice: choice, removed: removed, failed: failed);
 }
@@ -138,12 +84,7 @@ Future<LocalBooksRemovalResult?> chooseLocalBooksRemoval(
 }) async {
   final targets = ids.where(isLocalBook).where(books.contains).toSet();
   if (targets.isEmpty) return null;
-  final choice = await _chooseRemoval(
-    context,
-    title: '移除 ${targets.length} 本本地书',
-    library: library,
-  );
-  if (!context.mounted || choice == null) return null;
+  const choice = LocalBookRemoval.files;
   if (choice == LocalBookRemoval.files) {
     if (!await confirmNovelAction(
       context,
@@ -173,102 +114,5 @@ Future<LocalBooksRemovalResult?> chooseLocalBooksRemoval(
     books: books,
     library: library,
     onProgress: onProgress,
-  );
-}
-
-class RemovedLocalBooksPage extends StatelessWidget {
-  const RemovedLocalBooksPage({
-    super.key,
-    required this.books,
-    required this.library,
-  });
-  final LocalBookStore books;
-  final LibraryState library;
-  @override
-  Widget build(BuildContext context) => ArchiveFeaturePage(
-    title: '已移出的本地书',
-    code: 'LOCAL / RECOVERY',
-    child: AnimatedBuilder(
-      animation: Listenable.merge([books, library.shelfViewChanges]),
-      builder: (context, _) {
-        final hidden = books.books
-            .where((book) => !library.localBookVisible(book.id))
-            .toList();
-        return Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: ListView.builder(
-              padding: featurePadding(context),
-              itemCount: hidden.isEmpty ? 1 : hidden.length,
-              itemBuilder: (context, index) {
-                if (hidden.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: AppText('没有已移出的本地书。'),
-                  );
-                }
-                final book = hidden[index];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: ContentPanel(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        AppText(
-                          book.title,
-                          style: const TextStyle(fontSize: 18, height: 1.65),
-                        ),
-                        if (book.author.isNotEmpty) AppText(book.author),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 6,
-                          children: [
-                            GlassTextButton(
-                              key: ValueKey('local-restore-${book.id}'),
-                              onPressed: () async {
-                                try {
-                                  await library.setLocalBookHidden(
-                                    book.id,
-                                    false,
-                                  );
-                                } catch (_) {
-                                  if (context.mounted) {
-                                    showNovelFeedback(context, '恢复失败，请重试');
-                                  }
-                                }
-                              },
-                              child: const AppText('恢复到书架'),
-                            ),
-                            GlassTextButton(
-                              onPressed: () async {
-                                try {
-                                  await chooseLocalBookRemoval(
-                                    context,
-                                    book: book,
-                                    books: books,
-                                    library: library,
-                                  );
-                                } catch (_) {
-                                  if (context.mounted) {
-                                    showNovelFeedback(context, '移除未完成，请重试');
-                                  }
-                                }
-                              },
-                              child: const AppText('移除选项'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        );
-      },
-    ),
   );
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 
 import 'app_ui.dart';
+import 'route_identity.dart';
 
 final _routeSlots = Expando<Set<Object>>('novel-route-slots');
 final _explorationOwners = Expando<_ExplorationHistory>('novel-exploration');
@@ -61,7 +62,7 @@ Future<T?> pushNovelPage<T>(
 }) async {
   if (!context.mounted) return null;
   final navigator = Navigator.of(context);
-  final origin = ModalRoute.of(context);
+  final origin = RouteIdentity.read(context);
   final history = explorationKey == null
       ? null
       : (origin == null ? null : _explorationOwners[origin]) ??
@@ -133,6 +134,7 @@ VoidCallback? showNovelFeedback(
   ValueListenable<double>? headerVisibility,
   Duration? duration,
   HapticCue? haptic,
+  bool reduceMotion = false,
 }) {
   if (!context.mounted) return null;
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
@@ -164,6 +166,7 @@ VoidCallback? showNovelFeedback(
         opacity: appearance.opacity,
         child: NovelFeedbackNotice(
           message: message,
+          reduceMotion: reduceMotion,
           duration: duration,
           headerVisibility: header,
           actionLabel: actionLabel,
@@ -179,6 +182,7 @@ VoidCallback? showNovelFeedback(
                         context,
                         actionFailure,
                         haptic: HapticCue.error,
+                        reduceMotion: reduceMotion,
                       );
                     }
                   }
@@ -202,6 +206,7 @@ class NovelFeedbackNotice extends StatefulWidget {
     this.onAction,
     this.headerVisibility,
     this.duration,
+    this.reduceMotion = false,
   });
   final String message;
   final String? actionLabel;
@@ -209,6 +214,7 @@ class NovelFeedbackNotice extends StatefulWidget {
   final Future<void> Function()? onAction;
   final ValueListenable<double>? headerVisibility;
   final Duration? duration;
+  final bool reduceMotion;
   @override
   State<NovelFeedbackNotice> createState() => _NovelFeedbackNoticeState();
 }
@@ -222,12 +228,14 @@ class _NovelFeedbackNoticeState extends State<NovelFeedbackNotice>
   );
   Timer? _timer;
   bool _started = false, _closing = false;
+  bool get _reduceMotion =>
+      widget.reduceMotion || MediaQuery.disableAnimationsOf(context);
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (_reduceMotion) {
       _motion.value = 1;
     } else {
       _motion.forward();
@@ -253,7 +261,7 @@ class _NovelFeedbackNoticeState extends State<NovelFeedbackNotice>
     if (_closing) return;
     _closing = true;
     _timer?.cancel();
-    if (!MediaQuery.disableAnimationsOf(context)) {
+    if (!_reduceMotion) {
       try {
         await _motion.reverse().orCancel;
       } on TickerCanceled {

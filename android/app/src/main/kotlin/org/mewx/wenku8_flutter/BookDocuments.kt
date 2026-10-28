@@ -84,7 +84,7 @@ class BookDocuments internal constructor(
             try { val value = action(); activity.runOnUiThread {
                 if (closed) result.error("closed", "文件页面已关闭，请返回文库后重试", null) else result.success(value)
             } }
-            catch (error: Exception) { activity.runOnUiThread { result.error("document", if (linked) bookImportMessage(error) else error.message ?: "文件操作失败，请重试", nativeErrorDetails(error)) } }
+            catch (error: Exception) { activity.runOnUiThread { result.error(if (error is BookOpenMoveFailure) error.code else "document", if (linked) bookImportMessage(error) else error.message ?: "文件操作失败，请重试", nativeErrorDetails(error)) } }
         }
     }
 
@@ -95,6 +95,9 @@ class BookDocuments internal constructor(
                 opens.resolve(call.argument<String>("id") ?: "", call.argument<Boolean>("copy") == true, links, imports)
             }
             "finishBookOpen" -> background(result) { opens.finish(call.argument<String>("id") ?: "", links); null }
+            "deleteBookOpenSource" -> background(result) {
+                opens.deleteSource(call.argument<String>("id") ?: "", call.argument<String>("path") ?: ""); null
+            }
             "pickBookOpenReference" -> {
                 if (pending != null) { result.error("busy", "请先完成当前文件选择", null); return }
                 val initial = try { opens.initialUri(call.argument<String>("id") ?: "") }
@@ -121,27 +124,29 @@ class BookDocuments internal constructor(
                     } else activity.requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), ALL_REQUEST)
                 } catch (_: Exception) { pending = null; result.error("permission", "系统未提供共享存储授权，请选择指定文件夹", null) }
             }
-            "pickBook", "pickBooks", "pickTextReference", "pickOriginalReference", "pickFont", "pickImage", "openSync", "createSync", "selectScanFolder" -> {
+            "pickBook", "pickBooks", "pickDictionaryFiles", "pickTextReference", "pickOriginalReference", "pickFont", "pickImage", "openSync", "createSync", "selectScanFolder" -> {
                 if (pending != null) { result.error("busy", "请先完成当前文件选择", null); return }
                 val create = call.method == "createSync"
                 val folder = call.method == "selectScanFolder"
                 val choosingImage = call.method == "pickImage"
+                val choosingDictionaries = call.method == "pickDictionaryFiles"
                 val choosingBooks = call.method == "pickBook" || call.method == "pickBooks"
                 val linkText = call.method in setOf("pickTextReference", "pickOriginalReference") || call.argument<Boolean>("linkText") == true || call.argument<Boolean>("linkOriginals") == true
-                val intent = Intent(if (folder) Intent.ACTION_OPEN_DOCUMENT_TREE else if (create) Intent.ACTION_CREATE_DOCUMENT else if ((choosingBooks && !linkText) || choosingImage) Intent.ACTION_GET_CONTENT else Intent.ACTION_OPEN_DOCUMENT).apply {
+                val intent = Intent(if (folder) Intent.ACTION_OPEN_DOCUMENT_TREE else if (create) Intent.ACTION_CREATE_DOCUMENT else if ((choosingBooks && !linkText) || choosingImage || choosingDictionaries) Intent.ACTION_GET_CONTENT else Intent.ACTION_OPEN_DOCUMENT).apply {
                     if (!folder) { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-                    if (!folder && call.method != "pickFont" && !choosingImage && !linkText) addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    if (!folder && call.method != "pickFont" && !choosingImage && !choosingDictionaries && !linkText) addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                     if (choosingImage) type = "image/*"
                     if (create) { type = "application/octet-stream"; putExtra(Intent.EXTRA_TITLE, "文库同步.wenku8sync") }
                     if (call.method == "pickBook" || call.method == "pickBooks") {
                         putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/*", "application/epub+zip", "application/zip", "application/x-zip-compressed", "application/x-mobipocket-ebook", "application/vnd.amazon.ebook", "application/pdf", "application/rtf", "application/xml", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"))
                         if (call.method == "pickBooks") putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                     }
+                    if (choosingDictionaries) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 }
                 pending = Pending(call.method, result, call.argument<Boolean>("deferred") == true, linkText, call.argument<Boolean>("linkOriginals") == true)
                 try { @Suppress("DEPRECATION") activity.startActivityForResult(
-                    if (folder || choosingBooks || choosingImage) Intent.createChooser(intent, if (folder) "选择支持文件夹授权的应用" else if (choosingImage) "选择图片应用" else "选择文件应用") else intent,
+                    if (folder || choosingBooks || choosingImage || choosingDictionaries) Intent.createChooser(intent, if (folder) "选择支持文件夹授权的应用" else if (choosingImage) "选择图片应用" else "选择文件应用") else intent,
                     REQUEST) }
                 catch (_: Exception) { pending = null; result.error("picker", "系统文件选择器不可用", null) }
             }
@@ -160,7 +165,7 @@ class BookDocuments internal constructor(
                 call.argument<Number>("offset")!!.toLong(), call.argument<Number>("size")!!.toLong(), call.argument<Number>("modified")!!.toLong()) }
             "releaseLinkedText" -> background(result) { links.release(call.argument<String>("reference") ?: ""); null }
             "openLinkedDocument" -> background(result, linked = true) { links.openDocument(call.argument<String>("reference") ?: "",
-                call.argument<Number>("size")?.toLong(), call.argument<Number>("modified")?.toLong()) }
+                call.argument<Number>("size")?.toLong(), call.argument<Number>("modified")?.toLong(), call.argument<String>("purpose")) }
             "closeLinkedDocument" -> background(result) { links.closeDocument(call.argument<String>("lease") ?: ""); null }
             "prepareLinkedDocument" -> background(result, linked = true) {
                 val lease = links.openDocument(call.argument<String>("reference") ?: "")
@@ -267,7 +272,7 @@ class BookDocuments internal constructor(
         pending = null
         if (code != Activity.RESULT_OK || data == null) { operation.result.success(null); return true }
         val uris = linkedSetOf<Uri>()
-        if (operation.method == "pickBooks") data.clipData?.let { clip ->
+        if (operation.method == "pickBooks" || operation.method == "pickDictionaryFiles") data.clipData?.let { clip ->
             for (index in 0 until clip.itemCount) uris.add(clip.getItemAt(index).uri)
         }
         data.data?.let(uris::add)
@@ -289,6 +294,23 @@ class BookDocuments internal constructor(
                 try { copy(uri, target, 32L * 1024 * 1024) }
                 catch (error: Exception) { target.delete(); throw error }
                 mapOf("name" to display, "path" to target.path)
+            } else if (operation.method == "pickDictionaryFiles") {
+                require(uris.size <= 64) { "一次最多选择 64 个词典文件" }
+                uris.map { selected ->
+                    var display = "所选词典"
+                    var target: File? = null
+                    try {
+                        display = name(selected)
+                        require(dictionaryFileName(display)) { "请选择 MDX、MDD、MOBI 词典、StarDict 文件或 ZIP 词典包" }
+                        val destination = File.createTempFile("import-", ".source", root)
+                        target = destination
+                        copy(selected, destination, 512L * 1024 * 1024)
+                        mapOf("name" to display, "path" to destination.path)
+                    } catch (error: Exception) {
+                        target?.delete()
+                        mapOf("name" to display, "error" to (error.message ?: "无法读取所选词典"))
+                    }
+                }
             } else if (operation.method == "pickBooks") {
                 uris.map { selected ->
                     var display = "所选文件"
@@ -353,6 +375,10 @@ class BookDocuments internal constructor(
         io.shutdown()
     }
 }
+
+/** File-name filtering is only a picker guard; the Dart importer validates data. */
+internal fun dictionaryFileName(name: String): Boolean =
+    Regex("\\.(mdx|mdd|mobi|ifo|idx(?:\\.gz)?|dict(?:\\.dz)?|syn|zip)$", RegexOption.IGNORE_CASE).containsMatchIn(name)
 
 internal fun releaseSelectedBookDocument(path: String, pickerRoot: File, importRoot: File? = null) {
     val source = File(path).canonicalFile

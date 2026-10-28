@@ -135,6 +135,7 @@ class LiquidGlassBatch extends StatefulWidget {
     super.key,
     required this.child,
     this.enabled = true,
+    this.preserveMemberClip = false,
   }) : _inherit = false;
 
   /// Keeps the enclosing batch while [enabled], or isolates this subtree when
@@ -143,7 +144,8 @@ class LiquidGlassBatch extends StatefulWidget {
     super.key,
     required this.child,
     this.enabled = true,
-  }) : _inherit = true;
+  })  : _inherit = true,
+        preserveMemberClip = false;
 
   /// Keeps [child] out of the enclosing batch.
   ///
@@ -155,7 +157,9 @@ class LiquidGlassBatch extends StatefulWidget {
   const LiquidGlassBatch.exclude({
     super.key,
     required this.child,
-  }) : enabled = false, _inherit = false;
+  })  : enabled = false,
+        _inherit = false,
+        preserveMemberClip = false;
 
   /// The subtree whose `LiquidGlassLens` descendants share the read.
   final Widget child;
@@ -165,6 +169,11 @@ class LiquidGlassBatch extends StatefulWidget {
   /// disabled batch nested inside an enabled one restores for its own
   /// subtree.
   final bool enabled;
+
+  /// Share the input without changing a clear member's original outline clip.
+  /// Blurred members remain independent because their two-pass chain cannot
+  /// share its input without also changing the composition and edge coverage.
+  final bool preserveMemberClip;
   final bool _inherit;
 
   /// The shared backdrop key for the nearest enclosing batch, or `null` when
@@ -174,6 +183,13 @@ class LiquidGlassBatch extends StatefulWidget {
         .dependOnInheritedWidgetOfExactType<LiquidGlassBatchScope>()
         ?.backdropId;
   }
+
+  /// Whether this batch preserves each clear lens's pre-batch clip contract.
+  static bool preservesMemberClipOf(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<LiquidGlassBatchScope>()
+          ?.preserveMemberClip ??
+      false;
 
   @override
   State<LiquidGlassBatch> createState() => _LiquidGlassBatchState();
@@ -202,8 +218,14 @@ class _LiquidGlassBatchState extends State<LiquidGlassBatch> {
   Widget build(BuildContext context) {
     return LiquidGlassBatchScope(
       backdropId: widget.enabled
-          ? (widget._inherit ? LiquidGlassBatch.backdropIdOf(context) : _backdropId)
+          ? (widget._inherit
+              ? LiquidGlassBatch.backdropIdOf(context)
+              : _backdropId)
           : null,
+      preserveMemberClip: widget.enabled &&
+          (widget._inherit
+              ? LiquidGlassBatch.preservesMemberClipOf(context)
+              : widget.preserveMemberClip),
       child: widget.child,
     );
   }
@@ -217,6 +239,7 @@ class LiquidGlassBatchScope extends InheritedWidget {
   const LiquidGlassBatchScope({
     super.key,
     required this.backdropId,
+    this.preserveMemberClip = false,
     required super.child,
   });
 
@@ -224,9 +247,13 @@ class LiquidGlassBatchScope extends InheritedWidget {
   /// batch is disabled.
   final int? backdropId;
 
+  /// Preserve member clip coverage instead of taking the legacy batch clip.
+  final bool preserveMemberClip;
+
   @override
   bool updateShouldNotify(covariant LiquidGlassBatchScope oldWidget) {
-    return backdropId != oldWidget.backdropId;
+    return backdropId != oldWidget.backdropId ||
+        preserveMemberClip != oldWidget.preserveMemberClip;
   }
 }
 

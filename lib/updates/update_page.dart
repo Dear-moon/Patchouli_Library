@@ -38,6 +38,9 @@ class AppUpdateNavigation extends NavigatorObserver with ChangeNotifier {
       (_enter == null || _enter!.status == AnimationStatus.completed) &&
       (_leave == null || _leave!.status == AnimationStatus.dismissed);
 
+  bool get rootReady => ready && _top!.isFirst;
+  bool get hasPageBeyondRoot => _top is PageRoute && !_top!.isFirst;
+
   void _animationChanged(AnimationStatus _) => notifyListeners();
 
   @override
@@ -81,10 +84,12 @@ class AppUpdateMonitor extends StatefulWidget {
     required this.updates,
     required this.child,
     this.navigation,
+    this.promptsEnabled = true,
   });
   final AppUpdates updates;
   final Widget child;
   final AppUpdateNavigation? navigation;
+  final bool promptsEnabled;
   @override
   State<AppUpdateMonitor> createState() => _AppUpdateMonitorState();
 }
@@ -133,7 +138,8 @@ class _AppUpdateMonitorState extends State<AppUpdateMonitor>
     final service = widget.updates;
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     final navigation = widget.navigation;
-    if (_promptOpen ||
+    if (!widget.promptsEnabled ||
+        _promptOpen ||
         lifecycle != null && lifecycle != AppLifecycleState.resumed ||
         navigation?.ready != true) {
       return;
@@ -210,6 +216,7 @@ class _AppUpdateMonitorState extends State<AppUpdateMonitor>
 
   void _schedule() {
     _timer?.cancel();
+    if (!widget.updates.packageUpdates) return;
     // Check once for each foreground session, after the first screen settles.
     // Transient inactive states (notification shade, system dialogs) are not a
     // new launch. A background return is, regardless of the last check's age.
@@ -444,7 +451,7 @@ class AppUpdatePage extends StatelessWidget {
           header: ArchiveHeaderBar(
             leading: GlassIconButton(
               icon: CupertinoIcons.back,
-              label: '返回设置',
+              label: '返回',
               onPressed: () => Navigator.pop(context),
             ),
             title: const ArchiveRouteTitle(
@@ -471,7 +478,7 @@ class AppUpdatePage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 24),
-              if (service != null) ...[
+              if (service != null && service.packageUpdates) ...[
                 ContentPanel(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -635,7 +642,9 @@ class AppUpdatePage extends StatelessWidget {
                         key: const ValueKey('app-project-download'),
                         onPressed: () =>
                             _open(context, () => service.openProjectPage()),
-                        child: const AppText('项目介绍与下载'),
+                        child: AppText(
+                          service.packageUpdates ? '项目介绍与下载' : '项目介绍',
+                        ),
                       ),
                     ],
                   ],

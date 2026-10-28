@@ -1,10 +1,11 @@
 part of 'lan_reading_sync.dart';
 
 class LanHandoffReceipt {
-  const LanHandoffReceipt(this.book, this.position, this.device);
+  const LanHandoffReceipt(this.book, this.position, this.device, {this.online});
   final Novel book;
   final ReadingPosition position;
   final String device;
+  final OnlineBookHandoff? online;
 }
 
 class LanBookTransfer {
@@ -149,6 +150,30 @@ class LanBookHandoff extends ChangeNotifier {
     _notify();
   }
 
+  /// Resolves online access only after the receiver chooses Continue. Merely
+  /// receiving a notice never fetches a body or overwrites local progress.
+  Future<LanHandoffReceipt> resolveReceipt(LanHandoffReceipt receipt) async {
+    final online = receipt.online;
+    if (online == null) {
+      final book = _books?.book(receipt.book.id);
+      if (book == null) {
+        throw const FormatException('这本书已从本机移除，请重新接收');
+      }
+      return LanHandoffReceipt(book, receipt.position, receipt.device);
+    }
+    final repository = _sync.repository;
+    if (repository == null) {
+      throw const FormatException('当前版本暂不支持在线续读，请更新 App 后重试');
+    }
+    final resolved = await online.resolve(repository);
+    return LanHandoffReceipt(
+      resolved.book,
+      resolved.position,
+      receipt.device,
+      online: online,
+    );
+  }
+
   Future<HttpClientRequest> _request(LanPeer peer, String path) async {
     final client = _sync._client;
     if (client == null) throw const FormatException('请先开启局域网续读');
@@ -170,28 +195,49 @@ class LanBookHandoff extends ChangeNotifier {
     LanSyncCipher cipher,
     String path,
     Map<String, dynamic> data,
-    String kind,
-  ) async {
+    String kind, {
+    bool cancellable = false,
+  }) async {
     final request = await _request(peer, path);
-    request.headers.contentType = ContentType.json;
-    request.write(
-      await cipher.seal({
-        ...data,
-        'at': DateTime.now().millisecondsSinceEpoch,
-      }, kind),
-    );
-    final response = await request.close().timeout(const Duration(seconds: 12));
-    if (response.statusCode != 200) {
-      throw const FormatException('另一台设备暂未接受传输，请保持 App 在前台后重试');
+    if (cancellable) _sending = request;
+    try {
+      request.headers.contentType = ContentType.json;
+      request.write(
+        await cipher.seal({
+          ...data,
+          'at': DateTime.now().millisecondsSinceEpoch,
+        }, kind),
+      );
+      final response = await request.close().timeout(
+        const Duration(seconds: 12),
+      );
+      if (response.statusCode != 200) {
+        await response.drain<void>();
+        if (path == '/handoff/online' &&
+            [403, 404].contains(response.statusCode)) {
+          throw const FormatException('对方未接受在线续读，请更新对方 App；若已是最新版，请重新配对后重试');
+        }
+        throw const FormatException('另一台设备暂未接受传输，请保持 App 在前台后重试');
+      }
+      return cipher.open(await _sync._read(response), '$kind-reply');
+    } finally {
+      if (identical(_sending, request)) _sending = null;
     }
-    return cipher.open(await _sync._read(response), '$kind-reply');
   }
 
   Future<void> send({
     required LanPeer peer,
     required int bookId,
     required ReadingPosition position,
+    Novel? book,
   }) async {
+    if (!isLocalBook(bookId)) {
+      final online = book ?? _sync.state.cachedNovel(bookId);
+      if (online == null || online.id != bookId) {
+        throw const FormatException('在线书籍尚未加载，请打开正文后再发送续读');
+      }
+      return _sendOnline(peer, online, position);
+    }
     if (busy) throw const FormatException('请等待当前书籍传输完成');
     if (_books == null || !_sync.enabled || _sync._client == null) {
       throw const FormatException('请先开启局域网续读并连接设备');
@@ -329,6 +375,71 @@ class LanBookHandoff extends ChangeNotifier {
     }
   }
 
+  Future<void> _sendOnline(
+    LanPeer peer,
+    Novel book,
+    ReadingPosition position,
+  ) async {
+    if (busy) throw const FormatException('请等待当前续读传输完成');
+    final repository = _sync.repository;
+    if (repository == null || !_sync.enabled || _sync._client == null) {
+      throw const FormatException('请先开启局域网续读并连接设备');
+    }
+    if (!_sync.peers.any(
+      (p) =>
+          p.key == peer.key &&
+          p.deviceId == peer.deviceId &&
+          p.addressKey == peer.addressKey,
+    )) {
+      throw const FormatException('这台设备的配对已失效，请重新连接');
+    }
+    final generation = ++_generation;
+    _sendingBook = true;
+    error = null;
+    _incomingFailure = false;
+    transfer = LanBookTransfer(
+      title: book.title,
+      device: peer.name ?? '另一台设备',
+      phase: '正在准备在线续读位置',
+      incoming: false,
+    );
+    _notify();
+    try {
+      final reference = await OnlineBookHandoff.prepare(
+        book: book,
+        position: position,
+        repository: repository,
+      );
+      if (generation != _generation) throw const FormatException('续读发送已取消');
+      final id = newLanDeviceId();
+      final reply = await _control(
+        peer,
+        LanSyncCipher(peer.key),
+        '/handoff/online',
+        {'id': id, 'device': _sync.deviceName, 'reference': reference.toJson()},
+        'handoff-online',
+        cancellable: true,
+      );
+      if (generation != _generation) throw const FormatException('续读发送已取消');
+      if (reply['replyTo'] != id) throw const FormatException('续读回复不匹配');
+      if (reply['error'] case final String message) {
+        throw FormatException(message);
+      }
+      if (reply['ready'] != true) throw const FormatException('对方未接收续读位置，请重试');
+    } catch (failure) {
+      error = generation != _generation
+          ? '续读发送已取消'
+          : failure is FormatException
+          ? failure.message.toString()
+          : '在线续读发送未完成，请检查连接后重试';
+      rethrow;
+    } finally {
+      _sendingBook = false;
+      transfer = null;
+      _notify();
+    }
+  }
+
   Future<void> _reply(
     HttpRequest request,
     LanSyncCipher cipher,
@@ -351,6 +462,46 @@ class LanBookHandoff extends ChangeNotifier {
     String? sender,
   ) async {
     final path = request.uri.path;
+    if (path == '/handoff/online') {
+      final value = await cipher.open(
+        await _sync._read(request, maximum: 32 * 1024),
+        'handoff-online',
+      );
+      final id = value['id'], device = value['device'];
+      if (id is! String ||
+          !RegExp(r'^[a-f0-9]{32}$').hasMatch(id) ||
+          device is! String ||
+          device.length > 64) {
+        throw const FormatException('在线续读请求格式有误');
+      }
+      try {
+        if (busy) throw const FormatException('对方正在接收书籍，请稍后再试');
+        if (_sync.repository == null) {
+          throw const FormatException('对方版本暂不支持在线续读，请更新对方 App 后重试');
+        }
+        final online = OnlineBookHandoff.fromJson(value['reference']);
+        received = LanHandoffReceipt(
+          online.book,
+          online.position,
+          device,
+          online: online,
+        );
+        error = null;
+        _incomingFailure = false;
+        _notify();
+        await _reply(request, cipher, {
+          'replyTo': id,
+          'ready': true,
+        }, 'handoff-online-reply');
+      } on FormatException catch (failure) {
+        await _reply(request, cipher, {
+          'replyTo': id,
+          'ready': false,
+          'error': failure.message.toString(),
+        }, 'handoff-online-reply');
+      }
+      return;
+    }
     if (_books == null) {
       request.response.statusCode = 404;
       return;

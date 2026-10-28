@@ -39,7 +39,75 @@ Future<Novel> saveLocalSeries({
   required String title,
   required List<({int bookId, String title})> volumes,
 }) async {
+  if (id != null && volumes.length >= 2) {
+    return (await updateLocalSeries(
+      books: books,
+      library: library,
+      id: id,
+      title: title,
+      volumes: volumes,
+    ))!;
+  }
   final book = await books.saveSeries(id: id, title: title, volumes: volumes);
+  await reconcileLocalSeries(books, library);
+  return book;
+}
+
+/// Saves a series draft, restoring detached volumes as independent originals.
+/// Fewer than two remaining volumes dissolves the series and returns null.
+Future<Novel?> updateLocalSeries({
+  required LocalBookStore books,
+  required LibraryState library,
+  required int id,
+  required String title,
+  required List<({int bookId, String title})> volumes,
+}) async {
+  final previous = books.seriesFor(id);
+  final combined = books.seriesSnapshot(id);
+  if (previous == null || previous.id != id || combined == null) {
+    throw const FormatException('合订本已变化，请返回后重试');
+  }
+  if (title.trim().isEmpty || title.trim().length > 160) {
+    throw const FormatException('合订本书名需要 1～160 个字');
+  }
+  final originals = books.originals.map((book) => book.id).toSet();
+  final members = <int>{};
+  for (final volume in volumes) {
+    if (!originals.contains(volume.bookId) || !members.add(volume.bookId)) {
+      throw const FormatException('请选择不重复的已导入分卷');
+    }
+    if (volume.title.trim().isEmpty || volume.title.trim().length > 160) {
+      throw const FormatException('每卷名称需要 1～160 个字');
+    }
+    final owner = books.seriesFor(volume.bookId);
+    if (owner != null && owner.id != id) {
+      throw const FormatException('所选分卷已属于其他合订本，请重新选择');
+    }
+  }
+  if (volumes.length < 2) {
+    await dissolveLocalSeries(books: books, library: library, series: previous);
+    return null;
+  }
+  final detached = previous.volumes
+      .where((volume) => !members.contains(volume.bookId))
+      .toList();
+  if (detached.isNotEmpty) {
+    // Copy records while the complete old chapter map still exists. A failed
+    // record write must not expose an original with its newest position lost.
+    await _restoreVolumeRecords(
+      books,
+      library,
+      previous,
+      reveal: true,
+      volumes: detached,
+    );
+  }
+  final book = await books.saveSeries(id: id, title: title, volumes: volumes);
+  await library.remapBookContents(
+    previous: combined,
+    target: book,
+    detachedSourceIds: detached.map((volume) => volume.bookId).toSet(),
+  );
   await reconcileLocalSeries(books, library);
   return book;
 }
@@ -76,12 +144,13 @@ Future<void> _restoreVolumeRecords(
   LibraryState library,
   LocalBookSeries series, {
   required bool reveal,
+  Iterable<LocalSeriesVolume>? volumes,
 }) async {
   final combined = books.seriesSnapshot(series.id);
   if (combined == null) throw const FormatException('合订本已不存在');
   // Copy newer records back before exposing the independent originals. If a
   // preference write fails, the intact series remains available for retry.
-  for (final volume in series.volumes) {
+  for (final volume in volumes ?? series.volumes) {
     final original = books.book(volume.bookId)!;
     await library.combineBookRecords(
       target: original,
@@ -93,6 +162,7 @@ Future<void> _restoreVolumeRecords(
       },
       onShelf: false,
       revealTarget: reveal,
+      splitUnderlines: true,
     );
   }
 }

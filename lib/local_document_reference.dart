@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/services.dart';
 import 'local_document_input.dart';
 
@@ -50,7 +51,26 @@ abstract class LocalDocumentAccess {
   Stream<List<int>> bytes(LocalDocumentSource source);
 }
 
-class PlatformLocalDocumentAccess implements LocalDocumentAccess {
+/// Metadata captured while the read-only input is already open. The import
+/// worker adds its exact content digest before this becomes durable metadata.
+typedef LocalDocumentHeader = ({String reference, int size, int modified});
+
+/// Optional import capability. Existing access implementations keep their
+/// inspect/validated-read contract; platform imports avoid closing and reopening
+/// the original between identifying and parsing it.
+abstract interface class LocalDocumentImportAccess {
+  Future<T> withFreshInput<T>(
+    String reference,
+    Future<T> Function(LocalDocumentInput input, LocalDocumentHeader header)
+    read,
+  );
+}
+
+Future<String> _documentDigest(LocalDocumentInput input) async =>
+    (await sha256.bind(input.bytes()).first).toString();
+
+class PlatformLocalDocumentAccess
+    implements LocalDocumentAccess, LocalDocumentImportAccess {
   static const _channel = MethodChannel('org.mewx.wenku8/book_documents');
   Future<Map<String, dynamic>> _open(
     String reference, [
@@ -68,8 +88,11 @@ class PlatformLocalDocumentAccess implements LocalDocumentAccess {
   Future<LocalDocumentSource> inspect(String reference) async {
     final lease = await _open(reference);
     try {
-      final digest = (await sha256.bind(_input(lease).bytes()).first)
-          .toString();
+      final digest = await compute(
+        _documentDigest,
+        _input(lease),
+        debugLabel: 'local-original-identity',
+      );
       return LocalDocumentSource.fromJson({
         ...lease,
         'reference': reference,
@@ -83,6 +106,26 @@ class PlatformLocalDocumentAccess implements LocalDocumentAccess {
   LocalDocumentInput _input(Map lease) => lease['descriptor'] is int
       ? LocalDocumentInput.descriptor(lease['descriptor'], lease['size'])
       : LocalDocumentInput.file(lease['path'] as String);
+
+  @override
+  Future<T> withFreshInput<T>(
+    String reference,
+    Future<T> Function(LocalDocumentInput input, LocalDocumentHeader header)
+    read,
+  ) async {
+    final lease = await _open(reference);
+    try {
+      return await read(_input(lease), (
+        reference: reference,
+        size: lease['size'] as int,
+        modified: lease['modified'] as int,
+      ));
+    } on FileSystemException {
+      throw const FormatException('无法原位读取这份原文件，请重新定位，或选择「复制到应用」');
+    } finally {
+      await _close(lease);
+    }
+  }
 
   @override
   Future<T> withInput<T>(

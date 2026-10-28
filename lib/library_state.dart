@@ -24,6 +24,16 @@ import 'personal_images.dart';
 import 'app_palette.dart';
 import 'palette_platform.dart';
 import 'reading_entry.dart';
+import 'blocked_tags.dart';
+import 'book_grid_density.dart';
+import 'book_collection_mode.dart';
+import 'book_shelf_preferences.dart';
+import 'book_shelf_content_preferences.dart';
+import 'discovery_shelf_query.dart';
+import 'reader_underline.dart';
+import 'reader_annotation_range.dart';
+import 'reading_activity.dart';
+import 'reading_moments.dart';
 export 'reading_entry.dart';
 
 class ReadingPosition {
@@ -125,13 +135,40 @@ class ReaderBookmark {
     this.quote = '',
     this.category = '',
     this.categoryAt = 0,
-  });
+    this.underlineRanges = const [],
+    ReaderAnnotationData? annotation,
+    this.rangeUpdatedAt = 0,
+    this.createdAt,
+    this.createdOffsetMinutes,
+  }) : _annotation = annotation;
   final String id;
   final String chapterTitle;
   final ReadingPosition position;
   final String quote;
   final String category;
   final int categoryAt;
+
+  /// UTC instant plus the recording-zone offset; legacy marks remain unknown.
+  final DateTime? createdAt;
+  final int? createdOffsetMinutes;
+
+  /// Empty for ordinary bookmarks; underline selections retain source ranges.
+  final List<ReaderUnderlineRange> underlineRanges;
+  final ReaderAnnotationData? _annotation;
+
+  /// Missing legacy metadata retains underline semantics only for exact ranges.
+  ReaderAnnotationData get annotation =>
+      _annotation ??
+      (isUnderline
+          ? const ReaderAnnotationData()
+          : const ReaderAnnotationData(style: ReaderMarkStyle.none));
+  final int rangeUpdatedAt;
+  String get note => annotation.note;
+  String get kindLabel =>
+      isUnderline && annotation.style != ReaderMarkStyle.none
+      ? annotation.style.label
+      : '书签';
+  bool get isUnderline => underlineRanges.isNotEmpty;
   ReaderBookmark withCategory(String value, int at) => ReaderBookmark(
     id: id,
     chapterTitle: chapterTitle,
@@ -139,7 +176,63 @@ class ReaderBookmark {
     quote: quote,
     category: value,
     categoryAt: at,
+    underlineRanges: underlineRanges,
+    annotation: annotation,
+    rangeUpdatedAt: rangeUpdatedAt,
+    createdAt: createdAt,
+    createdOffsetMinutes: createdOffsetMinutes,
   );
+
+  /// Edits appearance/thoughts without changing identity, quote or source anchor.
+  ReaderBookmark withAnnotation(ReaderAnnotationData value) => ReaderBookmark(
+    id: id,
+    chapterTitle: chapterTitle,
+    position: position,
+    quote: quote,
+    category: category,
+    categoryAt: categoryAt,
+    underlineRanges: underlineRanges,
+    annotation: value,
+    rangeUpdatedAt: rangeUpdatedAt,
+    createdAt: createdAt,
+    createdOffsetMinutes: createdOffsetMinutes,
+  );
+
+  /// Replaces only source geometry, retaining identity and all personal metadata.
+  ReaderBookmark withRange({
+    required String chapterTitle,
+    required ReadingPosition position,
+    required List<ReaderUnderlineRange> ranges,
+    required String quote,
+    required int updatedAt,
+  }) => ReaderBookmark(
+    id: id,
+    chapterTitle: chapterTitle,
+    position: position,
+    quote: quote,
+    category: category,
+    categoryAt: categoryAt,
+    underlineRanges: ranges,
+    annotation: annotation,
+    rangeUpdatedAt: updatedAt,
+    createdAt: createdAt,
+    createdOffsetMinutes: createdOffsetMinutes,
+  );
+
+  ReaderBookmark withCreation(DateTime at, int? offsetMinutes) =>
+      ReaderBookmark(
+        id: id,
+        chapterTitle: chapterTitle,
+        position: position,
+        quote: quote,
+        category: category,
+        categoryAt: categoryAt,
+        underlineRanges: underlineRanges,
+        annotation: annotation,
+        rangeUpdatedAt: rangeUpdatedAt,
+        createdAt: at.toUtc(),
+        createdOffsetMinutes: offsetMinutes,
+      );
 
   Map<String, Object> toJson() => {
     'id': id,
@@ -148,6 +241,17 @@ class ReaderBookmark {
     if (quote.isNotEmpty) 'quote': quote,
     if (category.isNotEmpty || categoryAt > 0) 'category': category,
     if (categoryAt > 0) 'categoryAt': categoryAt,
+    if (!annotation.isEmpty ||
+        isUnderline && annotation.style == ReaderMarkStyle.none)
+      'annotation': annotation.toJson(),
+    if (rangeUpdatedAt > 0) 'rangeUpdatedAt': rangeUpdatedAt,
+    if (createdAt != null) 'createdAt': createdAt!.toUtc().toIso8601String(),
+    if (createdAt != null && createdOffsetMinutes != null)
+      'createdOffsetMinutes': createdOffsetMinutes!,
+    if (isUnderline)
+      'underlineRanges': underlineRanges
+          .map((range) => range.toJson())
+          .toList(),
   };
 
   factory ReaderBookmark.fromJson(Map<String, dynamic> json) {
@@ -156,6 +260,10 @@ class ReaderBookmark {
     final position = json['position'];
     final quote = json['quote'] ?? '';
     final category = json['category'] ?? '';
+    final createdAt = json['createdAt'] is String
+        ? DateTime.tryParse(json['createdAt'] as String)
+        : null;
+    final createdOffset = json['createdOffsetMinutes'];
     if (id is! String ||
         id.isEmpty ||
         title is! String ||
@@ -164,6 +272,15 @@ class ReaderBookmark {
         quote.length > 12000 ||
         category is! String ||
         category.length > 30 ||
+        (json['createdAt'] != null &&
+            (createdAt == null || !createdAt.isUtc)) ||
+        (createdOffset != null &&
+            (createdOffset is! int ||
+                createdOffset < -840 ||
+                createdOffset > 840 ||
+                createdAt == null)) ||
+        (json['rangeUpdatedAt'] != null &&
+            (json['rangeUpdatedAt'] is! int || json['rangeUpdatedAt'] < 0)) ||
         (json['categoryAt'] != null &&
             (json['categoryAt'] is! int || json['categoryAt'] < 0))) {
       throw const FormatException('Damaged bookmark');
@@ -175,6 +292,16 @@ class ReaderBookmark {
       quote: quote,
       category: category,
       categoryAt: json['categoryAt'] ?? 0,
+      createdAt: createdAt,
+      createdOffsetMinutes: createdOffset,
+      annotation: json['annotation'] == null
+          ? null
+          : ReaderAnnotationData.fromJson(json['annotation']),
+      rangeUpdatedAt: json['rangeUpdatedAt'] ?? 0,
+      underlineRanges: decodeReaderUnderlineRanges(
+        json['underlineRanges'],
+        position: position,
+      ),
     );
   }
 }
@@ -188,6 +315,25 @@ class LibraryState extends ChangeNotifier {
   }) : fonts = fonts ?? UserFontStore(),
        palettePlatform = palettePlatform ?? const PalettePlatform(),
        backgrounds = backgrounds ?? ReaderBackgroundStore() {
+    final activity = _prefs.get(ReadingActivityStore.preferenceKey);
+    try {
+      readingActivity = ReadingActivityStore(
+        record: activity is String ? activity : null,
+        persist: _persistReadingActivity,
+      );
+    } on FormatException {
+      // Activity is independent of saved positions and original book content.
+      readingActivity = ReadingActivityStore(persist: _persistReadingActivity);
+    }
+    final moments = _prefs.get(ReadingMomentsStore.preferenceKey);
+    try {
+      readingMoments = ReadingMomentsStore(
+        record: moments is String ? moments : null,
+        persist: _persistReadingMoments,
+      );
+    } on FormatException {
+      readingMoments = ReadingMomentsStore(persist: _persistReadingMoments);
+    }
     _shelf.addAll(
       ((_prefs.get('shelf') is List<String>)
               ? _prefs.getStringList('shelf')!
@@ -204,14 +350,7 @@ class LibraryState extends ChangeNotifier {
           .whereType<int>()
           .where((id) => id > 0),
     );
-    _hiddenLocalBooks.addAll(
-      (_prefs.get('local_shelf_hidden') is List<String>
-              ? _prefs.getStringList('local_shelf_hidden')!
-              : const <String>[])
-          .map(int.tryParse)
-          .whereType<int>()
-          .where(isLocalBook),
-    );
+    // Hidden-local recovery is retired; retained originals are visible again.
     for (final key in _prefs.getKeys()) {
       if (key.startsWith(bookReaderStylePrefix)) {
         final id = int.tryParse(key.substring(bookReaderStylePrefix.length));
@@ -297,6 +436,7 @@ class LibraryState extends ChangeNotifier {
             (a, b) => b.position.updatedAt.compareTo(a.position.updatedAt),
           );
           _bookmarks[id] = bookmarks;
+          _updateUnderlineIndex(id, notify: false);
         } catch (_) {
           // Resume records are independent of the bookmark list.
         }
@@ -369,7 +509,36 @@ class LibraryState extends ChangeNotifier {
       'finished' => 'finished',
       _ => 'all',
     };
-    _shelfLayout = _prefs.get('shelfLayout') == 'list' ? 'list' : 'shelf';
+    _shelfLayout = BookCollectionMode.parseOrDefault(
+      _prefs.get('shelfLayout'),
+    ).storageValue;
+    _shelfGridDensity = BookGridDensity.parseOrAuto(
+      _prefs.get('shelfGridDensity'),
+    );
+    _shelfPreferences = BookShelfPreferences.parseOrDefault(
+      _prefs.get('shelfPreferences'),
+    );
+    _shelfContent = BookShelfContentPreferences.parseOrDefault(
+      _prefs.get('shelfContent'),
+    );
+    _discoveryViewMode = BookCollectionMode.parseOrDefault(
+      _prefs.get('discoveryLayout'),
+    );
+    _discoveryGridDensity = BookGridDensity.parseOrAuto(
+      _prefs.get('discoveryGridDensity'),
+    );
+    _discoveryShelfPreferences = BookShelfPreferences.parseOrDefault(
+      _prefs.get('discoveryShelfPreferences'),
+    );
+    _discoveryShelfContent = BookShelfContentPreferences.parseOrDefault(
+      _prefs.get('discoveryShelfContent'),
+    );
+    final discoveryQuery = DiscoveryShelfQuery.tryParse(
+      _prefs.get('discoveryShelfQuery'),
+    );
+    _hasDiscoveryShelfQuery = discoveryQuery != null;
+    _discoveryShelfQuery =
+        discoveryQuery ?? const DiscoveryShelfQuery.defaults();
     _shelfSourceFilter =
         ['local', 'cached', 'online'].contains(_prefs.get('shelfSourceFilter'))
         ? _prefs.get('shelfSourceFilter') as String
@@ -382,7 +551,12 @@ class LibraryState extends ChangeNotifier {
     );
     _directReadingEnabled =
         _prefs.get('directReading') == true && _directReadingPages.isNotEmpty;
+    _openRecentOnLaunch = _prefs.get('openRecentOnLaunch') == true;
+    _startPage = AppStartPage.parseOrDefault(_prefs.get('startPage'));
     _combinedShelf = _prefs.get('combinedShelf') == true;
+    _blockedTags = BlockedTags.fromRecord(
+      _prefs.get(BlockedTags.preferenceKey),
+    );
     final recent = _prefs.get('recentSearches');
     if (recent is List<String>) {
       final seen = <String>{};
@@ -398,6 +572,12 @@ class LibraryState extends ChangeNotifier {
   }
 
   final SharedPreferences _prefs;
+
+  /// Local measured reading time; its notifications never rebuild the reader.
+  late final ReadingActivityStore readingActivity;
+
+  /// Verified reading and durable milestones; independent of foreground totals.
+  late final ReadingMomentsStore readingMoments;
   final UserFontStore fonts;
   final ReaderBackgroundStore backgrounds;
   final PalettePlatform palettePlatform;
@@ -489,9 +669,12 @@ class LibraryState extends ChangeNotifier {
   final _settings = ChangeNotifier();
   final _history = ChangeNotifier();
   final _bookmarkChanges = ChangeNotifier();
+  final _underlineChanges = ChangeNotifier();
   final _illustrationChanges = ChangeNotifier();
   final _searchChanges = ChangeNotifier();
+  final _blockedTagsChanges = ChangeNotifier();
   final _shelfViewChanges = ChangeNotifier();
+  final _discoveryViewChanges = ChangeNotifier();
   final _readerBehaviorChanges = ChangeNotifier();
   final _navigationChanges = ChangeNotifier();
   final Set<int> _shelf = {};
@@ -558,18 +741,41 @@ class LibraryState extends ChangeNotifier {
 
   final Map<int, int> _added = {};
   final Map<int, List<ReaderBookmark>> _bookmarks = {};
+  final Map<int, List<ReaderUnderlineRange>> _underlineRanges = {};
+  final Map<int, Map<int, List<ReaderUnderlineRange>>> _underlinesByChapter =
+      {};
+  final Map<int, List<ReaderAnnotationRange>> _annotationRanges = {};
+  final Map<int, Map<int, List<ReaderAnnotationRange>>> _annotationsByChapter =
+      {};
   final Map<int, List<IllustrationPlacement>> _illustrations = {};
   final Map<int, int> _shelfRevisions = {};
+  BlockedTags _blockedTags = BlockedTags.empty;
   List<String> _recentSearches = const [];
   String _shelfSort = 'recentRead';
   String _shelfFilter = 'all';
   String _shelfSourceFilter = 'all';
   String _shelfLayout = 'shelf';
+  BookGridDensity _shelfGridDensity = const BookGridDensity.auto();
+  BookShelfPreferences _shelfPreferences =
+      const BookShelfPreferences.defaults();
+  BookShelfContentPreferences _shelfContent =
+      const BookShelfContentPreferences.defaults();
+  BookCollectionMode _discoveryViewMode = BookCollectionMode.shelfList;
+  BookGridDensity _discoveryGridDensity = const BookGridDensity.auto();
+  BookShelfPreferences _discoveryShelfPreferences =
+      const BookShelfPreferences.defaults();
+  BookShelfContentPreferences _discoveryShelfContent =
+      const BookShelfContentPreferences.defaults();
+  DiscoveryShelfQuery _discoveryShelfQuery =
+      const DiscoveryShelfQuery.defaults();
+  bool _hasDiscoveryShelfQuery = false;
   bool _keepScreenOn = false;
   bool _forcePortrait = false;
   bool _adaptWhenOffline = true, _localReaderMode = false;
   Set<ReadingEntry> _directReadingPages = {};
   bool _directReadingEnabled = false;
+  bool _openRecentOnLaunch = false;
+  AppStartPage _startPage = AppStartPage.discovery;
   bool _combinedShelf = false;
   ReaderPreferences _readerPreferences = const ReaderPreferences();
   final _bookReaderStyles = <int, ReaderBookStyle>{};
@@ -656,6 +862,9 @@ class LibraryState extends ChangeNotifier {
   Listenable get settingsChanges => _settings;
   Listenable get historyChanges => _history;
   Listenable get bookmarkChanges => _bookmarkChanges;
+
+  /// Changes only when persisted underline geometry changes, not on reflow.
+  Listenable get underlineChanges => _underlineChanges;
   Listenable get illustrationChanges => _illustrationChanges;
   List<IllustrationPlacement> illustrationsFor(int id, {int? chapterId}) =>
       List.unmodifiable(
@@ -703,13 +912,17 @@ class LibraryState extends ChangeNotifier {
   }
 
   Listenable get searchChanges => _searchChanges;
+  Set<String> get blockedTags => _blockedTags.tags;
+  Listenable get blockedTagsChanges => _blockedTagsChanges;
   Listenable get shelfViewChanges => _shelfViewChanges;
+  Listenable get discoveryViewChanges => _discoveryViewChanges;
   Set<int> get hiddenLocalBooks => Set.unmodifiable(_hiddenLocalBooks);
   bool localBookVisible(int id) => !_hiddenLocalBooks.contains(id);
   Future<void> setLocalBookHidden(int id, bool hidden) =>
       setLocalBooksHidden([id], hidden);
 
   Future<void> setLocalBooksHidden(Iterable<int> ids, bool hidden) {
+    if (hidden) throw const FormatException('仅移出功能已取消，书籍和文件未变动');
     final targets = ids.where(isLocalBook).toSet();
     if (targets.isEmpty) return Future.value();
     if (_restoreBarrier case final barrier?) {
@@ -740,6 +953,8 @@ class LibraryState extends ChangeNotifier {
   bool get adaptWhenOffline => _adaptWhenOffline;
   bool get localReaderMode => _localReaderMode;
   bool get directReading => _directReadingEnabled;
+  bool get openRecentOnLaunch => _openRecentOnLaunch;
+  AppStartPage get startPage => _startPage;
   Set<ReadingEntry> get directReadingPages =>
       Set.unmodifiable(_directReadingPages);
   bool directReadingOn(ReadingEntry page) =>
@@ -750,6 +965,19 @@ class LibraryState extends ChangeNotifier {
   String get shelfFilter => _shelfFilter;
   String get shelfSourceFilter => _shelfSourceFilter;
   String get shelfLayout => _shelfLayout;
+  BookCollectionMode get shelfViewMode =>
+      BookCollectionMode.parseOrDefault(_shelfLayout);
+  BookGridDensity get shelfGridDensity => _shelfGridDensity;
+  BookShelfPreferences get shelfPreferences => _shelfPreferences;
+  BookShelfContentPreferences get shelfContent => _shelfContent;
+  BookCollectionMode get discoveryViewMode => _discoveryViewMode;
+  BookGridDensity get discoveryGridDensity => _discoveryGridDensity;
+  BookShelfPreferences get discoveryShelfPreferences =>
+      _discoveryShelfPreferences;
+  BookShelfContentPreferences get discoveryShelfContent =>
+      _discoveryShelfContent;
+  DiscoveryShelfQuery get discoveryShelfQuery => _discoveryShelfQuery;
+  bool get hasDiscoveryShelfQuery => _hasDiscoveryShelfQuery;
   bool get keepScreenOn => _keepScreenOn;
   bool get forcePortrait => _forcePortrait;
   ReaderPreferences get readerPreferences => _readerPreferences;
@@ -812,6 +1040,85 @@ class LibraryState extends ChangeNotifier {
   ReadingPosition? positionFor(int id) => _positions[id];
   List<ReaderBookmark> bookmarksFor(int id) =>
       List.unmodifiable(_bookmarks[id] ?? const <ReaderBookmark>[]);
+
+  /// Indexed immutable source ranges; repeated paragraph builds do not scan marks.
+  List<ReaderUnderlineRange> underlinesFor(int id, {int? chapterId}) =>
+      chapterId == null
+      ? _underlineRanges[id] ?? const []
+      : _underlinesByChapter[id]?[chapterId] ?? const [];
+
+  /// Immutable appearance-aware index; paragraph builds never scan bookmarks.
+  List<ReaderAnnotationRange> annotationsFor(int id, {int? chapterId}) =>
+      chapterId == null
+      ? _annotationRanges[id] ?? const []
+      : _annotationsByChapter[id]?[chapterId] ?? const [];
+
+  bool _updateUnderlineIndex(int id, {bool notify = true}) {
+    final styledMarks =
+        List<ReaderBookmark>.of(_bookmarks[id] ?? const <ReaderBookmark>[])
+          ..sort((a, b) {
+            final edited = b.annotation.updatedAt.compareTo(
+              a.annotation.updatedAt,
+            );
+            return edited != 0 ? edited : b.id.compareTo(a.id);
+          });
+    final annotations = <ReaderAnnotationRange>[
+      for (final mark in styledMarks)
+        for (final range in mark.underlineRanges)
+          ReaderAnnotationRange(
+            range,
+            mark.annotation.style,
+            mark.annotation.color,
+          ),
+    ];
+    final ranges =
+        <ReaderUnderlineRange>[
+          for (final mark in _bookmarks[id] ?? const <ReaderBookmark>[])
+            ...mark.underlineRanges,
+        ]..sort((a, b) {
+          for (final pair in [
+            (a.chapterId, b.chapterId),
+            (a.startParagraph, b.startParagraph),
+            (a.startOffset, b.startOffset),
+            (a.endParagraph, b.endParagraph),
+            (a.endOffset, b.endOffset),
+          ]) {
+            final order = pair.$1.compareTo(pair.$2);
+            if (order != 0) return order;
+          }
+          return a.contentRevision.compareTo(b.contentRevision);
+        });
+    if (listEquals(_underlineRanges[id] ?? const [], ranges) &&
+        listEquals(_annotationRanges[id] ?? const [], annotations)) {
+      return false;
+    }
+    final previous = _underlinesByChapter[id];
+    final chapters = <int, List<ReaderUnderlineRange>>{};
+    for (final range in ranges) {
+      (chapters[range.chapterId] ??= []).add(range);
+    }
+    _underlineRanges[id] = List.unmodifiable(ranges);
+    _underlinesByChapter[id] = {
+      for (final entry in chapters.entries)
+        entry.key: listEquals(previous?[entry.key], entry.value)
+            ? previous![entry.key]!
+            : List.unmodifiable(entry.value),
+    };
+    _annotationRanges[id] = List.unmodifiable(annotations);
+    final styledChapters = <int, List<ReaderAnnotationRange>>{};
+    for (final item in annotations) {
+      (styledChapters[item.range.chapterId] ??= []).add(item);
+    }
+    final oldStyled = _annotationsByChapter[id];
+    _annotationsByChapter[id] = {
+      for (final entry in styledChapters.entries)
+        entry.key: listEquals(oldStyled?[entry.key], entry.value)
+            ? oldStyled![entry.key]!
+            : List.unmodifiable(entry.value),
+    };
+    if (notify && !_disposed) _underlineChanges.notifyListeners();
+    return true;
+  }
 
   List<({int novelId, ReaderBookmark bookmark})> get bookmarkEntries {
     final entries =
@@ -896,11 +1203,35 @@ class LibraryState extends ChangeNotifier {
     });
   }
 
+  Future<void> setBlockedTags(Iterable<String> values) {
+    final input = List<String>.of(values);
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then((_) => setBlockedTags(input));
+    }
+    return _queuePositionWrite(() async {
+      final next = await BlockedTags.fromInput(input);
+      if (_blockedTags.sameAs(next)) return;
+      await writeLibraryPreference(
+        _prefs,
+        BlockedTags.preferenceKey,
+        next.toRecord(),
+      );
+      _blockedTags = next;
+      if (!_disposed) {
+        _blockedTagsChanges.notifyListeners();
+        _settings.notifyListeners();
+      }
+    });
+  }
+
   Future<void> setShelfView({
     String? sort,
     String? filter,
     String? layout,
+    BookCollectionMode? mode,
     String? source,
+    BookGridDensity? gridDensity,
+    BookShelfPreferences? shelfPreferences,
   }) async {
     if (_restoreBarrier case final barrier?) {
       return barrier.future.then(
@@ -908,7 +1239,10 @@ class LibraryState extends ChangeNotifier {
           sort: sort,
           filter: filter,
           layout: layout,
+          mode: mode,
           source: source,
+          gridDensity: gridDensity,
+          shelfPreferences: shelfPreferences,
         ),
       );
     }
@@ -920,9 +1254,11 @@ class LibraryState extends ChangeNotifier {
           ['all', 'unread', 'reading', 'finished'].contains(filter)
           ? filter!
           : _shelfFilter;
-      final nextLayout = ['shelf', 'list'].contains(layout)
-          ? layout!
-          : _shelfLayout;
+      final nextLayout =
+          (mode ?? BookCollectionMode.tryParse(layout))?.storageValue ??
+          _shelfLayout;
+      final nextGridDensity = gridDensity ?? _shelfGridDensity;
+      final nextShelfPreferences = shelfPreferences ?? _shelfPreferences;
       final nextSource = ['all', 'local', 'cached', 'online'].contains(source)
           ? source!
           : _shelfSourceFilter;
@@ -930,18 +1266,102 @@ class LibraryState extends ChangeNotifier {
         'shelfSort': nextSort,
         'shelfFilter': nextFilter,
         'shelfLayout': nextLayout,
+        'shelfGridDensity': nextGridDensity.value,
+        'shelfPreferences': nextShelfPreferences.record,
         'shelfSourceFilter': nextSource,
       });
       if (nextSort != _shelfSort ||
           nextFilter != _shelfFilter ||
           nextLayout != _shelfLayout ||
+          nextGridDensity != _shelfGridDensity ||
+          nextShelfPreferences != _shelfPreferences ||
           nextSource != _shelfSourceFilter) {
         _shelfSort = nextSort;
         _shelfFilter = nextFilter;
         _shelfLayout = nextLayout;
+        _shelfGridDensity = nextGridDensity;
+        _shelfPreferences = nextShelfPreferences;
         _shelfSourceFilter = nextSource;
         if (!_disposed) _shelfViewChanges.notifyListeners();
       }
+    });
+  }
+
+  Future<void> setDiscoveryView({
+    BookCollectionMode? mode,
+    BookGridDensity? gridDensity,
+    BookShelfPreferences? shelfPreferences,
+  }) async {
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then(
+        (_) => setDiscoveryView(
+          mode: mode,
+          gridDensity: gridDensity,
+          shelfPreferences: shelfPreferences,
+        ),
+      );
+    }
+    await _queuePositionWrite(() async {
+      final nextMode = mode ?? _discoveryViewMode;
+      final nextDensity = gridDensity ?? _discoveryGridDensity;
+      final nextShelfPreferences =
+          shelfPreferences ?? _discoveryShelfPreferences;
+      if (nextMode == _discoveryViewMode &&
+          nextDensity == _discoveryGridDensity &&
+          nextShelfPreferences == _discoveryShelfPreferences) {
+        return;
+      }
+      await _commitLibraryRecords({
+        'discoveryLayout': nextMode.storageValue,
+        'discoveryGridDensity': nextDensity.value,
+        'discoveryShelfPreferences': nextShelfPreferences.record,
+      });
+      _discoveryViewMode = nextMode;
+      _discoveryGridDensity = nextDensity;
+      _discoveryShelfPreferences = nextShelfPreferences;
+      if (!_disposed) _discoveryViewChanges.notifyListeners();
+    });
+  }
+
+  /// Only the featured region changes; existing collection controls stay put.
+  Future<void> setShelfContent(BookShelfContentPreferences value) async {
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then((_) => setShelfContent(value));
+    }
+    await _queuePositionWrite(() async {
+      if (_shelfContent == value) return;
+      await _commitLibraryRecords({'shelfContent': value.record});
+      _shelfContent = value;
+      if (!_disposed) _shelfViewChanges.notifyListeners();
+    });
+  }
+
+  /// Discovery keeps its region selection separate from shelf/local choices.
+  Future<void> setDiscoveryShelfContent(
+    BookShelfContentPreferences value,
+  ) async {
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then((_) => setDiscoveryShelfContent(value));
+    }
+    await _queuePositionWrite(() async {
+      if (_discoveryShelfContent == value) return;
+      await _commitLibraryRecords({'discoveryShelfContent': value.record});
+      _discoveryShelfContent = value;
+      if (!_disposed) _discoveryViewChanges.notifyListeners();
+    });
+  }
+
+  /// Persists only the upper region's remote query, without changing the lower feed.
+  Future<void> setDiscoveryShelfQuery(DiscoveryShelfQuery value) async {
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then((_) => setDiscoveryShelfQuery(value));
+    }
+    await _queuePositionWrite(() async {
+      if (_hasDiscoveryShelfQuery && _discoveryShelfQuery == value) return;
+      await _commitLibraryRecords({'discoveryShelfQuery': value.record});
+      _discoveryShelfQuery = value;
+      _hasDiscoveryShelfQuery = true;
+      if (!_disposed) _discoveryViewChanges.notifyListeners();
     });
   }
 
@@ -971,6 +1391,31 @@ class LibraryState extends ChangeNotifier {
         _forcePortrait = value;
         if (!_disposed) _settings.notifyListeners();
       }
+    });
+  }
+
+  Future<void> setOpenRecentOnLaunch(bool value) async {
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then((_) => setOpenRecentOnLaunch(value));
+    }
+    await _queuePositionWrite(() async {
+      await writeLibraryPreference(_prefs, 'openRecentOnLaunch', value);
+      if (_openRecentOnLaunch != value) {
+        _openRecentOnLaunch = value;
+        if (!_disposed) _settings.notifyListeners();
+      }
+    });
+  }
+
+  Future<void> setStartPage(AppStartPage value) async {
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then((_) => setStartPage(value));
+    }
+    await _queuePositionWrite(() async {
+      if (_startPage == value) return;
+      await writeLibraryPreference(_prefs, 'startPage', value.name);
+      _startPage = value;
+      if (!_disposed) _settings.notifyListeners();
     });
   }
 
@@ -1212,6 +1657,9 @@ class LibraryState extends ChangeNotifier {
     }
   }
 
+  Set<int> get recordedReadingIds =>
+      Set.unmodifiable({..._chapters.keys, ..._positions.keys});
+
   List<int> get readingHistoryIds {
     final ids =
         {
@@ -1248,6 +1696,28 @@ class LibraryState extends ChangeNotifier {
       await write();
     });
     return _positionWrites;
+  }
+
+  Future<void> _persistReadingActivity() async {
+    if (_restoreBarrier case final barrier?) await barrier.future;
+    await _queuePositionWrite(
+      () => writeLibraryPreference(
+        _prefs,
+        ReadingActivityStore.preferenceKey,
+        readingActivity.encode(),
+      ),
+    );
+  }
+
+  Future<void> _persistReadingMoments() async {
+    if (_restoreBarrier case final barrier?) await barrier.future;
+    await _queuePositionWrite(
+      () => writeLibraryPreference(
+        _prefs,
+        ReadingMomentsStore.preferenceKey,
+        readingMoments.encode(),
+      ),
+    );
   }
 
   /// Hide history without destroying resume positions, shelf or body files.
@@ -1359,6 +1829,325 @@ class LibraryState extends ChangeNotifier {
         : _queuePositionWrite(() => _writeNovel(novel, snapshot));
   }
 
+  /// Adds an exact source selection once, regardless of the active layout.
+  Future<ReaderBookmark> addUnderline({
+    required Novel novel,
+    required ReadingPosition position,
+    required List<ReaderUnderlineRange> ranges,
+    String quote = '',
+  }) async => (await _changeUnderline(
+    novel: novel,
+    position: position,
+    ranges: ranges,
+    quote: quote,
+    toggle: false,
+  ))!;
+
+  /// Toggles the same source ranges, returning true when a line was added.
+  Future<bool> toggleUnderline({
+    required Novel novel,
+    required ReadingPosition position,
+    required List<ReaderUnderlineRange> ranges,
+    String quote = '',
+  }) async =>
+      await _changeUnderline(
+        novel: novel,
+        position: position,
+        ranges: ranges,
+        quote: quote,
+        toggle: true,
+      ) !=
+      null;
+
+  /// Saves an exact-text mark and its personal thought in one serialized write.
+  /// A repeated selection edits its existing record rather than adding a copy.
+  Future<ReaderBookmark> saveAnnotation({
+    required Novel novel,
+    required ReadingPosition position,
+    required List<ReaderUnderlineRange> ranges,
+    String quote = '',
+    ReaderMarkStyle style = ReaderMarkStyle.underline,
+    ReaderMarkColor color = ReaderMarkColor.ink,
+    String note = '',
+  }) async => (await _changeUnderline(
+    novel: novel,
+    position: position,
+    ranges: ranges,
+    quote: quote,
+    toggle: false,
+    annotation: ReaderAnnotationData.fromJson({
+      'style': style.name,
+      'color': color.name,
+      'note': note,
+      'updatedAt': 0,
+    }),
+  ))!;
+
+  /// Editing saved notes does not require the original local file to be present.
+  Future<ReaderBookmark> updateBookmarkAnnotation(
+    int novelId,
+    String id, {
+    required ReaderMarkStyle style,
+    required ReaderMarkColor color,
+    required String note,
+  }) async {
+    final data = ReaderAnnotationData.fromJson({
+      'style': style.name,
+      'color': color.name,
+      'note': note,
+      'updatedAt': 0,
+    });
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then(
+        (_) => updateBookmarkAnnotation(
+          novelId,
+          id,
+          style: style,
+          color: color,
+          note: note,
+        ),
+      );
+    }
+    late ReaderBookmark result;
+    await _queuePositionWrite(() async {
+      final marks = _bookmarks[novelId] ?? const <ReaderBookmark>[];
+      final previous = marks.where((mark) => mark.id == id).firstOrNull;
+      if (previous == null) throw const FormatException('这条书签已被移除');
+      result = previous.withAnnotation(_datedAnnotation(data, previous));
+      final next = [for (final mark in marks) mark.id == id ? result : mark];
+      await _writeBookmarks(novelId, next);
+      _bookmarks[novelId] = next;
+      _updateUnderlineIndex(novelId);
+      if (!_disposed) _bookmarkChanges.notifyListeners();
+    });
+    return result;
+  }
+
+  /// Commits geometry and any explicitly edited note together. Other marks at
+  /// the same coordinates stay independent, and reading progress is untouched.
+  Future<ReaderBookmark> updateBookmarkRange(
+    int novelId,
+    String id, {
+    required Novel novel,
+    required ReaderAnnotationRangeChange change,
+    required int expectedRangeUpdatedAt,
+    required List<ReaderUnderlineRange> expectedRanges,
+    ReaderAnnotationData? annotation,
+  }) async {
+    if (novelId != novel.id ||
+        change.novelId != novelId ||
+        change.ranges.any(
+          (range) => !novel.chapters.any((c) => c.id == range.chapterId),
+        )) {
+      throw const FormatException('原文范围不属于这本书');
+    }
+    final ranges = canonicalReaderUnderlineRanges(
+      change.ranges,
+      chapterOrder: novel.chapters.map((c) => c.id),
+    );
+    if (change.quote.length > 12000) {
+      throw const FormatException('摘录过长，请选择不超过 12000 字的内容');
+    }
+    final edited = annotation == null
+        ? null
+        : ReaderAnnotationData.fromJson(annotation.toJson());
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then(
+        (_) => updateBookmarkRange(
+          novelId,
+          id,
+          novel: novel,
+          change: change,
+          expectedRangeUpdatedAt: expectedRangeUpdatedAt,
+          expectedRanges: expectedRanges,
+          annotation: edited,
+        ),
+      );
+    }
+    late ReaderBookmark result;
+    await _queuePositionWrite(() async {
+      final marks = _bookmarks[novelId] ?? const <ReaderBookmark>[];
+      final previous = marks.where((mark) => mark.id == id).firstOrNull;
+      if (previous == null) throw const FormatException('这条书签已被移除');
+      if (previous.rangeUpdatedAt != expectedRangeUpdatedAt ||
+          !listEquals(previous.underlineRanges, expectedRanges)) {
+        throw const FormatException('原文范围刚刚发生变化，请重新打开这条书签再调整');
+      }
+      final first = ranges.first;
+      final chapter = novel.chapters.indexWhere((c) => c.id == first.chapterId);
+      final position = ReadingPosition.fromJson({
+        ...previous.position.toJson(),
+        'chapter': chapter,
+        'chapterId': first.chapterId,
+        'paragraphIndex': first.startParagraph,
+        'textOffset': first.startOffset,
+        'paragraphFraction': 0,
+        'contentRevision': first.contentRevision,
+        'offset': 0,
+        'fraction': 0,
+        'width': 0,
+        'layout': '',
+      });
+      final now = DateTime.now().millisecondsSinceEpoch;
+      result = previous.withRange(
+        chapterTitle: novel.chapters[chapter].title,
+        position: position,
+        ranges: ranges,
+        quote: change.quote,
+        updatedAt: now > previous.rangeUpdatedAt
+            ? now
+            : previous.rangeUpdatedAt + 1,
+      );
+      if (edited != null) {
+        result = result.withAnnotation(_datedAnnotation(edited, previous));
+      }
+      final next = [for (final mark in marks) mark.id == id ? result : mark];
+      await _writeBookmarks(novelId, next);
+      _bookmarks[novelId] = next;
+      _updateUnderlineIndex(novelId);
+      if (!_disposed) _bookmarkChanges.notifyListeners();
+    });
+    return result;
+  }
+
+  ReaderAnnotationData _datedAnnotation(
+    ReaderAnnotationData data,
+    ReaderBookmark? previous,
+  ) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final last = previous?.annotation.updatedAt ?? 0;
+    return data.at(now > last ? now : last + 1);
+  }
+
+  Future<ReaderBookmark?> _changeUnderline({
+    required Novel novel,
+    required ReadingPosition position,
+    required List<ReaderUnderlineRange> ranges,
+    required String quote,
+    required bool toggle,
+    ReaderAnnotationData? annotation,
+  }) async {
+    final chapterIds = novel.chapters.map((chapter) => chapter.id).toSet();
+    if (novel.id <= 0 ||
+        ranges.any((range) => !chapterIds.contains(range.chapterId))) {
+      throw const FormatException('暂时无法定位选中的文字，请重新选择');
+    }
+    final selected = canonicalReaderUnderlineRanges([
+      for (final range in ranges)
+        range.contentRevision.isEmpty && range.chapterId == position.chapterId
+            ? range.withRevision(position.contentRevision)
+            : range,
+    ], chapterOrder: novel.chapters.map((chapter) => chapter.id));
+    final excerpt = quote.trim();
+    if (excerpt.length > 12000) {
+      throw const FormatException('摘录过长，请选择不超过 12000 字的内容');
+    }
+    if (!position.offset.isFinite ||
+        position.offset < 0 ||
+        !position.fraction.isFinite ||
+        position.fraction < 0 ||
+        position.fraction > 1 ||
+        !position.width.isFinite ||
+        !position.fontSize.isFinite ||
+        !position.lineHeight.isFinite) {
+      throw const FormatException('暂时无法定位选中的文字，请重新选择');
+    }
+    if (_restoreBarrier case final barrier?) {
+      return barrier.future.then(
+        (_) => _changeUnderline(
+          novel: novel,
+          position: position,
+          ranges: selected,
+          quote: excerpt,
+          toggle: toggle,
+          annotation: annotation,
+        ),
+      );
+    }
+    ReaderBookmark? result;
+    await _queuePositionWrite(() async {
+      final marks = _bookmarks[novel.id] ?? const <ReaderBookmark>[];
+      final matching = marks.where((mark) {
+        return mark.isUnderline &&
+            listEquals(
+              canonicalReaderUnderlineRanges(
+                mark.underlineRanges,
+                chapterOrder: novel.chapters.map((chapter) => chapter.id),
+              ),
+              selected,
+            );
+      }).toList();
+      final existing = matching.firstOrNull;
+      if (existing != null) {
+        if (!toggle) {
+          if (annotation == null) {
+            result = existing;
+            return;
+          }
+          result = existing.withAnnotation(
+            _datedAnnotation(annotation, existing),
+          );
+          final next = [
+            for (final mark in marks) mark.id == existing.id ? result! : mark,
+          ];
+          await _writeBookmarks(novel.id, next);
+          _bookmarks[novel.id] = next;
+          _updateUnderlineIndex(novel.id);
+          if (!_disposed) _bookmarkChanges.notifyListeners();
+          return;
+        }
+        final ids = matching.map((mark) => mark.id).toSet();
+        final next = marks.where((mark) => !ids.contains(mark.id)).toList();
+        await _writeBookmarks(novel.id, next);
+        _bookmarks[novel.id] = next;
+        _updateUnderlineIndex(novel.id);
+        if (!_disposed) _bookmarkChanges.notifyListeners();
+        return;
+      }
+      if (marks.length >= 1000) {
+        throw const FormatException('本书书签和划线已达 1000 个，请先整理');
+      }
+      final first = selected.first;
+      final chapter = novel.chapters.indexWhere((c) => c.id == first.chapterId);
+      final sameChapter = position.chapterId > 0
+          ? position.chapterId == first.chapterId
+          : position.chapter == chapter;
+      final anchor = ReadingPosition.fromJson({
+        ...position.toJson(),
+        'chapter': chapter,
+        'chapterId': first.chapterId,
+        'paragraphIndex': first.startParagraph,
+        'textOffset': first.startOffset,
+        'paragraphFraction': 0,
+        'contentRevision': first.contentRevision,
+        if (!sameChapter) ...{'offset': 0, 'width': 0, 'layout': ''},
+      });
+      final createdAt = DateTime.now();
+      final mark = ReaderBookmark(
+        id: '${createdAt.microsecondsSinceEpoch}-${marks.length}',
+        createdAt: createdAt.toUtc(),
+        createdOffsetMinutes: createdAt.timeZoneOffset.inMinutes,
+        chapterTitle: novel.chapters[chapter].title,
+        position: anchor,
+        quote: excerpt,
+        underlineRanges: selected,
+        annotation: annotation == null
+            ? const ReaderAnnotationData()
+            : _datedAnnotation(annotation, null),
+      );
+      final next = [mark, ...marks];
+      final snapshot = _novelSnapshot(novel);
+      if (snapshot != null) await _writeNovel(novel, snapshot);
+      await _writeBookmarks(novel.id, next);
+      _known[novel.id] = novel;
+      _bookmarks[novel.id] = next;
+      _updateUnderlineIndex(novel.id);
+      if (!_disposed) _bookmarkChanges.notifyListeners();
+      result = mark;
+    });
+    return result;
+  }
+
   Future<ReaderBookmark?> addBookmark({
     required Novel novel,
     required ReadingPosition position,
@@ -1390,7 +2179,8 @@ class LibraryState extends ChangeNotifier {
     await _queuePositionWrite(() async {
       final marks = _bookmarks[novel.id] ?? const <ReaderBookmark>[];
       for (final mark in marks) {
-        if (mark.quote == excerpt &&
+        if (!mark.isUnderline &&
+            mark.quote == excerpt &&
             chapterForPosition(novel, mark.position) == index &&
             (excerpt.isEmpty ||
                 mark.position.paragraphIndex == position.paragraphIndex &&
@@ -1406,8 +2196,11 @@ class LibraryState extends ChangeNotifier {
       if (marks.length >= 1000) {
         throw const FormatException('本书书签已达 1000 个，请先整理书签');
       }
+      final createdAt = DateTime.now();
       final mark = ReaderBookmark(
-        id: '${DateTime.now().microsecondsSinceEpoch}-${marks.length}',
+        id: '${createdAt.microsecondsSinceEpoch}-${marks.length}',
+        createdAt: createdAt.toUtc(),
+        createdOffsetMinutes: createdAt.timeZoneOffset.inMinutes,
         chapterTitle: novel.chapters[index].title,
         position: position,
         quote: excerpt,
@@ -1418,6 +2211,7 @@ class LibraryState extends ChangeNotifier {
       await _writeBookmarks(novel.id, next);
       _known[novel.id] = novel;
       _bookmarks[novel.id] = next;
+      _updateUnderlineIndex(novel.id);
       if (!_disposed) _bookmarkChanges.notifyListeners();
       result = mark;
     });
@@ -1434,6 +2228,7 @@ class LibraryState extends ChangeNotifier {
       final next = marks.where((mark) => mark.id != id).toList();
       await _writeBookmarks(novelId, next);
       _bookmarks[novelId] = next;
+      _updateUnderlineIndex(novelId);
       if (!_disposed) _bookmarkChanges.notifyListeners();
     });
   }
@@ -1462,6 +2257,7 @@ class LibraryState extends ChangeNotifier {
       ];
       await _writeBookmarks(novelId, next);
       _bookmarks[novelId] = next;
+      _updateUnderlineIndex(novelId);
       if (!_disposed) _bookmarkChanges.notifyListeners();
     });
   }
@@ -1498,9 +2294,48 @@ class LibraryState extends ChangeNotifier {
       );
     final converted = <String, ReaderBookmark>{};
     for (final mark in ordered) {
+      final position = await resolve(mark.position.toJson());
+      final ranges = <ReaderUnderlineRange>[];
+      for (final (index, range) in mark.underlineRanges.indexed) {
+        Map<String, Object> endpoint(int paragraph, int offset) {
+          final chapter = _known[id]?.chapters.indexWhere(
+            (chapter) => chapter.id == range.chapterId,
+          );
+          return {
+            ...mark.position.toJson(),
+            'chapterId': range.chapterId,
+            if (chapter != null && chapter >= 0) 'chapter': chapter,
+            'paragraphIndex': paragraph,
+            'textOffset': offset,
+            'paragraphFraction': 0,
+            'contentRevision': range.contentRevision,
+          };
+        }
+
+        final start = index == 0
+            ? position
+            : await resolve(endpoint(range.startParagraph, range.startOffset));
+        final end = await resolve(
+          endpoint(range.endParagraph, range.endOffset),
+        );
+        final mapped = ReaderUnderlineRange.fromJson({
+          'chapterId': start['chapterId'],
+          'startParagraph': start['paragraphIndex'],
+          'startOffset': start['textOffset'],
+          'endParagraph': end['paragraphIndex'],
+          'endOffset': end['textOffset'],
+          'contentRevision': start['contentRevision'] ?? '',
+        });
+        if (start['chapterId'] != end['chapterId']) {
+          throw const FormatException('划线章节映射不一致，原记录已保留');
+        }
+        ranges.add(mapped);
+      }
       converted[mark.id] = ReaderBookmark.fromJson({
         ...mark.toJson(),
-        'position': await resolve(mark.position.toJson()),
+        'position': position,
+        if (mark.isUnderline)
+          'underlineRanges': ranges.map((range) => range.toJson()).toList(),
       });
     }
     final nextMarks = [for (final mark in marks) converted[mark.id]!];
@@ -1519,6 +2354,7 @@ class LibraryState extends ChangeNotifier {
     await _commitLibraryRecords(changes);
     if (nextPosition != null) _positions[id] = nextPosition;
     _bookmarks[id] = nextMarks;
+    _updateUnderlineIndex(id);
     if (!_disposed) _bookmarkChanges.notifyListeners();
     _historyChanged();
   });
@@ -1544,6 +2380,12 @@ class LibraryState extends ChangeNotifier {
         ),
     });
     _bookmarks.addAll(updates);
+    var underlineChanged = false;
+    for (final id in updates.keys) {
+      underlineChanged =
+          _updateUnderlineIndex(id, notify: false) || underlineChanged;
+    }
+    if (underlineChanged && !_disposed) _underlineChanges.notifyListeners();
     if (!_disposed) _bookmarkChanges.notifyListeners();
   });
 
@@ -1691,6 +2533,7 @@ class LibraryState extends ChangeNotifier {
     required Map<Novel, Map<int, int>> sources,
     bool? onShelf,
     bool revealTarget = true,
+    bool splitUnderlines = false,
   }) async {
     if (_restoreBarrier case final barrier?) {
       await barrier.future;
@@ -1699,6 +2542,7 @@ class LibraryState extends ChangeNotifier {
         sources: sources,
         onShelf: onShelf,
         revealTarget: revealTarget,
+        splitUnderlines: splitUnderlines,
       );
     }
     await _queuePositionWrite(() async {
@@ -1724,6 +2568,23 @@ class LibraryState extends ChangeNotifier {
       }
 
       final identity = {for (final c in target.chapters) c.id: c.id};
+      List<ReaderUnderlineRange>? moveRanges(
+        ReaderBookmark mark,
+        Map<int, int> mapping, {
+        bool partial = false,
+      }) {
+        final ranges = <ReaderUnderlineRange>[];
+        for (final range in mark.underlineRanges) {
+          final id = mapping[range.chapterId];
+          if (id == null || !indices.containsKey(id)) {
+            if (partial) continue;
+            return null;
+          }
+          ranges.add(range.inChapter(id));
+        }
+        return List.unmodifiable(ranges);
+      }
+
       var position = _positions[target.id];
       if (position != null) {
         position = move(position, identity, target) ?? position;
@@ -1738,10 +2599,18 @@ class LibraryState extends ChangeNotifier {
             quote: mark.quote,
             category: mark.category,
             categoryAt: mark.categoryAt,
+            underlineRanges: moveRanges(mark, identity) ?? mark.underlineRanges,
+            annotation: mark.annotation,
+            rangeUpdatedAt: mark.rangeUpdatedAt,
+            createdAt: mark.createdAt,
+            createdOffsetMinutes: mark.createdOffsetMinutes,
           ),
       ];
       final markIds = bookmarks.map((m) => m.id).toSet();
-      final fingerprints = bookmarks.map(_bookmarkFingerprint).toSet();
+      final fingerprints = <String, List<int>>{};
+      for (var i = 0; i < bookmarks.length; i++) {
+        (fingerprints[_bookmarkFingerprint(bookmarks[i])] ??= []).add(i);
+      }
       for (final entry in sources.entries) {
         final source = entry.key;
         if (source.id == target.id) continue;
@@ -1759,7 +2628,30 @@ class LibraryState extends ChangeNotifier {
           legacyChapter = indices[entry.value[source.chapters[oldIndex].id]];
         }
         for (final mark in _bookmarks[source.id] ?? const <ReaderBookmark>[]) {
-          final mapped = move(mark.position, entry.value, source);
+          var mapped = move(mark.position, entry.value, source);
+          final ranges = moveRanges(
+            mark,
+            entry.value,
+            partial: splitUnderlines,
+          );
+          if (ranges == null) continue;
+          if (mark.isUnderline && ranges.isEmpty) continue;
+          if (mapped == null && splitUnderlines && ranges.isNotEmpty) {
+            final first = ranges.first;
+            mapped = ReadingPosition.fromJson({
+              ...mark.position.toJson(),
+              'chapter': indices[first.chapterId],
+              'chapterId': first.chapterId,
+              'paragraphIndex': first.startParagraph,
+              'textOffset': first.startOffset,
+              'paragraphFraction': 0,
+              'offset': 0,
+              'fraction': 0,
+              'width': 0,
+              'layout': '',
+              'contentRevision': first.contentRevision,
+            });
+          }
           if (mapped == null) continue;
           if (!receipts.add('m/${source.id}/${mark.id}')) continue;
           final id = '${source.id}/${mark.id}';
@@ -1770,9 +2662,23 @@ class LibraryState extends ChangeNotifier {
             quote: mark.quote,
             category: mark.category,
             categoryAt: mark.categoryAt,
+            underlineRanges: ranges,
+            annotation: mark.annotation,
+            rangeUpdatedAt: mark.rangeUpdatedAt,
+            createdAt: mark.createdAt,
+            createdOffsetMinutes: mark.createdOffsetMinutes,
           );
-          if (fingerprints.add(_bookmarkFingerprint(copied)) &&
-              markIds.add(id)) {
+          final fingerprint = _bookmarkFingerprint(copied);
+          final duplicate = (fingerprints[fingerprint] ?? const <int>[])
+              .where((at) => _canDeduplicateBookmark(bookmarks[at], copied))
+              .firstOrNull;
+          if (duplicate != null) {
+            bookmarks[duplicate] = _mergeBookmarkMetadata(
+              bookmarks[duplicate],
+              copied,
+            );
+          } else if (markIds.add(id)) {
+            (fingerprints[fingerprint] ??= []).add(bookmarks.length);
             bookmarks.add(copied);
           }
         }
@@ -1850,6 +2756,157 @@ class LibraryState extends ChangeNotifier {
       if (chapter != null) _chapters[target.id] = chapter;
       if (bookmarks.isNotEmpty || _bookmarks.containsKey(target.id)) {
         _bookmarks[target.id] = bookmarks;
+        _updateUnderlineIndex(target.id);
+      }
+      if (!_disposed && records.isNotEmpty) {
+        _historyChanged();
+        _bookmarkChanges.notifyListeners();
+        notifyListeners();
+      }
+    });
+  }
+
+  /// Projects a changed local-series directory after detached records have
+  /// been copied back to their originals. No reading timestamp is advanced.
+  Future<void> remapBookContents({
+    required Novel previous,
+    required Novel target,
+    Set<int> detachedSourceIds = const {},
+  }) async {
+    if (previous.id != target.id || target.chapters.isEmpty) {
+      throw const FormatException('书籍目录已变化，请返回后重试');
+    }
+    if (_restoreBarrier case final barrier?) {
+      await barrier.future;
+      return remapBookContents(
+        previous: previous,
+        target: target,
+        detachedSourceIds: detachedSourceIds,
+      );
+    }
+    await _queuePositionWrite(() async {
+      final indices = {for (final (i, c) in target.chapters.indexed) c.id: i};
+      ReadingPosition? project(
+        ReadingPosition value, {
+        bool resume = false,
+        ReaderUnderlineRange? anchor,
+      }) {
+        final oldIndex = chapterForPosition(previous, value);
+        final id = value.chapterId > 0
+            ? value.chapterId
+            : oldIndex == null
+            ? null
+            : previous.chapters[oldIndex].id;
+        var index = indices[id];
+        var relocated = false;
+        if (index == null && anchor != null) {
+          index = indices[anchor.chapterId];
+          relocated = true;
+        }
+        if (index == null && resume) {
+          // Prefer the next surviving chapter; at the end, use the nearest
+          // preceding one. Its text anchor starts fresh, not at the old offset.
+          final start = oldIndex ?? value.chapter;
+          for (var i = start + 1; i < previous.chapters.length; i++) {
+            if ((index = indices[previous.chapters[i].id]) != null) break;
+          }
+          for (var i = start - 1; index == null && i >= 0; i--) {
+            if (i < previous.chapters.length) {
+              index = indices[previous.chapters[i].id];
+            }
+          }
+          index ??= 0;
+          relocated = true;
+        }
+        if (index == null) return null;
+        return ReadingPosition.fromJson({
+          ...value.toJson(),
+          'chapter': index,
+          'chapterId': target.chapters[index].id,
+          if (relocated) ...{
+            'offset': 0,
+            'fraction': 0,
+            'width': 0,
+            'layout': '',
+            'paragraphIndex': anchor?.startParagraph ?? 0,
+            'paragraphFraction': 0,
+            'textOffset': anchor?.startOffset ?? 0,
+            'contentRevision': anchor?.contentRevision ?? '',
+          },
+        });
+      }
+
+      final oldPosition = _positions[target.id];
+      final position = oldPosition == null
+          ? null
+          : project(oldPosition, resume: true);
+      final oldChapter = _chapters[target.id];
+      final chapter =
+          position?.chapter ??
+          (oldChapter == null
+              ? null
+              : project(
+                  ReadingPosition.fromJson({'chapter': oldChapter}),
+                  resume: true,
+                )!.chapter);
+      final bookmarks = <ReaderBookmark>[];
+      for (final mark in _bookmarks[target.id] ?? const <ReaderBookmark>[]) {
+        final ranges = mark.underlineRanges
+            .where((range) => indices.containsKey(range.chapterId))
+            .toList(growable: false);
+        if (mark.isUnderline && ranges.isEmpty) continue;
+        final mapped = project(mark.position, anchor: ranges.firstOrNull);
+        if (mapped == null) continue;
+        bookmarks.add(
+          ReaderBookmark(
+            id: mark.id,
+            chapterTitle: target.chapters[mapped.chapter].title,
+            position: mapped,
+            quote: mark.quote,
+            category: mark.category,
+            categoryAt: mark.categoryAt,
+            underlineRanges: ranges,
+            annotation: mark.annotation,
+            rangeUpdatedAt: mark.rangeUpdatedAt,
+            createdAt: mark.createdAt,
+            createdOffsetMinutes: mark.createdOffsetMinutes,
+          ),
+        );
+      }
+      final receiptKey = 'book_merge_${target.id}';
+      final receipts = {...?_prefs.getStringList(receiptKey)}
+        ..removeWhere(
+          (receipt) => detachedSourceIds.any(
+            (id) => receipt == '$id' || receipt.startsWith('m/$id/'),
+          ),
+        );
+      final snapshot = jsonEncode(target.toSnapshot());
+      final records = <String, Object>{
+        receiptKey: receipts.toList()..sort(),
+        'novel_meta_${target.id}': snapshot,
+        'chapter_${target.id}': ?chapter,
+        if (position != null)
+          'reading_position_${target.id}': jsonEncode(position.toJson()),
+        if (_bookmarks.containsKey(target.id))
+          'reader_bookmarks_${target.id}': jsonEncode(
+            bookmarks.map((mark) => mark.toJson()).toList(),
+          ),
+      };
+      records.removeWhere((key, value) {
+        final old = _prefs.get(key);
+        return old == value ||
+            value is List<String> &&
+                old is List<String> &&
+                listEquals(value, old);
+      });
+      if (records.isNotEmpty) await _commitLibraryRecords(records);
+      _known[target.id] = target;
+      _persistedNovels[target.id] = target;
+      if (position != null) _positions[target.id] = position;
+      if (chapter != null) _chapters[target.id] = chapter;
+      if (_bookmarks.containsKey(target.id)) {
+        _bookmarks[target.id] = bookmarks;
+        _updateUnderlineIndex(target.id);
       }
       if (!_disposed && records.isNotEmpty) {
         _historyChanged();
@@ -2228,7 +3285,11 @@ class LibraryState extends ChangeNotifier {
     }
   }
 
-  Map<String, Object> _backupRecords() => {
+  Map<String, Object> _backupRecords({bool includeReadingActivity = true}) => {
+    if (includeReadingActivity)
+      ReadingActivityStore.preferenceKey: readingActivity.encode(),
+    if (includeReadingActivity)
+      ReadingMomentsStore.preferenceKey: readingMoments.encode(),
     for (final entry in _bookReaderStyles.entries)
       '$bookReaderStylePrefix${entry.key}': jsonEncode(entry.value.toJson()),
     for (final entry in _illustrations.entries)
@@ -2243,6 +3304,7 @@ class LibraryState extends ChangeNotifier {
     'reading_history_hidden': _hiddenHistory.map((id) => '$id').toList(),
     'local_shelf_hidden': _hiddenLocalBooks.map((id) => '$id').toList(),
     'recentSearches': _recentSearches,
+    BlockedTags.preferenceKey: _blockedTags.toRecord(),
     'theme': _theme.name,
     'readerFontSize': _fontSize,
     'appLanguage': language.name,
@@ -2262,9 +3324,21 @@ class LibraryState extends ChangeNotifier {
     'shelfFilter': _shelfFilter,
     'shelfSourceFilter': _shelfSourceFilter,
     'shelfLayout': _shelfLayout,
+    'shelfGridDensity': _shelfGridDensity.value,
+    'shelfPreferences': _shelfPreferences.record,
+    'shelfContent': _shelfContent.record,
+    'discoveryShelfPreferences': _discoveryShelfPreferences.record,
+    'discoveryShelfContent': _discoveryShelfContent.record,
+    if (_hasDiscoveryShelfQuery)
+      'discoveryShelfQuery': _discoveryShelfQuery.record,
+    'localShelfContent': organization.shelfContent.record,
+    'discoveryLayout': _discoveryViewMode.storageValue,
+    'discoveryGridDensity': _discoveryGridDensity.value,
     'adaptWhenOffline': _adaptWhenOffline,
     'localReaderMode': _localReaderMode,
     'directReading': directReading,
+    'openRecentOnLaunch': _openRecentOnLaunch,
+    'startPage': _startPage.name,
     'directReadingPages': [
       for (final page in ReadingEntry.values)
         if (_directReadingPages.contains(page)) page.name,
@@ -2285,13 +3359,21 @@ class LibraryState extends ChangeNotifier {
       ),
   };
 
-  Future<LibraryBackup> createBackup() async {
+  /// Manual backups include activity; cloud book synchronization excludes this
+  /// local-only ledger explicitly while retaining its existing reading data.
+  Future<LibraryBackup> createBackup({
+    bool includeReadingActivity = true,
+  }) async {
     if (_restoreBarrier case final barrier?) {
-      return barrier.future.then((_) => createBackup());
+      return barrier.future.then(
+        (_) => createBackup(includeReadingActivity: includeReadingActivity),
+      );
     }
     late LibraryBackup backup;
     await _queuePositionWrite(() async {
-      backup = await LibraryBackup.fromRecords(_backupRecords());
+      backup = await LibraryBackup.fromRecords(
+        _backupRecords(includeReadingActivity: includeReadingActivity),
+      );
     });
     return backup;
   }
@@ -2322,6 +3404,14 @@ class LibraryState extends ChangeNotifier {
           await ChineseText.prepare();
         }
       }
+      final restoredBlockedTags =
+          importPreferences &&
+              backup.records.containsKey(BlockedTags.preferenceKey)
+          ? await BlockedTags.fromInput(
+              (backup.records[BlockedTags.preferenceKey] as List)
+                  .cast<String>(),
+            )
+          : null;
       await _queuePositionWrite(() async {
         final records = backup.records;
         final shelf = {
@@ -2346,6 +3436,19 @@ class LibraryState extends ChangeNotifier {
               .where(isLocalBook),
         };
         final changed = <String, Object>{};
+        final incomingActivity = records[ReadingActivityStore.preferenceKey];
+        final incomingMoments = records[ReadingMomentsStore.preferenceKey];
+        if (incomingMoments is String) {
+          changed[ReadingMomentsStore.preferenceKey] = readingMoments
+              .mergedRecord(
+                incomingMoments,
+                importPreferences: importPreferences,
+              );
+        }
+        if (incomingActivity is String) {
+          changed[ReadingActivityStore.preferenceKey] = readingActivity
+              .mergedRecord(incomingActivity);
+        }
         final bookStyles = {..._bookReaderStyles};
         final oldRead = {..._chapters.keys, ..._positions.keys};
         for (final entry in records.entries) {
@@ -2416,23 +3519,37 @@ class LibraryState extends ChangeNotifier {
           } else if (key.startsWith('reader_bookmarks_')) {
             final id = int.parse(key.substring('reader_bookmarks_'.length));
             final current = marks.putIfAbsent(id, () => []);
-            final fingerprints = {
-              for (var i = 0; i < current.length; i++)
-                _bookmarkFingerprint(current[i]): i,
-            };
+            final fingerprints = <String, List<int>>{};
+            final byIds = <String, int>{};
+            for (var i = 0; i < current.length; i++) {
+              (fingerprints[_bookmarkFingerprint(current[i])] ??= []).add(i);
+              byIds[current[i].id] = i;
+            }
             final ids = current.map((mark) => mark.id).toSet();
             for (final raw in jsonDecode(entry.value as String) as List) {
               var mark = ReaderBookmark.fromJson(
                 Map<String, dynamic>.from(raw),
               );
               final fingerprint = _bookmarkFingerprint(mark);
-              if (fingerprints[fingerprint] case final at?) {
-                if (mark.categoryAt > current[at].categoryAt) {
-                  current[at] = current[at].withCategory(
-                    mark.category,
-                    mark.categoryAt,
-                  );
+              final sameId = byIds[mark.id];
+              if (sameId != null &&
+                  (_bookmarkFingerprint(current[sameId]) == fingerprint ||
+                      current[sameId].rangeUpdatedAt > 0 ||
+                      mark.rangeUpdatedAt > 0)) {
+                final before = _bookmarkFingerprint(current[sameId]);
+                current[sameId] = _mergeBookmarkVersion(current[sameId], mark);
+                final after = _bookmarkFingerprint(current[sameId]);
+                if (before != after) {
+                  fingerprints[before]?.remove(sameId);
+                  (fingerprints[after] ??= []).add(sameId);
                 }
+                continue;
+              }
+              final duplicate = (fingerprints[fingerprint] ?? const <int>[])
+                  .where((at) => _canDeduplicateBookmark(current[at], mark))
+                  .firstOrNull;
+              if (duplicate case final at?) {
+                current[at] = _mergeBookmarkMetadata(current[at], mark);
                 continue;
               }
               var candidate = mark.id;
@@ -2448,9 +3565,15 @@ class LibraryState extends ChangeNotifier {
                   quote: mark.quote,
                   category: mark.category,
                   categoryAt: mark.categoryAt,
+                  underlineRanges: mark.underlineRanges,
+                  annotation: mark.annotation,
+                  rangeUpdatedAt: mark.rangeUpdatedAt,
+                  createdAt: mark.createdAt,
+                  createdOffsetMinutes: mark.createdOffsetMinutes,
                 );
               }
-              fingerprints[fingerprint] = current.length;
+              (fingerprints[fingerprint] ??= []).add(current.length);
+              byIds[mark.id] = current.length;
               current.add(mark);
             }
             if (current.length > 1000) {
@@ -2487,7 +3610,13 @@ class LibraryState extends ChangeNotifier {
         changed['recentSearches'] = searches;
         if (importPreferences) {
           for (final key in backupPreferenceKeys) {
-            if (records[key] case final value?) changed[key] = value;
+            if (records[key] case final value?) {
+              // Local layout joins the transaction below under its own queue.
+              if (key != 'localShelfContent') changed[key] = value;
+            }
+          }
+          if (restoredBlockedTags != null) {
+            changed[BlockedTags.preferenceKey] = restoredBlockedTags.toRecord();
           }
           if (records.containsKey('appTypeface') &&
               !records.containsKey('appCustomFont')) {
@@ -2504,7 +3633,32 @@ class LibraryState extends ChangeNotifier {
             await fonts.ensureLoaded(choice);
           }
         }
-        await _commitLibraryRecords(changed);
+        final localContent = importPreferences
+            ? records['localShelfContent']
+            : null;
+        if (localContent is String) {
+          await organization.restoreShelfContent(
+            BookShelfContentPreferences.parseOrDefault(localContent),
+            commit: (record) {
+              changed[LocalLibraryPreferences.key] = record;
+              return _commitLibraryRecords(changed);
+            },
+          );
+        } else {
+          await _commitLibraryRecords(changed);
+        }
+        if (incomingActivity is String) {
+          // Merge into the latest memory rather than replacing it: a final
+          // reader interval may have settled while the restore was committing.
+          await readingActivity.mergeRecord(incomingActivity, persist: false);
+        }
+        if (incomingMoments is String) {
+          await readingMoments.mergeRecord(
+            incomingMoments,
+            persist: false,
+            importPreferences: importPreferences,
+          );
+        }
         if (importPreferences) {
           _bookReaderStyles
             ..clear()
@@ -2547,13 +3701,15 @@ class LibraryState extends ChangeNotifier {
         _bookmarks
           ..clear()
           ..addAll(marks);
+        for (final id in marks.keys) {
+          _updateUnderlineIndex(id, notify: false);
+        }
         _hiddenHistory
           ..clear()
           ..addAll(hidden);
-        _hiddenLocalBooks
-          ..clear()
-          ..addAll(hiddenLocal);
+        _hiddenLocalBooks.clear();
         _recentSearches = searches;
+        if (restoredBlockedTags != null) _blockedTags = restoredBlockedTags;
         if (importPreferences) {
           if (records['theme'] case final String value) {
             _theme = ThemeMode.values.firstWhere((mode) => mode.name == value);
@@ -2611,13 +3767,50 @@ class LibraryState extends ChangeNotifier {
             _shelfSourceFilter = value;
           }
           if (records['shelfLayout'] case final String value) {
-            _shelfLayout = value;
+            _shelfLayout = BookCollectionMode.parseOrDefault(
+              value,
+            ).storageValue;
+          }
+          if (records['shelfGridDensity'] case final String value) {
+            _shelfGridDensity = BookGridDensity.parseOrAuto(value);
+          }
+          if (records['shelfPreferences'] case final String value) {
+            _shelfPreferences = BookShelfPreferences.parseOrDefault(value);
+          }
+          if (records['shelfContent'] case final String value) {
+            _shelfContent = BookShelfContentPreferences.parseOrDefault(value);
+          }
+          if (records['discoveryLayout'] case final String value) {
+            _discoveryViewMode = BookCollectionMode.parseOrDefault(value);
+          }
+          if (records['discoveryGridDensity'] case final String value) {
+            _discoveryGridDensity = BookGridDensity.parseOrAuto(value);
+          }
+          if (records['discoveryShelfPreferences'] case final String value) {
+            _discoveryShelfPreferences = BookShelfPreferences.parseOrDefault(
+              value,
+            );
+          }
+          if (records['discoveryShelfContent'] case final String value) {
+            _discoveryShelfContent = BookShelfContentPreferences.parseOrDefault(
+              value,
+            );
+          }
+          if (records['discoveryShelfQuery'] case final String value) {
+            _discoveryShelfQuery = DiscoveryShelfQuery.parseOrDefault(value);
+            _hasDiscoveryShelfQuery = true;
           }
           if (records['adaptWhenOffline'] case final bool value) {
             _adaptWhenOffline = value;
           }
           if (records['localReaderMode'] case final bool value) {
             _localReaderMode = value;
+          }
+          if (records['openRecentOnLaunch'] case final bool value) {
+            _openRecentOnLaunch = value;
+          }
+          if (records['startPage'] case final String value) {
+            _startPage = AppStartPage.parseOrDefault(value);
           }
           if (records.containsKey('directReadingPages') ||
               records.containsKey('directReading')) {
@@ -2636,6 +3829,7 @@ class LibraryState extends ChangeNotifier {
         if (!_disposed) {
           _historyChanged();
           _bookmarkChanges.notifyListeners();
+          _underlineChanges.notifyListeners();
           _illustrationChanges.notifyListeners();
           _searchChanges.notifyListeners();
           _shelfViewChanges.notifyListeners();
@@ -2647,6 +3841,8 @@ class LibraryState extends ChangeNotifier {
             _readerBehaviorChanges.notifyListeners();
             _settings.notifyListeners();
             _navigationChanges.notifyListeners();
+            _discoveryViewChanges.notifyListeners();
+            _blockedTagsChanges.notifyListeners();
           }
           notifyListeners();
         }
@@ -2658,9 +3854,63 @@ class LibraryState extends ChangeNotifier {
   }
 
   static String _bookmarkFingerprint(ReaderBookmark bookmark) {
+    if (bookmark.isUnderline) {
+      return jsonEncode({
+        'underlineRanges': canonicalReaderUnderlineRanges(
+          bookmark.underlineRanges,
+        ).map((range) => range.toJson()).toList(),
+      });
+    }
     final position = {...bookmark.position.toJson()}..remove('updatedAt');
     if (bookmark.quote.isNotEmpty) position['quote'] = bookmark.quote;
     return jsonEncode(position);
+  }
+
+  static ReaderBookmark _mergeBookmarkMetadata(
+    ReaderBookmark current,
+    ReaderBookmark incoming,
+  ) {
+    var result = current;
+    if (incoming.categoryAt > result.categoryAt) {
+      result = result.withCategory(incoming.category, incoming.categoryAt);
+    }
+    if (incoming.annotation.updatedAt > result.annotation.updatedAt) {
+      result = result.withAnnotation(incoming.annotation);
+    }
+    if (incoming.createdAt != null &&
+        (result.createdAt == null ||
+            incoming.createdAt!.isBefore(result.createdAt!))) {
+      result = result.withCreation(
+        incoming.createdAt!,
+        incoming.createdOffsetMinutes,
+      );
+    } else if (result.createdAt != null &&
+        result.createdAt == incoming.createdAt &&
+        result.createdOffsetMinutes == null &&
+        incoming.createdOffsetMinutes != null) {
+      result = result.withCreation(
+        result.createdAt!,
+        incoming.createdOffsetMinutes,
+      );
+    }
+    return result;
+  }
+
+  static bool _canDeduplicateBookmark(ReaderBookmark a, ReaderBookmark b) =>
+      a.rangeUpdatedAt == 0 &&
+      b.rangeUpdatedAt == 0 &&
+      a.annotation.style == b.annotation.style &&
+      a.annotation.color == b.annotation.color &&
+      a.note == b.note;
+
+  static ReaderBookmark _mergeBookmarkVersion(
+    ReaderBookmark current,
+    ReaderBookmark incoming,
+  ) {
+    if (incoming.rangeUpdatedAt > current.rangeUpdatedAt) {
+      return _mergeBookmarkMetadata(incoming, current);
+    }
+    return _mergeBookmarkMetadata(current, incoming);
   }
 
   Future<void> _commitLibraryRecords(Map<String, Object> changes) async {
@@ -2691,6 +3941,8 @@ class LibraryState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    readingActivity.dispose();
+    readingMoments.dispose();
     _appearance.dispose();
     _application.dispose();
     _glassChanges.dispose();
@@ -2698,9 +3950,12 @@ class LibraryState extends ChangeNotifier {
     _settings.dispose();
     _history.dispose();
     _bookmarkChanges.dispose();
+    _underlineChanges.dispose();
     _illustrationChanges.dispose();
     _searchChanges.dispose();
+    _blockedTagsChanges.dispose();
     _shelfViewChanges.dispose();
+    _discoveryViewChanges.dispose();
     _readerBehaviorChanges.dispose();
     _navigationChanges.dispose();
     _organization?.dispose();

@@ -1,0 +1,310 @@
+[
+  {
+    "file": "assets/report/char_cover.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 73102,
+    "use": "M 封面主视觉 / 默认造型 A06",
+    "rule": "默认（无主导题材或不满足其它规则）",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_full.webp",
+    "size": [
+      607,
+      1080
+    ],
+    "bytes": 44998,
+    "use": "M 全身立绘 / 分享卡竖图",
+    "rule": "总阅读时长卡片",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/bg_hall.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 191404,
+    "use": "M 书库大厅横幅背景（无人物）",
+    "rule": "固定",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_night_desk.webp",
+    "size": [
+      607,
+      1080
+    ],
+    "bytes": 105822,
+    "use": "N 夜读 · 台灯书桌（9:16）",
+    "rule": "夜间阅读占比 ≥ 30%",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_night_roof.webp",
+    "size": [
+      607,
+      1080
+    ],
+    "bytes": 121070,
+    "use": "N 夜读 · 天台（9:16）",
+    "rule": "最晚一次阅读在 0–4 点",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_book.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 114676,
+    "use": "O 主视觉 / A03 治愈「夜航」",
+    "rule": "主导题材 = 治愈/日常",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_rail.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 85292,
+    "use": "O 栏杆 · 收尾页",
+    "rule": "固定",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_g_fantasy.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 168286,
+    "use": "A01 奇幻「秘典」",
+    "rule": "主导题材 = 奇幻/异世界",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_g_school.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 119578,
+    "use": "A02 校园「制服」",
+    "rule": "主导题材 = 校园/恋爱",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_g_mystery.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 152848,
+    "use": "A04 悬疑「侦探」",
+    "rule": "主导题材 = 悬疑/推理",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_g_scifi.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 171654,
+    "use": "A05 科幻「数据」",
+    "rule": "主导题材 = 科幻",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_season_spring.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 204254,
+    "use": "P 季节 · 春（3–5 月）",
+    "rule": "按月份",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original adult character identity, cel-shaded style, seasonal scene/palette, aspect ratio and left negative space; pose and expression updated by user request",
+    "revision": "season-v2",
+    "action": "Closed book on lap; reaching palm catches a cherry petal; gentle tilted-head smile"
+  },
+  {
+    "file": "assets/report/char_season_summer.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 124772,
+    "use": "P 季节 · 夏（6–8 月）",
+    "rule": "按月份",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original adult character identity, cel-shaded style, seasonal scene/palette, aspect ratio and left negative space; pose and expression updated by user request",
+    "revision": "season-v2",
+    "action": "Closed book raised as sunshade; bright squinting smile; free hand on knee"
+  },
+  {
+    "file": "assets/report/char_season_autumn.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 241804,
+    "use": "P 季节 · 秋（9–11 月）",
+    "rule": "按月份",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original adult character identity, cel-shaded style, seasonal scene/palette, aspect ratio and left negative space; pose and expression updated by user request",
+    "revision": "season-v2",
+    "action": "Walking turn and over-shoulder smile; closed book hugged; braid and coat in motion"
+  },
+  {
+    "file": "assets/report/char_season_winter.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 125438,
+    "use": "P 季节 · 冬（12–2 月）",
+    "rule": "按月份",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original adult character identity, cel-shaded style, seasonal scene/palette, aspect ratio and left negative space; pose and expression updated by user request",
+    "revision": "season-v2",
+    "action": "Cozy curled sitting; plain warm cup in both hands; open book supported on lap"
+  },
+  {
+    "file": "assets/report/char_pv_open.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 105088,
+    "use": "Q 第一幕「相遇」1–4 月",
+    "rule": "固定",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_pv_train.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 94178,
+    "use": "Q 第二幕「远行」5–8 月",
+    "rule": "固定",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_pv_end.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 113110,
+    "use": "Q 第三幕「归来」9–12 月",
+    "rule": "固定",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_papercut.webp",
+    "size": [
+      810,
+      1080
+    ],
+    "bytes": 75054,
+    "use": "R 剪纸主视觉（图标同款）",
+    "rule": "固定",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  },
+  {
+    "file": "assets/report/char_birds.webp",
+    "size": [
+      1080,
+      608
+    ],
+    "bytes": 55654,
+    "use": "R 纸鸟 · 未读完的书",
+    "rule": "有未读完的书时显示",
+    "quality": 90,
+    "source": "User-provided wenku8_reading_report_code.zip",
+    "polishStatus": "redrawn",
+    "polishTool": "built-in image_gen",
+    "preserved": "Original character identity, scene, cel-shaded style, aspect ratio and negative space; monochrome paper-cut for R"
+  }
+]

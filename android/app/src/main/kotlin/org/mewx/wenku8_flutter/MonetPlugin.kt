@@ -60,19 +60,50 @@ internal fun readMonetInfo(context: Context): Map<String, Any?> {
         }
     } else null
     val supported = monetIconsSupported(context)
-    val enabled = !supported || context.packageManager.getComponentEnabledSetting(monetAliases(context)[1]) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+    val enabled = !supported || readMonetIcon(context)
     return mapOf("palettes" to palettes, "iconSupported" to supported, "themedIcon" to enabled)
+}
+
+/** Resolves DEFAULT against the manifest instead of treating it as enabled. */
+private fun monetAliasEnabled(context: Context, alias: ComponentName): Boolean =
+    when (context.packageManager.getComponentEnabledSetting(alias)) {
+        PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> {
+            @Suppress("DEPRECATION")
+            context.packageManager.getActivityInfo(alias, PackageManager.MATCH_DISABLED_COMPONENTS).enabled
+        }
+        PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
+        else -> false
+    }
+
+internal fun readMonetIcon(context: Context): Boolean {
+    val enabled = monetAliases(context).map { monetAliasEnabled(context, it) }
+    check(enabled.count { it } == 1) { "Exactly one icon launcher must be enabled" }
+    return enabled[1]
 }
 
 internal fun setMonetIcon(context: Context, enabled: Boolean) {
     check(monetIconsSupported(context)) { "Themed icon is unavailable" }
     if (Build.VERSION.SDK_INT >= 33) {
         val aliases = monetAliases(context)
-        // One atomic change, one launcher entry, no disabled MainActivity and no
-        // process restart. Explicit MainActivity remains a recovery entry point.
-        context.packageManager.setComponentEnabledSettings(listOf(
-            PackageManager.ComponentEnabledSetting(aliases[0], if (enabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP),
-            PackageManager.ComponentEnabledSetting(aliases[1], if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP),
-        ))
+        if (readMonetIcon(context) == enabled) return
+        val before = aliases.map { context.packageManager.getComponentEnabledSetting(it) }
+        try {
+            // The aliases own only an already-finished compatibility launcher.
+            // ReaderActivity and permanent file/recovery entries stay enabled.
+            context.packageManager.setComponentEnabledSettings(listOf(
+                PackageManager.ComponentEnabledSetting(aliases[0], if (enabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP),
+                PackageManager.ComponentEnabledSetting(aliases[1], if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP),
+            ))
+            check(readMonetIcon(context) == enabled) { "Icon state was not applied" }
+        } catch (failure: Exception) {
+            try {
+                context.packageManager.setComponentEnabledSettings(aliases.mapIndexed { index, alias ->
+                    PackageManager.ComponentEnabledSetting(alias, before[index], PackageManager.DONT_KILL_APP)
+                })
+            } catch (rollback: Exception) {
+                failure.addSuppressed(rollback)
+            }
+            throw failure
+        }
     }
 }

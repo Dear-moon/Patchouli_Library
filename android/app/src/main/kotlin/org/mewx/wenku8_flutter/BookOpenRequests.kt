@@ -4,6 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
+import android.os.Build
+import android.os.Process
+import android.content.pm.PackageManager
+import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import java.io.File
 import java.util.UUID
@@ -58,20 +63,66 @@ internal class BookOpenRequests(private val context: Context) {
         it.isReadPermission && it.uri == uri
     }
 
-    private fun link(request: Request): Link {
+    private fun pickerUri(request: Request): Uri? {
+        if (Build.VERSION.SDK_INT < 26) return null
+        if (DocumentsContract.isDocumentUri(context, request.uri)) return request.uri
+        if (request.uri.authority != MediaStore.AUTHORITY) return null
+        return runCatching { MediaStore.getDocumentUri(context, request.uri) }
+            .getOrNull()?.takeIf { DocumentsContract.isDocumentUri(context, it) }
+    }
+
+    private fun sourceName(uri: Uri): String? {
+        val authority = uri.authority ?: return null
+        return runCatching {
+            context.packageManager.resolveContentProvider(authority, 0)
+                ?.loadLabel(context.packageManager)?.toString()?.trim()
+                ?.takeIf { it.isNotEmpty() && it.length <= 256 && it.none { c -> c.code < 32 } }
+        }.getOrNull()
+    }
+
+    private fun sourceLocation(uri: Uri): String? {
+        if (Build.VERSION.SDK_INT < 26 || !DocumentsContract.isTreeUri(uri)) return null
+        return runCatching {
+            val path = DocumentsContract.findDocumentPath(context.contentResolver, uri)?.path ?: return null
+            val names = path.dropLast(1).take(32).map { id ->
+                val document = DocumentsContract.buildDocumentUriUsingTree(uri, id)
+                context.contentResolver.query(document, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                    if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null
+                } ?: return null
+            }
+            names.joinToString(" / ").takeIf { it.isNotBlank() && it.length <= 1024 }
+        }.getOrNull()
+    }
+
+    private fun canMove(request: Request, display: String): Boolean {
+        val document = DocumentsContract.isDocumentUri(context, request.uri)
+        val writable = context.checkUriPermission(request.uri, Process.myPid(), Process.myUid(),
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED
+        if (!bookOpenMoveAllowed(display, document, writable, true)) return false
+        val deletable = runCatching {
+            context.contentResolver.query(request.uri, arrayOf(DocumentsContract.Document.COLUMN_FLAGS), null, null, null)?.use {
+                it.moveToFirst() && !it.isNull(0) &&
+                    (it.getInt(0) and DocumentsContract.Document.FLAG_SUPPORTS_DELETE) != 0
+            } == true
+        }.getOrDefault(false)
+        return bookOpenMoveAllowed(display, document, writable, deletable)
+    }
+
+    private fun link(request: Request): Link? {
         request.linked?.let { return it }
         if (request.uri.scheme == "file") {
             check(File(request.uri.path!!).canRead()) { "无法读取这本书，请重新定位原文件" }
             return Link(request.uri).also { request.linked = it }
         }
-        if (hasGrant(request.uri)) return Link(request.uri, request.uri).also { request.linked = it }
-        if (request.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0) {
-            try {
+        val persisted = retainBookOpenReadGrant(
+            request.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0,
+            { hasGrant(request.uri) },
+            {
                 context.contentResolver.takePersistableUriPermission(request.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 request.newGrant = true
-            } catch (_: SecurityException) { /* Ordinary VIEW grants are often temporary. */ }
-        }
-        if (hasGrant(request.uri)) return Link(request.uri, request.uri).also { request.linked = it }
+            },
+        )
+        if (persisted) return Link(request.uri, request.uri).also { request.linked = it }
         // Some file managers grant VIEW access but not a persistable URI. If
         // this app already has shared-file access, retain that original path;
         // never ask for broader access or copy the book as a side effect.
@@ -90,23 +141,52 @@ internal class BookOpenRequests(private val context: Context) {
                 if (local != null) return Link(Uri.fromFile(local)).also { request.linked = it }
             }
         } ?: error("文件应用未授予读取权限，请重新打开原文件")
-        // A temporary grant is sufficient to read now. Keep the source URI,
-        // not a hidden original copy; normal relinking handles actual expiry.
-        return Link(request.uri).also { request.linked = it }
+        // A readable VIEW grant is not a durable library reference. QQ and
+        // other providers can revoke it when this activity/task ends. Let the
+        // shared UI obtain a lasting picker grant or an explicit managed copy.
+        return null
     }
 
     fun pending(): Map<String, Any>? {
         val request = synchronized(this) { requests.values.firstOrNull() } ?: return null
         return try {
             val display = name(request)
-            link(request)
-            mapOf("id" to request.id, "name" to display, "canLink" to true)
+            val durable = link(request) != null
+            mutableMapOf<String, Any>("id" to request.id, "name" to display, "canLink" to durable,
+                "canLocate" to (pickerUri(request) != null), "canMove" to canMove(request, display)).apply {
+                sourceName(request.uri)?.let { put("sourceName", it) }
+                sourceLocation(request.uri)?.let { put("sourceLocation", it) }
+            }
         } catch (error: Exception) {
             mapOf("id" to request.id, "name" to "所选书籍", "canLink" to false, "error" to bookImportMessage(error))
         }
     }
 
-    fun initialUri(id: String): Uri = request(id).uri
+    fun initialUri(id: String): Uri = request(id).let { pickerUri(it) ?: it.uri }
+
+    fun deleteSource(id: String, path: String) {
+        val request = try {
+            val offered = request(id)
+            check(canMove(offered, name(offered))) { "来源未授予删除权限，原文件未删除" }
+            val copy = File(path).canonicalFile
+            val app = File(context.applicationInfo.dataDir).canonicalFile
+            check(copy.path.startsWith(app.path + File.separator) && copy.name == "original" &&
+                File(copy.parentFile, "book.json").isFile) { "书库副本尚未确认，原文件未删除" }
+            context.contentResolver.openInputStream(offered.uri)?.use { source ->
+                copy.inputStream().use { saved ->
+                    check(sameBookOpenBytes(source, saved)) { "原文件已变化或副本不完整，原文件未删除" }
+                }
+            } ?: error("无法核对原文件，原文件未删除")
+            offered
+        } catch (error: Exception) {
+            throw BookOpenMoveFailure("move_not_deleted", error.message ?: "未通过核对，原文件未删除")
+        }
+        val deleted = try { DocumentsContract.deleteDocument(context.contentResolver, request.uri) }
+        catch (_: Exception) {
+            throw BookOpenMoveFailure("move_unconfirmed", "已导入书库，但未能确认原文件是否删除")
+        }
+        if (!deleted) throw BookOpenMoveFailure("move_not_deleted", "来源未完成删除，原文件未删除")
+    }
 
     fun resolve(id: String, copy: Boolean, links: BookTextLinks,
         imports: BookDocumentImportSession<Uri>): Map<String, String> {
@@ -115,6 +195,7 @@ internal class BookOpenRequests(private val context: Context) {
         return if (copy) imports.queue.select(request.uri, display, BookArchiveImport.limit(display))
         else {
             val source = link(request)
+                ?: error("文件应用只提供了临时读取权限，请重新选择原文件，或选择「复制到应用」")
             mapOf("name" to display, "reference" to links.remember(source.uri, source.grant))
         }
     }

@@ -13,12 +13,45 @@ import 'reader_page_anchor.dart';
 import 'reader_page_physics.dart';
 import 'reader_sheet_motion.dart';
 import 'reader_spine_turn.dart';
+import 'reader_status.dart';
+import 'reader_scroll_location.dart';
+import 'reader_chrome.dart';
 
 TextStyle _chapterHeadingStyle(TextStyle style) => style.copyWith(
   fontSize: 13,
   height: 1.4,
   color: style.color?.withValues(alpha: .6),
 );
+
+List<String> _localImagePriority(ReaderContent content, int? paragraph) {
+  final local = content.illustrations.where(
+    (url) => url.startsWith('wenku-local:'),
+  );
+  if (paragraph == null || paragraph <= 0) return local.take(4).toList();
+  if (local.isEmpty) return const [];
+  final order = content.readingOrder;
+  final count = order?.length ?? content.paragraphs.length;
+  final center = order?.indexOf(paragraph) ?? paragraph;
+  if (center < 0 || center >= count) return local.take(4).toList();
+  final result = <String>{};
+  void add(int index) {
+    if (index < 0 || index >= count) return;
+    final url = readerIllustrationUrl(
+      content.paragraphs[order?[index] ?? index],
+    );
+    if (url != null && url.startsWith('wenku-local:')) result.add(url);
+  }
+
+  for (
+    var distance = 0;
+    result.length < 4 && (center + distance < count || center - distance >= 0);
+    distance++
+  ) {
+    add(center + distance);
+    if (distance > 0 && result.length < 4) add(center - distance);
+  }
+  return result.toList(growable: false);
+}
 
 Offset _bodyOrigin(
   BuildContext context,
@@ -119,6 +152,17 @@ class ReaderPagedController {
   }
 
   void restore(ReadingPosition position) => _owner?._restore(position);
+
+  /// Includes the destination of an in-flight programmatic turn. Audio ticks
+  /// must not restart that same turn before it reaches the next spread.
+  bool isRevealed(ReaderTextAnchor anchor) {
+    final owner = _owner;
+    if (!ready || owner == null) return false;
+    final destination = owner._programmaticTurn ? owner._target : owner._page;
+    return owner._spreadFor(owner._pagination!.pageFor(anchor)) ==
+        owner._spreadFor(destination);
+  }
+
   void reveal(ReaderTextAnchor anchor) {
     final owner = _owner;
     if (owner?._pagination != null) {
@@ -256,12 +300,16 @@ class ReaderPagedView extends StatefulWidget {
     this.previousChapter,
     this.nextChapter,
     this.onChapterTurned,
+    this.bookTitle,
+    this.chrome,
   });
   final ReaderContent content;
   final ReaderPreferences preferences;
   final TextStyle style;
   final ReaderPagedController controller;
   final String title;
+  final String? bookTitle;
+  final Animation<double>? chrome;
   final EdgeInsets padding;
   final Widget Function(ReaderLeaf page) pageBuilder;
   final Object? pageBuilderKey;
@@ -313,6 +361,8 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
         }
       });
   bool _programmaticTurn = false;
+  bool _swipeFeedbackSent = false;
+  bool _swipeCancelled = false;
   int? _turnSpread, _swipeOrigin;
   double _turnDirection = 1;
   Widget? _chapterOutgoing;
@@ -411,6 +461,7 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
   );
   double get _headingExtent => _headingExtentFor(widget.title);
   double _headingExtentFor(String title) {
+    if (widget.bookTitle != null) return 0;
     final painter = TextPainter(
       text: TextSpan(text: title, style: _chapterHeadingStyle(widget.style)),
       textDirection: Directionality.of(context),
@@ -431,13 +482,18 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
         ),
         margin: widget.preferences.bindingMargin,
         features: MediaQuery.displayFeaturesOf(context),
-        origin: _bodyOrigin(
-          context,
-          title,
-          widget.style,
-          widget.padding,
-          (frame.width - widget.padding.horizontal).clamp(1, double.infinity),
-        ),
+        origin: widget.bookTitle != null
+            ? Offset(widget.padding.left, widget.padding.top)
+            : _bodyOrigin(
+                context,
+                title,
+                widget.style,
+                widget.padding,
+                (frame.width - widget.padding.horizontal).clamp(
+                  1,
+                  double.infinity,
+                ),
+              ),
       );
 
   int get _perSpread => _bookLayout?.count ?? 1;
@@ -674,6 +730,22 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
     return true;
   }
 
+  void _acknowledgePageCommit(int page) {
+    final origin = _swipeOrigin;
+    if (!mounted ||
+        origin == null ||
+        _programmaticTurn ||
+        _swipeFeedbackSent ||
+        _swipeCancelled ||
+        page - _edgeSlots == origin) {
+      return;
+    }
+    // Acknowledge the accepted release, not the spring's final settling frame.
+    // Re-evaluated ballistics and the later ScrollEnd must never replay it.
+    _swipeFeedbackSent = true;
+    AppHaptics.play(context, HapticCue.pageTurn);
+  }
+
   void _finishBoundary(int direction) {
     if (_boundaryLanding != null) return;
     final landed = _adjacentLayouts[direction];
@@ -814,6 +886,9 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
               .measureLocalImages(
                 chapter.content.illustrations,
                 current: current,
+                prioritize: direction < 0
+                    ? chapter.content.illustrations.reversed.take(4)
+                    : const [],
               );
           if (!current()) return;
           final pages = await paginateReader(
@@ -922,6 +997,12 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
             .measureLocalImages(
               content.illustrations,
               current: () => mounted && ticket == _generation,
+              prioritize: _localImagePriority(
+                content,
+                (_anchorFor(_pendingPosition) ?? _readingAnchor ?? oldAnchor)
+                    ?.paragraph,
+              ),
+              retainPriority: true,
             );
         if (!mounted || ticket != _generation) return;
         result = await paginateReader(
@@ -1403,9 +1484,13 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
           ? name
           : '$name-$spread-$physicalLeaf',
     );
-    final count = perSpread == 1
-        ? '${first + 1}/${pagination.pages.length}页 · ${(fraction * 100).round()}%'
-        : '${first + 1}–${last + 1}/${pagination.pages.length}页 · ${(fraction * 100).round()}%';
+    final count = widget.bookTitle == null
+        ? perSpread == 1
+              ? '${first + 1}/${pagination.pages.length}页 · ${(fraction * 100).round()}%'
+              : '${first + 1}–${last + 1}/${pagination.pages.length}页 · ${(fraction * 100).round()}%'
+        : perSpread == 1
+        ? '${first + 1} / ${pagination.pages.length} 页 · ${(fraction * 100).round()}%'
+        : '${first + 1}–${last + 1} / ${pagination.pages.length} 页 · ${(fraction * 100).round()}%';
     Widget part(Widget child) => ReaderTurnPart(
       motion: ReaderTurnScope(
         animation: _turn,
@@ -1424,53 +1509,145 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
       bounds: Rect.fromLTWH(0, 0, _frameSize.width, 1),
       child: child,
     );
+    Widget information(Widget child, {bool interactive = false}) =>
+        widget.chrome == null
+        ? interactive
+              ? child
+              : IgnorePointer(child: child)
+        : ReaderLocationLayer(
+            chrome: widget.chrome!,
+            interactive: interactive,
+            child: child,
+          );
+    final informationStyle = TextStyle(
+      fontSize: 13,
+      height: 1.4,
+      color: widget.preferences
+          .controlForeground(Theme.of(context).brightness == Brightness.dark)
+          .withValues(alpha: .72),
+    );
+    final statusInsets =
+        widget.bookTitle != null && widget.preferences.hideSystemStatus
+        ? ReaderStatusFooter.horizontalInsetsFor(
+            context,
+            extra: widget.preferences.statusSideInset,
+            fontSize: widget.preferences.statusFontSize,
+          )
+        : EdgeInsets.zero;
     return IgnorePointer(
+      ignoring: spread != _restingSpread,
       child: SelectionContainer.disabled(
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (widget.status != null)
+            if (widget.status != null && widget.bookTitle == null)
               Positioned(
                 left: 0,
                 right: 0,
                 top: 0,
                 child: part(widget.status!),
               ),
-            Positioned(
-              top: padding.top,
-              left: padding.left,
-              right: padding.right,
-              child: part(
-                Row(
-                  key: key('reader-chapter-location'),
-                  children: [
-                    Expanded(
-                      child: AppText(
-                        title,
-                        key: key('reader-chapter-title'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: _chapterHeadingStyle(widget.style),
-                      ),
-                    ),
-                    if (widget.showPageCount) ...[
-                      const SizedBox(width: 12),
-                      AppText(
-                        count,
-                        key: key('reader-page-count', leaf: leaves - 1),
-                        maxLines: 1,
-                        textAlign: TextAlign.end,
-                        style: widget.style.copyWith(
-                          fontSize: 11,
-                          height: 1.3,
-                          color: widget.style.color?.withValues(alpha: .55),
-                        ),
-                      ),
-                    ],
-                  ],
+            if (widget.bookTitle == null || widget.preferences.showReaderStatus)
+              Positioned(
+                top: widget.bookTitle == null
+                    ? padding.top
+                    : widget.preferences.statusTopOffset,
+                left: padding.left > statusInsets.left
+                    ? padding.left
+                    : statusInsets.left,
+                right: padding.right > statusInsets.right
+                    ? padding.right
+                    : statusInsets.right,
+                child: part(
+                  information(
+                    widget.bookTitle != null
+                        ? ReaderStatusFooter(
+                            key: key('reader-chapter-location'),
+                            compact: true,
+                            statusBand: true,
+                            fontSize: widget.preferences.statusFontSize,
+                            timeAtEnd: false,
+                            showBattery: widget.preferences.hideSystemStatus,
+                            ink: informationStyle.color,
+                          )
+                        : Row(
+                            key: key('reader-chapter-location'),
+                            children: [
+                              Expanded(
+                                child: ReaderChapterTitle(
+                                  text: title,
+                                  key: key('reader-chapter-title'),
+                                  style: _chapterHeadingStyle(widget.style),
+                                  active: spread == _restingSpread,
+                                  chrome: widget.chrome,
+                                  showWithChrome: false,
+                                  reduceMotion: widget.reduceMotion,
+                                ),
+                              ),
+                              if (widget.showPageCount) ...[
+                                const SizedBox(width: 12),
+                                IgnorePointer(
+                                  child: AppText(
+                                    count,
+                                    key: key(
+                                      'reader-page-count',
+                                      leaf: leaves - 1,
+                                    ),
+                                    maxLines: 1,
+                                    textAlign: TextAlign.end,
+                                    style: widget.style.copyWith(
+                                      fontSize: 11,
+                                      height: 1.3,
+                                      color: widget.style.color?.withValues(
+                                        alpha: .55,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                    interactive: true,
+                  ),
                 ),
               ),
-            ),
+            if (widget.bookTitle != null)
+              Positioned(
+                left: padding.left,
+                right: padding.right,
+                bottom:
+                    (padding.bottom - ReaderScrollLocation.extentOf(context))
+                        .clamp(0.0, double.infinity),
+                child: part(
+                  information(
+                    Row(
+                      key: key('reader-bottom-location'),
+                      children: [
+                        Expanded(
+                          child: ReaderChapterTitle(
+                            text: title,
+                            key: key('reader-bottom-chapter-title'),
+                            style: informationStyle,
+                            active: spread == _restingSpread,
+                            chrome: widget.chrome,
+                            showWithChrome: false,
+                            reduceMotion: widget.reduceMotion,
+                          ),
+                        ),
+                        if (widget.showPageCount) ...[
+                          const SizedBox(width: 12),
+                          AppText(
+                            count,
+                            key: key('reader-page-count', leaf: leaves - 1),
+                            maxLines: 1,
+                            style: informationStyle,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -1499,7 +1676,7 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
         child: child,
       );
     }
-    if (_effect == ReaderPageEffect.cover) {
+    if (_effect == ReaderPageEffect.cover || _effect == ReaderPageEffect.fade) {
       return ReaderSheetMotion(
         animation: _turn,
         effect: _effect,
@@ -1585,6 +1762,8 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
             });
             _overscroll = 0;
             _crossedBoundary = false;
+            _swipeFeedbackSent = false;
+            _swipeCancelled = false;
             _target = _page;
             _pendingFraction = null;
             _pendingPosition = null;
@@ -1602,9 +1781,6 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
             // live sheet/clock until it really snaps, or the next drag can still
             // be attached to a rail that was replaced by a premature handoff.
             if ((position - spread).abs() > .0001) return false;
-            if (!_programmaticTurn && spread != _swipeOrigin) {
-              AppHaptics.play(context, HapticCue.pageTurn);
-            }
             final boundary = spread < 0
                 ? -1
                 : spread >= _spreadCount
@@ -1638,6 +1814,11 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
             if (!mounted) return;
             _paperClock.touchY = event.localPosition.dy / _frameSize.height;
           },
+          onPointerCancel: (_) {
+            // A cancelled pointer may still snap its rail to a safe page, but
+            // it is not an accepted release and must not acknowledge a turn.
+            _swipeCancelled = true;
+          },
           onPointerMove: (event) {
             // A pointer keeps its original hit-test path until up or
             // cancel, even if navigation has already disposed this page.
@@ -1655,6 +1836,7 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
             clipBehavior: Clip.none,
             pageSnapping: false,
             physics: ReaderPagePhysics(
+              onUserPageCommitted: _acknowledgePageCommit,
               liveDurationScale: () =>
                   widget.preferences.pageSpeed.durationScale,
               // The short-stroke limit belongs to finger gestures. A
@@ -1714,7 +1896,8 @@ class _ReaderPagedViewState extends State<ReaderPagedView>
                   : index == _swipeOrigin || incoming;
               final sheet = chapter
                   ? _chapterSheet(body, incoming: true)
-                  : _effect == ReaderPageEffect.cover
+                  : _effect == ReaderPageEffect.cover ||
+                        _effect == ReaderPageEffect.fade
                   ? ReaderSheetMotion(
                       animation: _turn,
                       effect: _effect,

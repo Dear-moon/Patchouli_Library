@@ -85,17 +85,19 @@ Stream<({String text, int heading, int start, int end})> _classified(
       final text = line.text.trim();
       if (text.isEmpty) continue;
       final eligible = line.heading && text.length <= 90;
+      final candidate = eligible ? defaultLocalHeadingCandidate(text) : text;
+      final heading = !eligible
+          ? localHeadingNone
+          : localTextVolumePattern.hasMatch(candidate)
+          ? localHeadingVolume
+          : localTextChapterPattern.hasMatch(candidate)
+          ? localHeadingChapter
+          : localHeadingNone;
       yield (
-        text: text,
+        text: heading == localHeadingNone ? text : candidate,
         start: line.start,
         end: line.end,
-        heading: !eligible
-            ? localHeadingNone
-            : localTextVolumePattern.hasMatch(text)
-            ? localHeadingVolume
-            : localTextChapterPattern.hasMatch(text)
-            ? localHeadingChapter
-            : localHeadingNone,
+        heading: heading,
       );
     }
     return;

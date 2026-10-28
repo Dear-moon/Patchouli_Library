@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'reader_rich_content.dart';
 import 'app_ui.dart';
+import 'reader_tap_surface.dart';
 
 class ReaderAnnotations extends SingleChildRenderObjectWidget {
   const ReaderAnnotations({
@@ -30,7 +31,8 @@ class ReaderAnnotations extends SingleChildRenderObjectWidget {
   ) => renderObject.update(this);
 }
 
-class RenderReaderAnnotations extends RenderProxyBox {
+class RenderReaderAnnotations extends RenderProxyBox
+    implements ReaderTapPreviewPolicy {
   RenderReaderAnnotations(this.config) {
     _tap.onTap = () {
       if (_pressed case final id?) config.onNote(id);
@@ -167,6 +169,10 @@ class RenderReaderAnnotations extends RenderProxyBox {
   @override
   bool hitTestSelf(Offset position) =>
       _links.any((v) => v.rect.inflate(3).contains(position));
+
+  @override
+  bool allowsReaderTapPreview(Offset localPosition) =>
+      !hitTestSelf(localPosition);
   @override
   void handleEvent(PointerEvent event, HitTestEntry entry) {
     if (event is PointerDownEvent) {
@@ -204,7 +210,9 @@ Future<void> showReaderNote(
       children: [
         const ArchiveSection(title: '注释', code: 'READER / NOTE'),
         const SizedBox(height: 18),
-        SelectableText(text, style: const TextStyle(fontSize: 16, height: 1.8)),
+        SelectionArea(
+          child: Text(text, style: const TextStyle(fontSize: 16, height: 1.8)),
+        ),
         const SizedBox(height: 20),
         GlassTextButton(
           onPressed: () => Navigator.pop(sheet),

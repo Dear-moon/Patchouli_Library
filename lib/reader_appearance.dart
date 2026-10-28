@@ -88,6 +88,21 @@ class ReaderAppearance extends StatefulWidget {
   final ThemeData appTheme;
   final Widget child;
   final int? bookId;
+
+  /// Continue a reader-owned route without changing ordinary app entry points.
+  /// Reuse the live book palette rather than capturing one ThemeData snapshot.
+  static Widget inherit(BuildContext context, {required Widget child}) {
+    final owner = context.findAncestorWidgetOfExactType<ReaderAppearance>();
+    return owner == null
+        ? child
+        : ReaderAppearance(
+            state: owner.state,
+            appTheme: owner.appTheme,
+            bookId: owner.bookId,
+            child: child,
+          );
+  }
+
   @override
   State<ReaderAppearance> createState() => _ReaderAppearanceState();
 }
@@ -121,9 +136,16 @@ class _ReaderAppearanceState extends State<ReaderAppearance> {
         value: novelSystemUiStyle(theme.brightness),
         child: Theme(
           data: theme,
-          child: DefaultTextStyle(
-            style: theme.textTheme.bodyMedium!,
-            child: IconTheme(data: theme.iconTheme, child: child!),
+          // Theme alone does not replace MaterialApp's DefaultSelectionStyle.
+          // Its app-light dark tint would disappear on a separately dark paper.
+          child: DefaultSelectionStyle.merge(
+            selectionColor: theme.brightness == Brightness.dark
+                ? Colors.white.withValues(alpha: .20)
+                : Colors.black.withValues(alpha: .18),
+            child: DefaultTextStyle(
+              style: theme.textTheme.bodyMedium!,
+              child: IconTheme(data: theme.iconTheme, child: child!),
+            ),
           ),
         ),
       );

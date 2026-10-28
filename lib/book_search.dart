@@ -1,7 +1,7 @@
 /// A metadata query for the device's known books. Keywords are partial matches;
 /// spaces join terms with AND, while # limits a term to tags/classification.
 enum BookSearchField {
-  all('全部', '书名、作者、标签'),
+  all('全部', '书名、作者、标签、书籍 ID'),
   title('书名', '只搜索书名'),
   author('作者', '只搜索作者'),
   tags('标签', '如：奇幻、女性视角'),

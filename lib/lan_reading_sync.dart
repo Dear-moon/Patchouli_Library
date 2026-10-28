@@ -14,6 +14,7 @@ import 'lan_discovery.dart';
 import 'lan_pairing.dart';
 import 'lan_transfer_cipher.dart';
 import 'library_incremental_sync.dart';
+import 'online_book_handoff.dart';
 export 'lan_discovery.dart' show LanDiscovery, LanNearbyDevice;
 
 part 'lan_book_handoff.dart';
@@ -251,6 +252,7 @@ class LanReadingSync extends ChangeNotifier with WidgetsBindingObserver {
     required this.state,
     required this.preferences,
     this.books,
+    this.repository,
     this.port = 38762,
     this.address,
     this.pairings = const LanPairingStore(),
@@ -259,6 +261,9 @@ class LanReadingSync extends ChangeNotifier with WidgetsBindingObserver {
   final LibraryState state;
   final SharedPreferences preferences;
   final LocalBookStore? books;
+
+  /// Own-device repository; online handoffs never carry access credentials.
+  final NovelRepository? repository;
   final int port;
   final InternetAddress? address;
   final LanPairingStore pairings;

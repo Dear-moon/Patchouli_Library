@@ -247,10 +247,14 @@ class NativeGlassGroup extends StatefulWidget {
     required this.child,
     this.enabled = true,
     this.inherit = true,
+    this.preserveMemberClip = false,
   });
   final Widget child;
   final bool enabled;
   final bool inherit;
+
+  /// Share only clear members' input, retaining their original clipped edges.
+  final bool preserveMemberClip;
 
   @override
   State<NativeGlassGroup> createState() => _NativeGlassGroupState();
@@ -272,7 +276,11 @@ class _NativeGlassGroupState extends State<NativeGlassGroup> {
       child: widget.child,
     );
     return NativeEffects.easyGlass
-        ? LiquidGlassBatch(enabled: enabled, child: scope)
+        ? LiquidGlassBatch(
+            enabled: enabled,
+            preserveMemberClip: widget.preserveMemberClip,
+            child: scope,
+          )
         : scope;
   }
 

@@ -119,6 +119,7 @@ class AppGlassSlider extends StatefulWidget {
     this.max = 1,
     this.divisions,
     this.haptics = true,
+    this.compact = false,
     required this.activeColor,
     required this.inactiveColor,
     required this.thumbColor,
@@ -128,6 +129,7 @@ class AppGlassSlider extends StatefulWidget {
   final double value, min, max;
   final int? divisions;
   final bool haptics;
+  final bool compact;
   final ValueChanged<double>? onChanged, onChangeStart, onChangeEnd;
   final Color activeColor, inactiveColor, thumbColor;
   final easy.LiquidGlassStyle style;
@@ -244,8 +246,20 @@ class _AppGlassSliderState extends State<AppGlassSlider> {
                   onChangeStart: _start,
                   onChangeEnd: _end,
                   width: constraints.maxWidth,
-                  height: 52,
+                  height: widget.compact ? 48 : 52,
                   minimumTouchHeight: 48,
+                  layout: widget.compact
+                      ? const easy.LiquidGlassSliderLayout(
+                          thumbWidth: 24,
+                          thumbHeight: 24,
+                          liftedThumbWidth: 36,
+                          liftedThumbHeight: 36,
+                          horizontalInset: 8,
+                        )
+                      : const easy.LiquidGlassSliderLayout(),
+                  motion: widget.compact
+                      ? const easy.LiquidGlassLensMotionSpec(maxDeformation: 0)
+                      : const easy.LiquidGlassLensMotionSpec(),
                   activeColor: enabled
                       ? widget.activeColor
                       : widget.activeColor.withValues(alpha: .4),

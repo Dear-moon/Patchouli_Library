@@ -1,8 +1,10 @@
 package org.mewx.wenku8_flutter
 
 import android.app.Activity
+import android.Manifest
 import android.content.Intent
 import android.content.ClipData
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.os.Build
@@ -19,12 +21,14 @@ import androidx.core.content.FileProvider
 /** Explicit document/folder/share actions; never touches the Wenku8 bridge/session. */
 class LocalTools(private val activity: Activity) : MethodChannel.MethodCallHandler {
     private val io = Executors.newSingleThreadExecutor()
-    private data class Pending(val result: MethodChannel.Result, val export: String?, val legacy: Boolean = false, val image: ByteArray? = null)
+    private data class Pending(val result: MethodChannel.Result, val export: String?, val legacy: Boolean = false)
     private var pending: Pending? = null
     private var pendingShare: MethodChannel.Result? = null
+    private var galleryAwaitingPermission: BookImageStore.Image? = null
     private var closed = false
     companion object {
         private const val REQUEST = 8019
+        private const val GALLERY_PERMISSION_REQUEST = 8022
         private const val MAX_BYTES = 4 * 1024 * 1024
     }
 
@@ -96,49 +100,55 @@ class LocalTools(private val activity: Activity) : MethodChannel.MethodCallHandl
                     }
                 }
             }
-            "saveBookImage", "exportImage", "exportBackup", "importBackup", "importLegacyData" -> {
+            "saveImageToGallery", "exportImage", "saveBookImage" -> {
+                if (pending != null || pendingShare != null || closed) {
+                    result.error("busy", "请先完成当前图片、文件或分享操作", null)
+                    return
+                }
+                val image = try {
+                    if (call.method == "saveBookImage") {
+                        BookImageStore.image(call.argument<ByteArray>("bytes"), call.argument<String>("name"))
+                    } else {
+                        BookImageStore.renderedImage(call.argument<ByteArray>("bytes"), call.argument<String>("name"))
+                    }
+                } catch (_: Exception) {
+                    result.error("gallery_input", "图片格式或大小无效", null)
+                    return
+                }
+                pendingShare = result
+                if (Build.VERSION.SDK_INT <= 28 &&
+                    activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    galleryAwaitingPermission = image
+                    try {
+                        activity.requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), GALLERY_PERMISSION_REQUEST)
+                    } catch (_: Exception) {
+                        galleryAwaitingPermission = null
+                        pendingShare = null
+                        result.error("gallery_permission", "无法获得相册写入权限，请在系统设置中允许后重试", null)
+                    }
+                } else saveGallery(image, result)
+            }
+            "exportBackup", "importBackup", "importLegacyData" -> {
                 if (pending != null || pendingShare != null || closed) {
                     result.error("busy", "A document operation is already active", null)
                     return
                 }
                 val text = if (call.method == "exportBackup") call.argument<String>("text") else null
                 val legacy = call.method == "importLegacyData"
-                val bookImage = if (call.method == "saveBookImage") try {
-                    BookImageStore.image(call.argument<ByteArray>("bytes"), call.argument<String>("name"))
-                } catch (_: Exception) { result.error("image", "图片格式或大小无效", null); return } else null
-                if (bookImage != null && Build.VERSION.SDK_INT >= 29) {
-                    pendingShare = result
-                    io.execute {
-                        var error: Exception? = null
-                        try { BookImageStore.save(activity, bookImage) } catch (failure: Exception) { error = failure }
-                        activity.runOnUiThread {
-                            if (!closed && pendingShare === result) {
-                                pendingShare = null
-                                if (error == null) result.success(true) else result.error("image", "图片保存失败，请检查可用空间后重试", null)
-                            }
-                        }
-                    }
-                    return
-                }
-                val image = bookImage?.bytes ?: if (call.method == "exportImage") call.argument<ByteArray>("bytes") else null
-                if (call.method == "exportImage" && !QuoteCardImage.valid(image)) {
-                    result.error("input", "Invalid excerpt image", null)
-                    return
-                }
                 if (call.method == "exportBackup" && (text == null || text.toByteArray(Charsets.UTF_8).size > MAX_BYTES)) {
                     result.error("size", "Backup exceeds the document limit", null)
                     return
                 }
-                val intent = Intent(if (legacy) Intent.ACTION_OPEN_DOCUMENT_TREE else if (text == null && image == null) Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT).apply {
+                val intent = Intent(if (legacy) Intent.ACTION_OPEN_DOCUMENT_TREE else if (text == null) Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT).apply {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     if (!legacy) {
                         addCategory(Intent.CATEGORY_OPENABLE)
-                        type = bookImage?.mime ?: if (image != null) "image/png" else if (text == null) "*/*" else "application/json"
-                        if (text == null && image == null) putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
-                        else putExtra(Intent.EXTRA_TITLE, bookImage?.name ?: if (image != null) QuoteCardImage.fileName(call.argument<String>("name")) else call.argument<String>("name") ?: "wenku8-backup.json")
+                        type = if (text == null) "*/*" else "application/json"
+                        if (text == null) putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
+                        else putExtra(Intent.EXTRA_TITLE, call.argument<String>("name") ?: "wenku8-backup.json")
                     }
                 }
-                pending = Pending(result, text, legacy, image)
+                pending = Pending(result, text, legacy)
                 try {
                     @Suppress("DEPRECATION")
                     activity.startActivityForResult(if (legacy) Intent.createChooser(intent, "选择旧版记录目录") else intent, REQUEST)
@@ -151,22 +161,53 @@ class LocalTools(private val activity: Activity) : MethodChannel.MethodCallHandl
         }
     }
 
+    fun onRequestPermissionsResult(request: Int): Boolean {
+        if (request != GALLERY_PERMISSION_REQUEST) return false
+        val image = galleryAwaitingPermission ?: return true
+        galleryAwaitingPermission = null
+        val result = pendingShare ?: return true
+        if (closed) return true
+        if (activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            saveGallery(image, result)
+        } else {
+            pendingShare = null
+            result.error("gallery_permission", "未允许保存到相册，请在系统设置中允许存储权限后重试", null)
+        }
+        return true
+    }
+
+    private fun saveGallery(image: BookImageStore.Image, result: MethodChannel.Result) {
+        io.execute {
+            var error: Exception? = null
+            try { BookImageStore.save(activity, image) } catch (failure: Exception) { error = failure }
+            activity.runOnUiThread {
+                if (closed || pendingShare !== result) return@runOnUiThread
+                pendingShare = null
+                when (error) {
+                    null -> result.success(true)
+                    is SecurityException -> result.error("gallery_permission", "未允许保存到相册，请在系统设置中允许后重试", null)
+                    else -> result.error("gallery_save", "图片未保存到相册，请检查可用空间后重试", null)
+                }
+            }
+        }
+    }
+
     fun onActivityResult(request: Int, code: Int, data: Intent?): Boolean {
         if (request != REQUEST) return false
         val operation = pending ?: return true
         val uri = data?.data
         if (code != Activity.RESULT_OK || uri == null) {
             pending = null
-            operation.result.success(if (operation.export == null && operation.image == null) null else false)
+            operation.result.success(if (operation.export == null) null else false)
             return true
         }
         io.execute {
             try {
                 val response: Any = if (operation.legacy) {
                     readLegacyTree(uri)
-                } else if (operation.export != null || operation.image != null) {
+                } else if (operation.export != null) {
                     activity.contentResolver.openOutputStream(uri, "wt")?.use { output ->
-                        output.write(operation.image ?: operation.export!!.toByteArray(Charsets.UTF_8))
+                        output.write(operation.export.toByteArray(Charsets.UTF_8))
                         output.flush()
                     } ?: throw IllegalStateException("Document is not writable")
                     true
@@ -269,6 +310,7 @@ class LocalTools(private val activity: Activity) : MethodChannel.MethodCallHandl
         pending = null
         pendingShare?.error("closed", "Activity closed", null)
         pendingShare = null
+        galleryAwaitingPermission = null
         activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         io.shutdown()
     }

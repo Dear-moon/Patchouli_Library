@@ -63,6 +63,8 @@ class _ImpellerShaderBackdropLayer extends ContainerLayer {
   /// The lens this layer paints for. Cleared on detach so a dead render
   /// object is never sampled.
   RenderLiquidGlassLens? renderObject;
+  ui.ImageFilter? _submittedFilter;
+  int? _submittedBackdropId;
 
   @override
   bool get alwaysNeedsAddToScene => true;
@@ -78,13 +80,47 @@ class _ImpellerShaderBackdropLayer extends ContainerLayer {
     }());
     lens._packImpellerMainUniforms(
         reuseGeometry ? LiquidGlassSceneGeometry.forScene(builder) : null);
+    final filter = lens._impellerFilter;
+    var retain = const bool.fromEnvironment(
+      'LIQUID_GLASS_RETAIN_FILTER_LAYERS',
+      defaultValue: true,
+    );
+    assert(() {
+      retain =
+          retain && !RenderLiquidGlassLens.debugDisableFilterLayerRetention;
+      return true;
+    }());
+    final previous = engineLayer;
+    // This layer is only the backdrop instruction; foreground children are
+    // painted outside it. Retaining it retains the SAME live filter, not its
+    // pixels. The engine still samples this frame's scrolling background.
+    // Resolve geometry above on every scene: a retained ancestor can move the
+    // lens without repainting it, which must invalidate this reuse immediately.
+    if (retain &&
+        previous != null &&
+        identical(filter, _submittedFilter) &&
+        lens._backdropId == _submittedBackdropId &&
+        firstChild == null) {
+      builder.addRetained(previous);
+      assert(() {
+        lens.debugFilterLayerRetainCount++;
+        return true;
+      }());
+      return;
+    }
     engineLayer = builder.pushBackdropFilter(
-      lens._impellerFilter,
+      filter,
       oldLayer: engineLayer as ui.BackdropFilterEngineLayer?,
       // Set inside a LiquidGlassBatch: every member pushes the same key, so
       // the engine reads the backdrop once and they all sample that copy.
       backdropId: lens._backdropId,
     );
+    _submittedFilter = filter;
+    _submittedBackdropId = lens._backdropId;
+    assert(() {
+      lens.debugFilterLayerPushCount++;
+      return true;
+    }());
     addChildrenToScene(builder);
     builder.pop();
   }
@@ -115,6 +151,8 @@ class RenderLiquidGlassLens extends RenderProxyBox
   static bool debugDisableUniformRetention = false;
   @visibleForTesting
   static bool debugDisableSceneGeometry = false;
+  @visibleForTesting
+  static bool debugDisableFilterLayerRetention = false;
   RenderLiquidGlassLens({
     required LiquidGlassLensRenderMode mode,
     required ui.FragmentShader mainShader,
@@ -130,6 +168,7 @@ class RenderLiquidGlassLens extends RenderProxyBox
     required Size screenSize,
     required double devicePixelRatio,
     int? backdropId,
+    bool preserveBatchedClip = false,
     required LiquidGlassShaderClip shaderClip,
     bool physicalOptics = false,
     ValueListenable<int>? captureRevision,
@@ -139,6 +178,7 @@ class RenderLiquidGlassLens extends RenderProxyBox
   })  : _mode = mode,
         _physicalOptics = physicalOptics,
         _backdropId = backdropId,
+        _preserveBatchedClip = preserveBatchedClip,
         _shaderClip = shaderClip,
         _honorBackdropAlpha = honorBackdropAlpha,
         _mainShader = mainShader,
@@ -215,6 +255,15 @@ class RenderLiquidGlassLens extends RenderProxyBox
     markNeedsPaint();
   }
 
+  bool _preserveBatchedClip;
+
+  /// Keep the original no-blur outline while sharing only the backdrop input.
+  set preserveBatchedClip(bool value) {
+    if (_preserveBatchedClip == value) return;
+    _preserveBatchedClip = value;
+    markNeedsPaint();
+  }
+
   /// Whether the shader folds the captured backdrop's alpha into its own
   /// coverage. Skia capture path only.
   ///
@@ -246,7 +295,13 @@ class RenderLiquidGlassLens extends RenderProxyBox
 
   LiquidGlassLitShape _shape;
   set shape(LiquidGlassLitShape value) {
-    if (identical(_shape, value)) return;
+    // Styles resolve a fresh shape on every build. Keep the retained shader
+    // inputs when the outline and all three lights are unchanged.
+    if (identical(_shape, value) ||
+        LiquidGlassShape.sameOutline(_shape, value) &&
+            LiquidGlassLitShape.sameBorder(_shape, value)) {
+      return;
+    }
     _shape = value;
     markNeedsPaint();
   }
@@ -271,7 +326,7 @@ class RenderLiquidGlassLens extends RenderProxyBox
 
   LiquidGlassRefraction _refraction;
   set refraction(LiquidGlassRefraction value) {
-    if (identical(_refraction, value)) return;
+    if (_refraction == value) return;
     _refraction = value;
     markNeedsPaint();
   }
@@ -431,6 +486,12 @@ class RenderLiquidGlassLens extends RenderProxyBox
   ui.ImageFilter? _retainedImpellerFilter;
   @visibleForTesting
   int debugUniformPackCount = 0;
+  @visibleForTesting
+  int debugPaintCount = 0;
+  @visibleForTesting
+  int debugFilterLayerPushCount = 0;
+  @visibleForTesting
+  int debugFilterLayerRetainCount = 0;
 
   /// The lens-local rect the shader pass was pushed inside this paint: the
   /// bound of whichever clip layer holds [_shaderLayerHandle]'s layer. Known
@@ -535,6 +596,10 @@ class RenderLiquidGlassLens extends RenderProxyBox
 
   @override
   void paint(PaintingContext context, Offset offset) {
+    assert(() {
+      debugPaintCount++;
+      return true;
+    }());
     // The Impeller pass samples its own transform at compositing time
     // (see _ImpellerShaderBackdropLayer); only the Skia capture path
     // still needs the probe to repaint when an ancestor moves it.
@@ -629,7 +694,8 @@ class RenderLiquidGlassLens extends RenderProxyBox
             transform,
             MatrixUtils.transformRect(transform, clip),
             subpassAncestor,
-            subpassSize);
+            subpassSize,
+            geometry);
     // Outline-clipped plain pass: the coverage is the fractional lens box,
     // and the engine rounds it out. The shader's frame is shifted by the
     // fraction the rounding eats, so the content lands where it would have
@@ -638,7 +704,7 @@ class RenderLiquidGlassLens extends RenderProxyBox
     final Offset track = (clip == null &&
             !linearXform &&
             _shaderClip == LiquidGlassShaderClip.outlineTracked)
-        ? _passRounding(transform, subpassAncestor, subpassSize)
+        ? _passRounding(transform, subpassAncestor, subpassSize, geometry)
         : Offset.zero;
     final inputs = (
       _mainShader,
@@ -726,11 +792,16 @@ class RenderLiquidGlassLens extends RenderProxyBox
   /// The clips come from the layer tree ([_ancestorClipInSurface]), which
   /// is what the engine sees — not from render objects' estimates of what
   /// they might clip.
-  Rect _composedPassRect(Matrix4 transform, Rect rawInSurface,
-      RenderObject? surface, Size? surfaceSize) {
+  Rect _composedPassRect(
+      Matrix4 transform,
+      Rect rawInSurface,
+      RenderObject? surface,
+      Size? surfaceSize,
+      LiquidGlassSceneGeometry? geometry) {
     Rect cut =
         rawInSurface.intersect(Offset.zero & (surfaceSize ?? _screenSize));
-    final Rect? ancestors = _ancestorClipInSurface(transform, surface);
+    final Rect? ancestors =
+        _ancestorClipInSurface(transform, surface, geometry);
     if (ancestors != null) cut = cut.intersect(ancestors);
     // Clipped away entirely: none of this lens is on screen this frame, and
     // an empty rect would hand the shader a zero resolution to divide by.
@@ -751,7 +822,8 @@ class RenderLiquidGlassLens extends RenderProxyBox
   /// The layers' frame and [transform]'s differ by the paint offsets on the
   /// way down, so the lens's own clip — the one rect known in both — lines
   /// them up: same linear part on both sides, only a translation to settle.
-  Rect? _ancestorClipInSurface(Matrix4 transform, RenderObject? surface) {
+  Rect? _ancestorClipInSurface(Matrix4 transform, RenderObject? surface,
+      LiquidGlassSceneGeometry? geometry) {
     final Layer? own = _shaderLayerHandle.layer?.parent;
     final Rect? pushed = _pushedShaderClip;
     if (own == null || pushed == null) return null;
@@ -759,8 +831,9 @@ class RenderLiquidGlassLens extends RenderProxyBox
     if (ownInLayer == null) return null;
     // ignore: invalid_use_of_protected_member
     final Layer? until = surface?.layer;
-    final LiquidGlassLayerClip above =
-        liquidGlassAncestorLayerClip(own, until: until);
+    final LiquidGlassLayerClip above = geometry == null
+        ? liquidGlassAncestorLayerClip(own, until: until)
+        : geometry.ancestorClipFor(own, until: until);
     final Rect? clip = above.clip;
     if (clip == null) return null;
     final Offset inTop =
@@ -784,13 +857,14 @@ class RenderLiquidGlassLens extends RenderProxyBox
   /// the engine rounds that out to whole physical pixels. Only the corner
   /// matters: the size rounds too, but the shader never divides by it here —
   /// the sampling window stays the full surface.
-  Offset _passRounding(
-      Matrix4 transform, RenderObject? surface, Size? surfaceSize) {
+  Offset _passRounding(Matrix4 transform, RenderObject? surface,
+      Size? surfaceSize, LiquidGlassSceneGeometry? geometry) {
     final Rect raw = _composedPassRect(
         transform,
         MatrixUtils.transformRect(transform, Offset.zero & size),
         surface,
-        surfaceSize);
+        surfaceSize,
+        geometry);
     final double dpr = _devicePixelRatio;
     final Offset rounded = Offset(
       (raw.left * dpr).floorToDouble() / dpr,
@@ -913,6 +987,12 @@ class RenderLiquidGlassLens extends RenderProxyBox
   /// match: a Gaussian reads `3 * sigma` past every pixel it writes, and past
   /// the clip there is nothing to read but the edge, repeated.
   void _paintImpellerBatched(PaintingContext context, Offset offset) {
+    if (_preserveBatchedClip && !_useBlur) {
+      // The layer still carries its backdropId. Only its clip/rounding path
+      // stays identical to the original independent clear lens.
+      _paintImpeller(context, offset);
+      return;
+    }
     _blurLayerHandle.layer = null;
     _clipLayerHandle.layer = null;
     _clipPathLayerHandle.layer = null;

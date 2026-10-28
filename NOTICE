@@ -54,3 +54,5 @@ Upstream MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later alternatives retained;
 this GPL 3 application uses the GPL 2.0-or-later option. Unmodified source,
 build files and notices: third_party/juniversalchardet-2.0.4/.
 Apache POI HWPF 5.5.1 and document dependency notices: assets/licenses/poi.txt.
+
+0.5.0 source distribution: upstream library test suites and sample fixtures are omitted; runtime library sources and original licenses are retained.

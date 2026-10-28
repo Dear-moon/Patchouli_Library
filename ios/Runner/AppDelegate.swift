@@ -12,6 +12,27 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ReadingWidgetsPlugin") {
+      ReadingWidgetsPlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeLibraryPlugin") {
+      NativeLibraryPlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeLocalToolsPlugin") {
+      NativeLocalToolsPlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeNetworkPlugin") {
+      NativeNetworkPlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeFrameRatePlugin") {
+      NativeFrameRatePlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeSystemSpeechPlugin") {
+      NativeSystemSpeechPlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeLanDiscoveryPlugin") {
+      NativeLanDiscoveryPlugin.register(with: registrar)
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AppHapticsPlugin") {
       AppHapticsPlugin.register(with: registrar)
     }

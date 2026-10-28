@@ -87,6 +87,7 @@ class ReaderBlockSpacing {
     required double lineHeight,
     required double width,
     required double defaultGap,
+    bool overrideGap = false,
   }) {
     double maximum(List<String> values) => values.fold(
       0.0,
@@ -94,6 +95,9 @@ class ReaderBlockSpacing {
     );
     double total(List<String> values) =>
         values.fold(0.0, (a, b) => a + _pixels(b, font, lineHeight, width));
+    if (previous != null && overrideGap) {
+      return defaultGap + total(leading) + total(previous.trailing);
+    }
     final prior = previous == null
         ? 0.0
         : previous.after.isEmpty

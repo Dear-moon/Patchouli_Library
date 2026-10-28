@@ -10,7 +10,7 @@ enum PerformanceEffect {
     '动态图标',
     '图标入场、点按与状态变化的局部动作，可独立于过渡动效开启',
   ),
-  shelf3d('performanceShelf3d', '立体书架', '关闭后改为平面封面轮播，仍可循环浏览');
+  shelf3d('performanceShelf3d', '立体书架', '关闭后改为平面封面轮播，保留书架浏览设置');
 
   const PerformanceEffect(this.preferenceKey, this.label, this.description);
   final String preferenceKey, label, description;

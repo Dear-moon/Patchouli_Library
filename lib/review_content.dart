@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'app_interactions.dart';
 import 'app_ui.dart';
+import 'read_only_text.dart';
 import 'review_markup.dart';
 
 class ReviewContent extends StatefulWidget {
@@ -28,9 +29,15 @@ class ReviewContent extends StatefulWidget {
   State<ReviewContent> createState() => _ReviewContentState();
 }
 
-class _ReviewContentState extends State<ReviewContent> {
+class _ReviewContentState extends State<ReviewContent>
+    with AutomaticKeepAliveClientMixin {
   late ReviewDocument document;
   final recognizers = <Uri, TapGestureRecognizer>{};
+  bool _expanded = false;
+  static const _previewLines = 8;
+
+  @override
+  bool get wantKeepAlive => _expanded;
 
   @override
   void initState() {
@@ -53,7 +60,11 @@ class _ReviewContentState extends State<ReviewContent> {
   @override
   void didUpdateWidget(ReviewContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.content != widget.content) _parse();
+    if (oldWidget.content != widget.content) {
+      _expanded = false;
+      updateKeepAlive();
+      _parse();
+    }
   }
 
   @override
@@ -125,7 +136,7 @@ class _ReviewContentState extends State<ReviewContent> {
         const SizedBox(height: 16),
         for (final (index, uri) in document.links.indexed) ...[
           if (index > 0) const SizedBox(height: 16),
-          SelectableText(
+          ReadOnlyText(
             uri.toString(),
             style: const TextStyle(fontSize: 14, height: 1.6),
           ),
@@ -157,31 +168,108 @@ class _ReviewContentState extends State<ReviewContent> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final colors = Theme.of(context).colorScheme;
+    final body = TextSpan(
+      style: DefaultTextStyle.of(
+        context,
+      ).style.merge(const TextStyle(fontSize: 14, height: 1.8)),
+      children: [
+        for (final part in document.parts)
+          TextSpan(
+            text: part.text,
+            recognizer: recognizers[part.link],
+            style: part.link == null
+                ? null
+                : TextStyle(
+                    color: colors.primary,
+                    decoration: TextDecoration.underline,
+                    decorationColor: colors.primary.withValues(alpha: .5),
+                  ),
+          ),
+      ],
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (document.text.isNotEmpty) ...[
-          SelectableText.rich(
-            TextSpan(
-              children: [
-                for (final part in document.parts)
-                  TextSpan(
-                    text: part.text,
-                    recognizer: recognizers[part.link],
-                    style: part.link == null
-                        ? null
-                        : TextStyle(
-                            color: colors.primary,
-                            decoration: TextDecoration.underline,
-                            decorationColor: colors.primary.withValues(
-                              alpha: .5,
-                            ),
-                          ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final painter = TextPainter(
+                text: body,
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+                maxLines: _previewLines,
+              )..layout(maxWidth: constraints.maxWidth);
+              final hasMore = painter.didExceedMaxLines;
+              painter.dispose();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AnimatedSize(
+                    duration:
+                        widget.reduceMotion ||
+                            MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : NovelMotion.enter,
+                    reverseDuration:
+                        widget.reduceMotion ||
+                            MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : NovelMotion.exit,
+                    alignment: Alignment.topLeft,
+                    curve: NovelMotion.ease,
+                    child: ReadOnlyText.rich(
+                      body,
+                      textKey: const ValueKey('review-prose'),
+                      maxLines: _expanded ? null : _previewLines,
+                      overflow: _expanded
+                          ? TextOverflow.clip
+                          : TextOverflow.ellipsis,
+                    ),
                   ),
-              ],
-            ),
-            style: const TextStyle(fontSize: 14, height: 1.8),
+                  if (hasMore) ...[
+                    const SizedBox(height: 6),
+                    JellyTapSurface(
+                      key: const ValueKey('review-toggle-full-text'),
+                      onTap: () {
+                        setState(() => _expanded = !_expanded);
+                        updateKeepAlive();
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            AppText(
+                              _expanded ? '收起' : '展开全文',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 7),
+                            AnimatedRotation(
+                              turns: _expanded ? .5 : 0,
+                              duration:
+                                  widget.reduceMotion ||
+                                      MediaQuery.disableAnimationsOf(context)
+                                  ? Duration.zero
+                                  : NovelMotion.enter,
+                              curve: NovelMotion.ease,
+                              child: const ArchiveIcon(
+                                CupertinoIcons.chevron_down,
+                                size: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
           const SizedBox(height: 14),
         ],

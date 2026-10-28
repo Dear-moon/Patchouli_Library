@@ -6,9 +6,18 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:xml/xml.dart';
+import 'package:crypto/crypto.dart';
 import 'book_import_limits.dart';
+part 'cloud_s3.dart';
 
-enum CloudSourceKind { webdav, quark }
+enum CloudSourceKind {
+  webdav('OpenList / WebDAV'),
+  quark('夸克网盘'),
+  s3('S3 / 兼容对象存储');
+
+  const CloudSourceKind(this.label);
+  final String label;
+}
 
 /// Only this device's encrypted vault contains connection secrets. This record
 /// is deliberately separate from SharedPreferences and LibraryBackup.
@@ -20,12 +29,18 @@ class CloudSourceConfig {
     this.password = '',
     this.cookie = '',
     this.allowHttp = false,
+    this.bucket = '',
+    this.region = 'us-east-1',
+    this.prefix = '',
+    this.sessionToken = '',
+    this.pathStyle = true,
   });
   final CloudSourceKind kind;
   final String address, username, password, cookie;
   final bool allowHttp;
-  String get label =>
-      kind == CloudSourceKind.quark ? '夸克网盘' : 'OpenList / WebDAV';
+  final String bucket, region, prefix, sessionToken;
+  final bool pathStyle;
+  String get label => kind.label;
   Uri get endpoint {
     final uri = Uri.parse(address.trim());
     return uri.replace(
@@ -34,7 +49,7 @@ class CloudSourceConfig {
   }
 
   void validate() {
-    if (kind == CloudSourceKind.webdav) {
+    if (kind == CloudSourceKind.webdav || kind == CloudSourceKind.s3) {
       final uri = Uri.tryParse(address.trim());
       if (uri == null ||
           uri.host.isEmpty ||
@@ -43,14 +58,32 @@ class CloudSourceConfig {
           uri.hasFragment ||
           (uri.scheme != 'https' && !(uri.scheme == 'http' && allowHttp)) ||
           address.length > 2048) {
+        throw CloudSourceFailure(
+          kind == CloudSourceKind.s3
+              ? '请填写完整的 HTTPS S3 Endpoint，不要包含桶名、查询参数或登录信息'
+              : '请填写完整的 HTTPS WebDAV 地址，例如 https://你的域名/dav/',
+        );
+      }
+      if (kind == CloudSourceKind.s3 &&
+          (!RegExp(r'^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$').hasMatch(bucket) ||
+              !RegExp(r'^[a-zA-Z0-9-]{1,64}$').hasMatch(region) ||
+              username.trim().isEmpty ||
+              password.isEmpty ||
+              RegExp(r'[\r\n\x00]').hasMatch(sessionToken + prefix) ||
+              sessionToken.length > 16384 ||
+              prefix.length > 1024)) {
         throw const CloudSourceFailure(
-          '请填写完整的 HTTPS WebDAV 地址，例如 https://你的域名/dav/',
+          '请检查存储桶、区域、Access Key ID 和 Secret Access Key',
         );
       }
       if (username.contains(':') ||
           RegExp(r'[\r\n\x00]').hasMatch(username + password) ||
           password.length > 8192) {
-        throw const CloudSourceFailure('请检查 WebDAV 用户名和密码');
+        throw CloudSourceFailure(
+          kind == CloudSourceKind.s3
+              ? '请检查 Access Key ID 和 Secret Access Key'
+              : '请检查 WebDAV 用户名和密码',
+        );
       }
     } else if (cookie.trim().isEmpty ||
         cookie.length > 16384 ||
@@ -67,6 +100,13 @@ class CloudSourceConfig {
     'password': password,
     'cookie': cookie,
     'allowHttp': allowHttp,
+    if (kind == CloudSourceKind.s3) ...{
+      'bucket': bucket,
+      'region': region,
+      'prefix': prefix,
+      'sessionToken': sessionToken,
+      'pathStyle': pathStyle,
+    },
   };
   factory CloudSourceConfig.fromRecord(Map<String, dynamic> record) {
     final value = CloudSourceConfig(
@@ -76,6 +116,11 @@ class CloudSourceConfig {
       password: record['password'] ?? '',
       cookie: record['cookie'] ?? '',
       allowHttp: record['allowHttp'] == true,
+      bucket: record['bucket'] ?? '',
+      region: record['region'] ?? 'us-east-1',
+      prefix: record['prefix'] ?? '',
+      sessionToken: record['sessionToken'] ?? '',
+      pathStyle: record['pathStyle'] != false,
     );
     value.validate();
     return value;
@@ -103,6 +148,8 @@ class CloudSourceSettings extends ChangeNotifier {
     : storage = storage ?? AndroidCloudConfigStorage();
   final CloudConfigStorage storage;
   final Map<CloudSourceKind, CloudSourceConfig> _configs = {};
+  S3SyncConnection? _s3Sync;
+  S3SyncConnection? get s3Sync => _s3Sync;
   Future<void> _writes = Future.value();
   bool _disposed = false;
   String? error;
@@ -111,9 +158,18 @@ class CloudSourceSettings extends ChangeNotifier {
     try {
       final text = await storage.read();
       final values = text == null ? <dynamic>[] : jsonDecode(text);
-      if (values is! List || values.length > 2) throw const FormatException();
+      if (values is! List ||
+          values.length > CloudSourceKind.values.length + 1) {
+        throw const FormatException();
+      }
       final loaded = <CloudSourceKind, CloudSourceConfig>{};
+      S3SyncConnection? sync;
       for (final value in values) {
+        if (value is Map && value['purpose'] == 'book-sync') {
+          if (sync != null) throw const FormatException();
+          sync = S3SyncConnection.fromRecord(Map<String, dynamic>.from(value));
+          continue;
+        }
         final config = CloudSourceConfig.fromRecord(
           Map<String, dynamic>.from(value),
         );
@@ -122,6 +178,7 @@ class CloudSourceSettings extends ChangeNotifier {
       _configs
         ..clear()
         ..addAll(loaded);
+      _s3Sync = sync;
       error = null;
     } catch (_) {
       error = '无法读取本机网盘连接，请重新保存连接';
@@ -147,14 +204,36 @@ class CloudSourceSettings extends ChangeNotifier {
       } else {
         next[kind] = value;
       }
-      await storage.write(
-        next.isEmpty
-            ? null
-            : jsonEncode(next.values.map((c) => c.toRecord()).toList()),
-      );
+      await _writeRecords(next, _s3Sync);
       _configs
         ..clear()
         ..addAll(next);
+      error = null;
+      if (!_disposed) notifyListeners();
+    });
+    _writes = work;
+    return work;
+  }
+
+  Future<void> _writeRecords(
+    Map<CloudSourceKind, CloudSourceConfig> configs,
+    S3SyncConnection? sync,
+  ) => storage.write(
+    configs.isEmpty && sync == null
+        ? null
+        : jsonEncode([
+            ...configs.values.map((c) => c.toRecord()),
+            if (sync != null) sync.toRecord(),
+          ]),
+  );
+
+  /// Sync is a separate, explicitly saved connection. Editing or removing an
+  /// import source never silently changes the destination receiving books.
+  Future<void> saveS3Sync(S3SyncConnection? value) {
+    value?.validate();
+    final work = _writes.catchError((Object _) {}).then((_) async {
+      await _writeRecords(_configs, value);
+      _s3Sync = value;
       error = null;
       if (!_disposed) notifyListeners();
     });
@@ -226,9 +305,11 @@ abstract class CloudBookClient {
   factory CloudBookClient(
     CloudSourceConfig config, {
     CloudSourceSettings? settings,
-  }) => config.kind == CloudSourceKind.webdav
-      ? WebDavBookClient(config)
-      : QuarkBookClient(config, settings: settings);
+  }) => switch (config.kind) {
+    CloudSourceKind.webdav => WebDavBookClient(config),
+    CloudSourceKind.quark => QuarkBookClient(config, settings: settings),
+    CloudSourceKind.s3 => S3BookClient(config),
+  };
   String get root;
   Future<CloudBookListing> list(String folder, {int page = 1});
   Future<void> download(
@@ -265,8 +346,12 @@ class CloudHttp {
     Uri uri, {
     required Map<String, String> Function(Uri) headers,
     List<int>? body,
+    File? bodyFile,
     bool redirects = false,
     bool allowHttp = false,
+    String? redirectMessage,
+    Set<int> allowedStatuses = const {},
+    String? authenticationMessage,
   }) async {
     if (_closed) throw const CloudTransferCancelled();
     validateUrl(uri, allowHttp: allowHttp);
@@ -279,14 +364,21 @@ class CloudHttp {
             .timeout(const Duration(seconds: 20));
         req.followRedirects = false;
         headers(uri).forEach(req.headers.set);
-        if (body != null) req.add(body);
+        if (bodyFile != null) {
+          req.contentLength = await bodyFile.length();
+          await req
+              .addStream(bodyFile.openRead())
+              .timeout(const Duration(minutes: 10));
+        } else if (body != null) {
+          req.add(body);
+        }
         final res = await req.close().timeout(const Duration(seconds: 25));
         if ({301, 302, 303, 307, 308}.contains(res.statusCode)) {
           final location = res.headers.value(HttpHeaders.locationHeader);
           await res.listen((_) {}).cancel();
           if (!redirects || location == null) {
-            throw const CloudSourceFailure(
-              '网盘地址发生跳转，请填写最终 WebDAV 地址或启用 OpenList 代理',
+            throw CloudSourceFailure(
+              redirectMessage ?? '网盘地址发生跳转，请填写最终 WebDAV 地址或启用 OpenList 代理',
             );
           }
           final next = uri.resolve(location);
@@ -295,11 +387,12 @@ class CloudHttp {
           uri = next;
           continue;
         }
-        if (res.statusCode < 200 || res.statusCode >= 300) {
+        if ((res.statusCode < 200 || res.statusCode >= 300) &&
+            !allowedStatuses.contains(res.statusCode)) {
           await res.listen((_) {}).cancel();
           if (res.statusCode == 401 || res.statusCode == 403) {
-            throw const CloudSourceFailure(
-              '连接凭据已失效或没有读取权限，请重新配置连接',
+            throw CloudSourceFailure(
+              authenticationMessage ?? '连接凭据已失效或没有读取权限，请重新配置连接',
               authentication: true,
             );
           }
@@ -348,6 +441,8 @@ class CloudHttp {
     HttpClientResponse res,
     File target, {
     String? bookName,
+    int? limitBytes,
+    String? limitMessage,
     void Function(int, int?)? onProgress,
   }) async {
     final importingHtml =
@@ -360,12 +455,14 @@ class CloudHttp {
       throw const CloudSourceFailure('网盘返回了登录网页，请更新连接或开启 OpenList 下载代理');
     }
     final total = res.contentLength < 0 ? null : res.contentLength;
-    final limit = bookName == null
-        ? maxBookBytes
-        : localBookByteLimit(bookName);
-    final sizeMessage = bookName == null
-        ? '单本书籍不能超过 256 MiB'
-        : localBookSizeMessage(bookName);
+    final limit =
+        limitBytes ??
+        (bookName == null ? maxBookBytes : localBookByteLimit(bookName));
+    final sizeMessage =
+        limitMessage ??
+        (bookName == null
+            ? '单本书籍不能超过 256 MiB'
+            : localBookSizeMessage(bookName));
     if ((total ?? 0) > limit) {
       await res.listen((_) {}).cancel();
       throw CloudSourceFailure(sizeMessage);

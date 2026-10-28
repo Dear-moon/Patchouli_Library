@@ -5,6 +5,7 @@ import 'book_documents.dart';
 import 'cloud_sources.dart' show cloudFailureMessage;
 import 'local_book_scanner.dart';
 import 'book_import_limits.dart';
+import 'local_platform.dart';
 
 class LocalScanPage extends StatefulWidget {
   const LocalScanPage({
@@ -33,7 +34,12 @@ class _LocalScanPageState extends State<LocalScanPage> {
   bool _loading = true, _saving = false;
   bool _showFormats = false;
   String? _error;
-  Set<String> _formats = bookFormatLabels.keys.toSet();
+  late final _formatLabels = {
+    for (final entry in bookFormatLabels.entries)
+      if (!(LocalPlatform.ios || LocalPlatform.harmony) || entry.key != 'doc')
+        entry.key: entry.value,
+  };
+  late Set<String> _formats = _formatLabels.keys.toSet();
   @override
   void initState() {
     super.initState();
@@ -47,7 +53,7 @@ class _LocalScanPageState extends State<LocalScanPage> {
       if (mounted) {
         setState(() {
           _folder = folder;
-          _formats = formats;
+          _formats = formats.intersection(_formatLabels.keys.toSet());
           _loading = false;
         });
       }
@@ -98,6 +104,7 @@ class _LocalScanPageState extends State<LocalScanPage> {
     builder: (context, _) {
       final busy = _loading || _saving || widget.isBusy();
       final canScan = !busy && _formats.isNotEmpty;
+      final allFormats = _formats.containsAll(_formatLabels.keys);
       final result = widget.result(), progress = widget.progress();
       final error = _error ?? widget.failure();
       return Scaffold(
@@ -141,13 +148,12 @@ class _LocalScanPageState extends State<LocalScanPage> {
                         children: [
                           GlassTextButton(
                             compact: true,
-                            selected:
-                                _formats.length == bookFormatLabels.length,
+                            selected: allFormats,
                             onPressed: busy
                                 ? null
                                 : () => _configure(
                                     () => widget.documents.setScanFormats(
-                                      bookFormatLabels.keys.toSet(),
+                                      _formatLabels.keys.toSet(),
                                     ),
                                   ),
                             child: const AppText(
@@ -155,23 +161,19 @@ class _LocalScanPageState extends State<LocalScanPage> {
                               style: TextStyle(fontSize: 12),
                             ),
                           ),
-                          for (final format in bookFormatLabels.entries)
+                          for (final format in _formatLabels.entries)
                             GlassTextButton(
                               key: ValueKey('scan-format-${format.key}'),
                               compact: true,
                               selected:
-                                  _formats.length != bookFormatLabels.length &&
-                                  _formats.contains(format.key),
+                                  !allFormats && _formats.contains(format.key),
                               onPressed: busy
                                   ? null
                                   : () {
-                                      final next =
-                                          _formats.length ==
-                                              bookFormatLabels.length
+                                      final next = allFormats
                                           ? <String>{format.key}
                                           : {..._formats};
-                                      if (_formats.length !=
-                                          bookFormatLabels.length) {
+                                      if (!allFormats) {
                                         next.contains(format.key)
                                             ? next.remove(format.key)
                                             : next.add(format.key);
@@ -206,9 +208,13 @@ class _LocalScanPageState extends State<LocalScanPage> {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 10),
-                      const AppText(
-                        '先扫描候选文件，再由你勾选导入。全部扫描需要共享存储访问权限，不扫描其他 App 的私有目录。',
-                        style: TextStyle(height: 1.6),
+                      AppText(
+                        LocalPlatform.ios
+                            ? '扫描应用文档，或在“文件”中选择 iCloud Drive、其他文件 App 的文件夹。先查找候选文件，再由你勾选导入。'
+                            : LocalPlatform.harmony
+                            ? '扫描应用文档，或选择系统文件管理中的文件夹。先查找候选文件，再由你勾选导入；不会读取其他应用的私有目录。'
+                            : '先扫描候选文件，再由你勾选导入。全部扫描需要共享存储访问权限，不扫描其他 App 的私有目录。',
+                        style: const TextStyle(height: 1.6),
                       ),
                       if (_folder?.readable == false)
                         const Padding(
@@ -219,7 +225,9 @@ class _LocalScanPageState extends State<LocalScanPage> {
                       GlassPillButton(
                         key: const ValueKey('scan-all-storage'),
                         icon: CupertinoIcons.search,
-                        label: '全部扫描',
+                        label: LocalPlatform.ios || LocalPlatform.harmony
+                            ? '扫描应用文档'
+                            : '全部扫描',
                         onPressed: canScan ? _all : null,
                       ),
                       const SizedBox(height: 10),
@@ -344,11 +352,13 @@ class _LocalScanPageState extends State<LocalScanPage> {
                 ),
                 AnimatedOptionSection(
                   expanded: _showFormats,
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                     child: AppText(
-                      '$bookImportFormatsSummary。\n\n$bookImportLimitsSummary',
-                      style: TextStyle(fontSize: 12, height: 1.7),
+                      LocalPlatform.ios || LocalPlatform.harmony
+                          ? '$iosBookImportFormatsSummary。\n\n$iosBookImportLimitsSummary'
+                          : '$bookImportFormatsSummary。\n\n$bookImportLimitsSummary',
+                      style: const TextStyle(fontSize: 12, height: 1.7),
                     ),
                   ),
                 ),

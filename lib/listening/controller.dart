@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../catalog.dart';
+import '../book_identity.dart' show isLocalBook;
 import '../offline_repository.dart';
 import '../reader_content.dart';
 import '../reader_languages.dart';
@@ -12,6 +13,7 @@ import 'languages.dart';
 import 'models.dart';
 import 'store.dart';
 import 'custom_tts.dart';
+import 'enhancement.dart';
 
 abstract interface class ListeningAudioOutput {
   Stream<Duration> get positions;
@@ -67,6 +69,7 @@ class ListeningSnapshot {
     this.missingLanguages = const {},
     this.skippedLanguageSegments = 0,
     this.speed = 1,
+    this.paragraphGapMs = 0,
     this.follow = true,
     this.playRequested = false,
     this.sleepUntil,
@@ -87,6 +90,7 @@ class ListeningSnapshot {
   final Set<String> languages, missingLanguages;
   final int skippedLanguageSegments;
   final double speed;
+  final int paragraphGapMs;
   final bool follow, sleepAfterChapter, playRequested;
   final DateTime? sleepUntil;
   final String? error;
@@ -129,18 +133,22 @@ class ListeningController {
     this.customSpeech,
     this.preparationTimeout = const Duration(seconds: 35),
     this.decoderTimeout = const Duration(seconds: 10),
-  }) {
+    ListeningEnhancement? enhancement,
+  }) : enhancement = enhancement ?? ListeningEnhancement() {
     _voiceOverrides = store.languageVoices(store.voice);
     snapshot.value = ListeningSnapshot(
       voice: store.voice,
       voiceOverrides: _voiceOverrides,
       speed: store.speed,
+      paragraphGapMs: store.paragraphGapMs,
       follow: store.follow,
     );
+    unawaited(this.enhancement.configure(store.enhancement));
   }
   final NovelRepository repository;
   final SpeechAudioSource audio;
   final ListeningStore store;
+  final ListeningEnhancement enhancement;
   final CustomSpeechSettings? customSpeech;
   final Duration preparationTimeout, decoderTimeout;
   final Future<ListeningAudioOutput> Function(ListeningController controller)
@@ -156,6 +164,8 @@ class ListeningController {
   StreamSubscription<Duration>? _positions;
   StreamSubscription<void>? _completions;
   Timer? _sleep;
+  Timer? _paragraphGapTimer;
+  Completer<void>? _paragraphGap;
   Future<void>? _voiceRefresh;
   Future<void>? _disposing;
   File? _currentFile;
@@ -181,6 +191,19 @@ class ListeningController {
   List<int> _textOffsets = const [0];
   List<Duration> _timeOffsets = const [Duration.zero];
   Object? _timelineKey;
+  int? _relativeSeekGeneration;
+  bool get seeking => _loading && _relativeSeekGeneration == _generation;
+  bool get canSeek {
+    final state = snapshot.value;
+    return !_disposed &&
+        !_loading &&
+        _output != null &&
+        _currentFile != null &&
+        state.current != null &&
+        (state.phase == ListeningPhase.playing ||
+            state.phase == ListeningPhase.paused);
+  }
+
   (SpeechSegment, ListeningSource, String?, String, String) _audioIdentity(
     SpeechSegment segment,
     SpeechVoice voice,
@@ -310,6 +333,7 @@ class ListeningController {
     Set<String>? missingLanguages,
     int? skippedLanguageSegments,
     double? speed,
+    int? paragraphGapMs,
     bool? follow,
     String? error,
     bool clearSleep = false,
@@ -335,6 +359,7 @@ class ListeningController {
       skippedLanguageSegments:
           skippedLanguageSegments ?? old.skippedLanguageSegments,
       speed: speed ?? old.speed,
+      paragraphGapMs: paragraphGapMs ?? old.paragraphGapMs,
       follow: follow ?? old.follow,
       playRequested: _desiredPlaying,
       skippedSegments: skippedSegments ?? old.skippedSegments,
@@ -402,6 +427,7 @@ class ListeningController {
 
   void _fail(Object error, int generation) {
     if (!_valid(generation) || error is SpeechCancelled) return;
+    _cancelParagraphGap();
     _desiredPlaying = false;
     _loading = false;
     _emit(
@@ -429,6 +455,7 @@ class ListeningController {
   }) async {
     if (_disposed) return;
     final saving = saveCursor();
+    _cancelParagraphGap();
     _cancel.cancel();
     _cancel = SpeechCancellation();
     _dropPrefetch();
@@ -462,6 +489,24 @@ class ListeningController {
         await _output?.suspend();
       });
       if (!_valid(generation)) return;
+      if (repository is OfflineNovelRepository && isLocalBook(novel.id)) {
+        final requestedChapterId =
+            chapter >= 0 && chapter < novel.chapters.length
+            ? novel.chapters[chapter].id
+            : null;
+        // Listening can open directly, without visiting the reader/detail page.
+        // Reuse its local enrichment path so old inherited language tags are
+        // repaired too; the repository retains readable copies if the original
+        // is unavailable. Stable chapter IDs survive inserted front matter.
+        novel = await repository.detail(novel);
+        if (!_valid(generation)) return;
+        if (cursor == null && requestedChapterId != null) {
+          final restored = novel.chapters.indexWhere(
+            (item) => item.id == requestedChapterId,
+          );
+          if (restored >= 0) chapter = restored;
+        }
+      }
       if (novel.chapters.isEmpty) {
         novel = novel.withChapters(await repository.chapters(novel.id));
         if (!_valid(generation)) return;
@@ -839,6 +884,11 @@ class ListeningController {
           position: restore <= (duration ?? restore) ? restore : duration!,
           duration: duration ?? Duration.zero,
         );
+        // Preparation runs during the silence, rather than adding its latency
+        // after it. This wait never holds the audio command queue.
+        final gap = _paragraphGap;
+        if (gap != null) await gap.future;
+        if (!_valid(generation)) return;
         _loading = false;
         _atSegmentEnd = duration != null && restore >= duration!;
         _emit(
@@ -1039,14 +1089,39 @@ class ListeningController {
     unawaited(
       _advance(
         generation,
+        natural: true,
       ).catchError((Object error) => _fail(error, generation)),
     );
   }
 
-  Future<void> _advance(int generation) async {
+  void _cancelParagraphGap() {
+    _paragraphGapTimer?.cancel();
+    _paragraphGapTimer = null;
+    final gap = _paragraphGap;
+    _paragraphGap = null;
+    if (gap != null && !gap.isCompleted) gap.complete();
+  }
+
+  void _beginParagraphGap() {
+    _cancelParagraphGap();
+    final milliseconds = snapshot.value.paragraphGapMs;
+    if (milliseconds == 0) return;
+    _paragraphGap = Completer<void>();
+    _paragraphGapTimer = Timer(
+      Duration(milliseconds: milliseconds),
+      _cancelParagraphGap,
+    );
+  }
+
+  Future<void> _advance(int generation, {bool natural = false}) async {
     if (!_valid(generation)) return;
     final state = snapshot.value;
     if (state.segment + 1 < state.segments.length) {
+      if (natural &&
+          state.segments[state.segment + 1].paragraph !=
+              state.current!.paragraph) {
+        _beginParagraphGap();
+      }
       await _loadSegment(state.segment + 1, generation);
     } else if (state.sleepAfterChapter ||
         state.chapter + 1 >= state.novel!.chapters.length) {
@@ -1057,11 +1132,13 @@ class ListeningController {
         _finish();
       }
     } else {
+      if (natural) _beginParagraphGap();
       await _loadChapter(state.chapter + 1, generation);
     }
   }
 
   void _finish() {
+    _cancelParagraphGap();
     _desiredPlaying = false;
     _loading = false;
     _emit(phase: ListeningPhase.completed);
@@ -1076,6 +1153,7 @@ class ListeningController {
 
   Future<void> pause() async {
     if (_disposed) return;
+    _cancelParagraphGap();
     _playEpoch++;
     _desiredPlaying = false;
     if (snapshot.value.active) _emit(phase: ListeningPhase.paused);
@@ -1119,6 +1197,7 @@ class ListeningController {
     _playEpoch++;
     final saving = saveCursor();
     _desiredPlaying = false;
+    _cancelParagraphGap();
     _cancel.cancel();
     _generation++;
     _loading = false;
@@ -1187,6 +1266,185 @@ class ListeningController {
     }
   }
 
+  /// Move by real audio time, measuring only the adjacent clips needed to
+  /// reach the target. The shared output stays suspended while probing, so
+  /// intermediate clips never play and Harmony needs no second player.
+  Future<void> seekBy(Duration offset) async {
+    if (!canSeek || offset == Duration.zero) return;
+    final state = snapshot.value, before = progress.value;
+    final original = _currentFile!, output = _output!;
+    final requested = before.position + offset;
+    final duration = before.duration;
+    final within =
+        duration > Duration.zero &&
+        ((requested >= Duration.zero && requested < duration) ||
+            (state.segment == 0 && requested < Duration.zero) ||
+            (state.segment == state.segments.length - 1 &&
+                requested >= duration));
+    if (within) {
+      final generation = _generation;
+      try {
+        await seek(requested);
+      } catch (error) {
+        if (!_valid(generation)) return;
+        try {
+          await seek(before.position);
+          if (_valid(generation)) {
+            _emit(error: _seekFailureMessage(error));
+          }
+        } catch (restoreError) {
+          _fail(restoreError, generation);
+        }
+      }
+      return;
+    }
+
+    final saving = saveCursor();
+    _cancelParagraphGap();
+    _cancel.cancel();
+    _cancel = SpeechCancellation();
+    final token = _cancel, generation = ++_generation;
+    _relativeSeekGeneration = generation;
+    _dropPrefetch();
+    _playEpoch++;
+    _loading = true;
+    _emit(phase: ListeningPhase.preparing);
+    final files = <int, File>{state.segment: original};
+    final retained = <File>[];
+    var loadedIndex = state.segment;
+
+    Future<File> fileFor(int index) async {
+      if (files[index] case final ready?) return ready;
+      final segment = state.segments[index];
+      final voice = _languageVoices[segment.language];
+      if (voice == null) {
+        throw const SpeechFailure('跳转位置没有对应语言的可用音色');
+      }
+      final file = await _prepareAudio(segment, voice, token);
+      if (!_valid(generation)) throw const SpeechCancelled();
+      _retainLoad(file);
+      retained.add(file);
+      files[index] = file;
+      return file;
+    }
+
+    Future<Duration> loadClip(int index) async {
+      final file = await fileFor(index);
+      Duration? measured;
+      await _command(() async {
+        if (!_valid(generation)) throw const SpeechCancelled();
+        measured = await output
+            .load(file, Duration.zero)
+            .timeout(decoderTimeout);
+      });
+      if (!_valid(generation)) throw const SpeechCancelled();
+      if (measured == null || measured! <= Duration.zero) {
+        throw const SpeechFailure('这一段音频没有可定位的有效时长');
+      }
+      loadedIndex = index;
+      _clipDurations[state.segments[index]] = measured!;
+      _updateTimeOffsets();
+      return measured!;
+    }
+
+    try {
+      await saving;
+      await _command(() async {
+        if (_valid(generation)) await output.suspend();
+      });
+      if (!_valid(generation)) return;
+      var index = state.segment;
+      var target = requested.inMicroseconds;
+      var measured = duration > Duration.zero
+          ? duration
+          : await loadClip(index);
+      while (target < 0 && index > 0) {
+        measured = await loadClip(--index);
+        target += measured.inMicroseconds;
+      }
+      while (target >= measured.inMicroseconds &&
+          index + 1 < state.segments.length) {
+        target -= measured.inMicroseconds;
+        measured = await loadClip(++index);
+      }
+      if (loadedIndex != index) measured = await loadClip(index);
+      final position = Duration(
+        microseconds: target.clamp(0, measured.inMicroseconds),
+      );
+      await _command(() async {
+        if (!_valid(generation)) throw const SpeechCancelled();
+        await output.seek(position);
+        if (_valid(generation)) await output.setSpeed(snapshot.value.speed);
+      });
+      if (!_valid(generation)) return;
+      _currentFile = files[index]!;
+      progress.value = ListeningProgress(
+        position: position,
+        duration: measured,
+      );
+      _atSegmentEnd = position >= measured;
+      _loading = false;
+      _relativeSeekGeneration = null;
+      _emit(
+        segment: index,
+        currentVoice: _languageVoices[state.segments[index].language],
+        phase: _desiredPlaying ? ListeningPhase.playing : ListeningPhase.paused,
+      );
+      _releaseFile(original);
+      if (_desiredPlaying) _play(output, generation);
+      unawaited(saveCursor());
+      unawaited(_prefetch(generation, token));
+    } catch (error) {
+      if (!_valid(generation) || error is SpeechCancelled) return;
+      try {
+        Duration? restored;
+        await _command(() async {
+          if (!_valid(generation)) throw const SpeechCancelled();
+          restored = await output
+              .load(original, before.position)
+              .timeout(decoderTimeout);
+          if (restored != null && restored! <= Duration.zero) {
+            throw const SpeechFailure('原音频暂未恢复，请重试听书');
+          }
+          if (_valid(generation)) await output.setSpeed(snapshot.value.speed);
+        });
+        if (!_valid(generation)) return;
+        final interrupted = _currentFile;
+        _currentFile = original;
+        _releaseFile(interrupted);
+        progress.value = ListeningProgress(
+          position: before.position,
+          duration: restored ?? before.duration,
+        );
+        _atSegmentEnd =
+            before.duration > Duration.zero &&
+            before.position >= before.duration;
+        _loading = false;
+        _relativeSeekGeneration = null;
+        _emit(
+          segment: state.segment,
+          currentVoice: state.outputVoice,
+          phase: _desiredPlaying
+              ? ListeningPhase.playing
+              : ListeningPhase.paused,
+          error: _seekFailureMessage(error),
+        );
+        if (_desiredPlaying) _play(output, generation);
+        unawaited(saveCursor());
+        unawaited(_prefetch(generation, token));
+      } catch (restoreError) {
+        _fail(restoreError, generation);
+      }
+    } finally {
+      for (final file in retained) {
+        _releaseLoad(file);
+      }
+    }
+  }
+
+  String _seekFailureMessage(Object error) =>
+      '跳转未完成，已回到原位置：${error is SpeechFailure ? error.message : '音频位置未加载成功，请重试'}';
+
   Future<void> moveParagraph(int direction) async {
     final state = snapshot.value;
     if (state.current == null || state.novel == null) return;
@@ -1224,29 +1482,41 @@ class ListeningController {
     required int novelId,
     required int chapter,
     required int paragraph,
+    Novel? source,
   }) async {
     final state = snapshot.value;
+    final book = source ?? state.novel;
     if (_disposed ||
         !state.active ||
         state.novel?.id != novelId ||
+        book == null ||
+        book.id != novelId ||
         paragraph < 0 ||
         chapter < 0 ||
-        chapter >= state.novel!.chapters.length) {
+        chapter >= book.chapters.length) {
       return;
     }
-    if (state.chapter == chapter && state.current?.paragraph == paragraph) {
+    final currentId =
+        state.chapter >= 0 && state.chapter < state.novel!.chapters.length
+        ? state.novel!.chapters[state.chapter].id
+        : 0;
+    final targetId = book.chapters[chapter].id;
+    final sameChapter = source != null && currentId > 0 && targetId > 0
+        ? currentId == targetId
+        : state.chapter == chapter;
+    if (sameChapter && state.current?.paragraph == paragraph) {
       if (_desiredPlaying) {
         await pause();
       } else {
         await resume();
       }
-    } else if (state.chapter == chapter) {
+    } else if (sameChapter) {
       final index = state.segments.indexWhere(
         (part) => part.paragraph == paragraph,
       );
       if (index >= 0) await _jumpToSegment(index, autoplay: true);
     } else {
-      await start(state.novel!, chapter: chapter, paragraph: paragraph);
+      await start(book, chapter: chapter, paragraph: paragraph);
     }
   }
 
@@ -1271,6 +1541,7 @@ class ListeningController {
   }) async {
     if (_disposed) return;
     final saving = saveCursor();
+    _cancelParagraphGap();
     _cancel.cancel();
     _cancel = SpeechCancellation();
     _dropPrefetch();
@@ -1376,6 +1647,7 @@ class ListeningController {
             positionMs: progress.value.position.inMilliseconds,
             segmentHash: previous.current!.key(previous.outputVoice),
           );
+    _cancelParagraphGap();
     _cancel.cancel();
     _cancel = SpeechCancellation();
     _dropPrefetch();
@@ -1405,16 +1677,31 @@ class ListeningController {
 
   Future<void> setSpeed(double speed) async {
     speed = speed.clamp(listeningMinimumSpeed, listeningMaximumSpeed);
-    await store.saveSpeed(speed);
-    _emit(speed: speed);
     await _command(() async {
       await _output?.setSpeed(speed);
+      await store.saveSpeed(speed);
+      _emit(speed: speed);
     });
   }
 
   Future<void> setFollow(bool follow) async {
     await store.saveFollow(follow);
     _emit(follow: follow);
+  }
+
+  Future<void> setParagraphGap(int milliseconds) async {
+    final value = normalizeListeningParagraphGap(milliseconds);
+    await store.saveParagraphGap(value);
+    if (_disposed) return;
+    _emit(paragraphGapMs: value);
+    if (value == 0) _cancelParagraphGap();
+  }
+
+  /// Save optional gain separately; it never enters the playback command queue.
+  Future<void> setEnhancement(ListeningEnhancementPreference value) async {
+    if (_disposed) return;
+    await store.saveEnhancement(value);
+    if (!_disposed) await enhancement.setPreference(value);
   }
 
   void setSleep({Duration? duration, bool afterChapter = false}) {
@@ -1513,6 +1800,7 @@ class ListeningController {
     await _positions?.cancel();
     await _completions?.cancel();
     await _output?.dispose();
+    await enhancement.dispose();
     snapshot.dispose();
     progress.dispose();
     chapterProgress.dispose();

@@ -2,6 +2,10 @@ import '../reader_content.dart';
 import '../reader_languages.dart';
 import 'models.dart';
 
+final _kana = RegExp(r'[\u3041-\u3096\u30a1-\u30fa\uff66-\uff9f]');
+final _han = RegExp(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]');
+final _hangul = RegExp(r'[\uac00-\ud7a3\u1100-\u11ff]');
+
 /// Primary language matching tolerates ISO metadata emitted by Android engines.
 String speechLanguageCode(String value) => switch (readerLanguageCode(value)) {
   'chi' || 'zho' => 'zh',
@@ -11,15 +15,18 @@ String speechLanguageCode(String value) => switch (readerLanguageCode(value)) {
   final code => code,
 };
 
-/// Explicit publication metadata wins. Without it, only unambiguous scripts
-/// override the selected voice; Han-only text cannot distinguish Chinese/Japanese.
+/// Explicit publication metadata wins. Without it, a Japanese quotation inside
+/// substantial Han prose does not change the language of the entire paragraph.
+/// Han-only text keeps the selected voice because Chinese/Japanese share it.
 String speechParagraphLanguage(String tag, String text, String fallback) {
   final explicit = speechLanguageCode(tag);
   if (explicit.isNotEmpty && explicit != 'und') return explicit;
-  if (RegExp(r'[\u3041-\u3096\u30a1-\u30fa\uff66-\uff9f]').hasMatch(text)) {
-    return 'ja';
+  final kana = _kana.allMatches(text).length;
+  if (kana > 0) {
+    final han = _han.allMatches(text).length;
+    if (han < 32 || kana * 10 >= han) return 'ja';
   }
-  if (RegExp(r'[\uac00-\ud7a3\u1100-\u11ff]').hasMatch(text)) return 'ko';
+  if (_hangul.hasMatch(text)) return 'ko';
   return speechLanguageCode(fallback);
 }
 
@@ -27,20 +34,26 @@ List<SpeechSegment> speechWithLanguages(
   List<SpeechSegment> segments,
   ReaderContent content,
   SpeechVoice preferred,
-) => List.unmodifiable([
-  for (final part in segments)
-    SpeechSegment(
-      part.paragraph,
-      part.start,
-      part.end,
-      part.text,
-      language: speechParagraphLanguage(
-        content.formats[part.paragraph]?.language ?? '',
-        content.paragraphs[part.paragraph],
-        preferred.locale,
+) {
+  final languages = <int, String>{};
+  return List.unmodifiable([
+    for (final part in segments)
+      SpeechSegment(
+        part.paragraph,
+        part.start,
+        part.end,
+        part.text,
+        language: languages.putIfAbsent(
+          part.paragraph,
+          () => speechParagraphLanguage(
+            content.formats[part.paragraph]?.language ?? '',
+            content.paragraphs[part.paragraph],
+            preferred.locale,
+          ),
+        ),
       ),
-    ),
-]);
+  ]);
+}
 
 /// A language is never routed to another provider/engine or a different language.
 /// Regional variants within the same language can use an installed model.

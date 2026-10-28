@@ -26,7 +26,7 @@
 
 ### MOBI 导入：libmobi
 
-使用 [libmobi 0.12](https://github.com/bfabiszewski/libmobi/tree/v0.12)，Copyright 2014–2022 Bartek Fabiszewski，LGPL-3.0-or-later。完整、未修改的上游源码与许可在 `third_party/libmobi/`；Android 以独立 `libmobi.so` 动态链接，应用导出与 JNI 适配位于 `android/app/src/main/cpp/`，CMake 构建不启用加密支持。修改或替换库后可使用同一工程重新构建。源码导出包含库源码和构建脚本，应用开源许可页包含 LGPL v3 与 GPL v3 原文。
+使用 [libmobi 0.12](https://github.com/bfabiszewski/libmobi/tree/v0.12)，Copyright 2014–2022 Bartek Fabiszewski，LGPL-3.0-or-later。上游运行库源码与许可在 `third_party/libmobi/`；Android 以独立 `libmobi.so` 动态链接，应用导出与 JNI 适配位于 `android/app/src/main/cpp/`，CMake 构建不启用加密支持。修改或替换库后可使用同一工程重新构建。源码导出包含库源码和构建脚本，应用开源许可页包含 LGPL v3 与 GPL v3 原文。
 
 MOBI 在本机重建为 EPUB 后使用现有阅读器，不访问转换服务，不解密 DRM 文件。
 
@@ -38,7 +38,7 @@ OpenJDK 兼容库通过 Gradle 依赖引入，源码与构建脚本见 [google/d
 
 旧 Word DOC 在 Android 本机使用 [Apache POI HWPF 5.5.1](https://poi.apache.org/components/document/) 转换，未接入在线转换服务。Apache POI 及其文档依赖的原许可与声明保存在 [`assets/licenses/poi.txt`](../assets/licenses/poi.txt)，注册到应用开源许可页。
 
-旧编码 TXT 检测使用 [juniversalchardet 2.0.4](https://github.com/albfernandez/juniversalchardet/tree/v2.0.4)。保留 MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later 三选一许可，本应用选择 GPL 2.0-or-later 条款并以 GPL 3 分发。完整未修改源码、构建与测试在 `third_party/juniversalchardet-2.0.4/`；[来源记录](../third_party/JUNIVERSALCHARDET.md)与[原许可](../assets/licenses/juniversalchardet.txt)随应用提供。
+旧编码 TXT 检测使用 [juniversalchardet 2.0.4](https://github.com/albfernandez/juniversalchardet/tree/v2.0.4)。保留 MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later 三选一许可，本应用选择 GPL 2.0-or-later 条款并以 GPL 3 分发。运行库源码、构建配置与许可在 `third_party/juniversalchardet-2.0.4/`；[来源记录](../third_party/JUNIVERSALCHARDET.md)与[原许可](../assets/licenses/juniversalchardet.txt)随应用提供。
 
 局域网续读使用 `cryptography` 2.9.0（Apache-2.0），仅在用户开启并配对后交换阅读位置、书签和分类，不使用外部服务器。旧 EPUB 定位迁移使用 `diff_match_patch` 0.4.1（Apache-2.0），仅在本机计算定位映射。系统朗读通过 Android 公开 TextToSpeech 服务发现与文件合成接口连接已安装引擎。
 
@@ -53,3 +53,10 @@ OpenJDK 兼容库通过 Gradle 依赖引入，源码与构建脚本见 [google/d
 TXT / EPUB 目录解析、图片尺寸样式与同步归档使用 `archive`（MIT）、`html`（MIT）及 `csslib`（BSD-3-Clause），版本保留于锁文件，许可包含在 Flutter 生成的开源许可集合中。应用使用本项目选定的奶白人物剪影图标，原始位图与适配信息保留于 `assets/branding/`，不包含莱茵生命标志或宣传片素材。
 
 小说、封面、插图归各自权利人所有，不包含在源码许可中。README 展示图使用独立演示数据、程序绘制封面，不包含个人账号、阅读记录或真实设备通知。
+
+## 0.5.0 新增资源与本地依赖
+
+- 阅读图片使用 Barlow Condensed 与重命名的 Reading Serif Display 标题子集（源自 Noto Serif SC），遵循 SIL OFL 1.1；原版权与完整许可在 assets/fonts/，用户正文仍使用完整字体。
+- 词典解析使用锁定版本的 dict_reader 与 blockchain_utils；中文分词使用 dart_jieba，词典资源与原许可在 assets/tokenizer/ 和 assets/licenses/dart-jieba.txt。依赖许可随 Flutter 许可集合提供。
+- 报告和小组件插画使用本项目制作的资源，位于 assets/report/、assets/reading_art/ 及各平台资源目录。参考作品的排版方法不代表使用其角色、标志或原画。
+- 本次源码整理移除上游测试与样例，保留运行库、构建依赖和原许可；libmobi 的非应用测试构建入口作相应精简。

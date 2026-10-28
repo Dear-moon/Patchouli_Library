@@ -60,6 +60,7 @@ enum ArchiveSymbol {
   timer('历史与定时', '听书'),
   search('搜索', '操作'),
   filter('筛选排序', '操作'),
+  layout('视图布局', '操作'),
   grid('网格视图', '操作'),
   dotsGrid('布局', '操作'),
   add('添加', '操作'),
@@ -102,7 +103,8 @@ enum ArchiveSymbol {
   charging('充电', '系统'),
   tools('故障排查', '系统'),
   shield('安全', '系统'),
-  help('帮助', '系统');
+  help('帮助', '系统'),
+  touch('触摸', '阅读');
 
   const ArchiveSymbol(this.label, this.group);
   final String label, group;
@@ -135,12 +137,14 @@ abstract final class ArchiveIconSymbols {
     CupertinoIcons.bookmark_fill: ArchiveSymbol.bookmarked,
     CupertinoIcons.location: ArchiveSymbol.location,
     CupertinoIcons.location_fill: ArchiveSymbol.locationFilled,
+    CupertinoIcons.hand_draw: ArchiveSymbol.touch,
     CupertinoIcons.textformat: ArchiveSymbol.typography,
     CupertinoIcons.slider_horizontal_3: ArchiveSymbol.sliders,
     CupertinoIcons.photo: ArchiveSymbol.image,
     Icons.image_outlined: ArchiveSymbol.image,
     CupertinoIcons.sun_max: ArchiveSymbol.brightness,
     CupertinoIcons.moon_stars: ArchiveSymbol.moon,
+    CupertinoIcons.moon: ArchiveSymbol.moon,
     CupertinoIcons.square_stack: ArchiveSymbol.layers,
     CupertinoIcons.lock_rotation: ArchiveSymbol.portrait,
     CupertinoIcons.headphones: ArchiveSymbol.headphones,
@@ -154,6 +158,8 @@ abstract final class ArchiveIconSymbols {
     CupertinoIcons.clock: ArchiveSymbol.timer,
     CupertinoIcons.search: ArchiveSymbol.search,
     CupertinoIcons.line_horizontal_3_decrease: ArchiveSymbol.filter,
+    CupertinoIcons.rectangle_grid_1x2: ArchiveSymbol.layout,
+    CupertinoIcons.rectangle_grid_2x2: ArchiveSymbol.grid,
     CupertinoIcons.square_grid_2x2: ArchiveSymbol.grid,
     CupertinoIcons.circle_grid_3x3: ArchiveSymbol.dotsGrid,
     CupertinoIcons.plus: ArchiveSymbol.add,
@@ -418,8 +424,7 @@ class ArchiveIcon extends Icon {
                   !animate ||
                   PerformanceScope.reduceMotionOf(context) ||
                   !PerformanceScope.of(context).animatedIcons ||
-                  !TickerMode.valuesOf(context).enabled ||
-                  ModalRoute.isCurrentOf(context) == false,
+                  !TickerMode.valuesOf(context).enabled,
               contrast: MediaQuery.highContrastOf(context),
               mirrored: rtl && directional,
               blendMode: blendMode ?? BlendMode.srcOver,
@@ -519,6 +524,7 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
   static final _scrolledPositions = Expando<bool>();
   Timer? _ambientTimer;
   bool _foreground = true;
+  bool _finishVisibleGesture = false;
   int _entryTicket = 0;
   double _gestureStart = 0;
   double _gestureSpan = 1;
@@ -545,8 +551,11 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
   late _IconPose _from = _IconPose.of(widget.symbol, widget.active);
   late _IconPose _to = _from;
 
-  bool get _still => widget.still || !_foreground;
-  bool get _ambientAllowed => widget.ambient && !_still;
+  bool get _still =>
+      widget.still ||
+      !_foreground ||
+      (!widget.visible && !_finishVisibleGesture);
+  bool get _ambientAllowed => widget.ambient && widget.visible && !_still;
 
   bool _entryCurrent(int ticket) =>
       mounted && ticket == _entryTicket && !_still && widget.visible;
@@ -652,6 +661,7 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
   }
 
   void _gestureStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) _finishVisibleGesture = false;
     if (status != AnimationStatus.completed || !_ambientAllowed) return;
     _ambientTimer?.cancel();
     // No frame is scheduled during the pause. Hidden tabs, covered routes and
@@ -682,6 +692,7 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
 
   void _settle() {
     ++_entryTicket;
+    _finishVisibleGesture = false;
     _entryAfterTransition = false;
     _change.value = 1;
     _contact.value = 0;
@@ -710,6 +721,17 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
   @override
   void didUpdateWidget(_ArchiveGlyph oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final accepted = oldWidget.trigger != widget.trigger;
+    final coveredNow = oldWidget.visible && !widget.visible;
+    // A transparent menu can cover the route in the same frame as its accepted
+    // tap. Finish that finite response instead of cancelling its first frame.
+    // Opaque/offstage routes still disable TickerMode, and covered controls
+    // never start idle, entry or unrelated state-change animations.
+    _finishVisibleGesture =
+        !widget.still &&
+        !widget.visible &&
+        (_finishVisibleGesture ||
+            (coveredNow && (_gesture.isAnimating || accepted)));
     final wasStill = oldWidget.still || !_foreground;
     if (oldWidget.pageAnimation != widget.pageAnimation) {
       oldWidget.pageAnimation?.removeStatusListener(_pageChanged);
@@ -726,7 +748,7 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
         ArchiveIconMotion.stateCurve.transform(_change.value),
       );
       _to = next;
-      if (_still) {
+      if (_still || !widget.visible) {
         _change.value = 1;
       } else {
         _change.forward(from: 0);
@@ -737,7 +759,9 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
     } else if (oldWidget.pressed != widget.pressed) {
       widget.pressed ? _contact.forward() : _contact.reverse();
     }
-    if (!_still && (changed || oldWidget.trigger != widget.trigger)) {
+    if (!_still &&
+        ((widget.visible && (changed || accepted)) ||
+            (coveredNow && accepted))) {
       _replay();
     } else if (!_still &&
         ((!oldWidget.visible && widget.visible) ||
@@ -745,7 +769,7 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
             (_ambientAllowed && !oldWidget.ambient))) {
       _queueEntrance();
     }
-    if (!widget.ambient) {
+    if (!widget.ambient || !widget.visible) {
       _ambientTimer?.cancel();
       _ambientTimer = null;
     }
@@ -764,24 +788,30 @@ class _ArchiveGlyphState extends State<_ArchiveGlyph>
   }
 
   @override
-  Widget build(BuildContext context) => CustomPaint(
-    size: Size.square(widget.size),
-    painter: _ArchiveGlyphPainter(
-      from: _from,
-      to: _to,
-      change: _change,
-      contact: _contact,
-      gesture: _gesture,
-      gestureStart: _gestureStart,
-      gestureSpan: _gestureSpan,
-      origin: _origin,
-      repaint: _paint,
-      color: widget.color,
-      contrast: widget.contrast,
-      mirrored: widget.mirrored,
-      blendMode: widget.blendMode,
-    ),
-  );
+  Widget build(BuildContext context) {
+    final painting = CustomPaint(
+      size: Size.square(widget.size),
+      painter: _ArchiveGlyphPainter(
+        from: _from,
+        to: _to,
+        change: _change,
+        contact: _contact,
+        gesture: _gesture,
+        gestureStart: _gestureStart,
+        gestureSpan: _gestureSpan,
+        origin: _origin,
+        repaint: _paint,
+        color: widget.color,
+        contrast: widget.contrast,
+        mirrored: widget.mirrored,
+        blendMode: widget.blendMode,
+      ),
+    );
+    // Only the moving vector gets a layer, at its optical icon size. Without
+    // this boundary each tick also repaints the unchanged label and surrounding
+    // control surface. Static/reduced-motion icons do not need the extra layer.
+    return widget.still ? painting : RepaintBoundary(child: painting);
+  }
 }
 
 class _IconPose {

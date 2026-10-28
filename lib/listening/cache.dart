@@ -28,6 +28,13 @@ abstract interface class SpeechLanguageVoiceSource {
   Future<List<SpeechVoice>> languageVoices(SpeechVoice preferred);
 }
 
+/// Native display names are separate from the stable synthesis identifier.
+/// Android engines that expose only an ID retain their existing voice labels.
+String systemSpeechVoiceLabel(Map<dynamic, dynamic> voice) {
+  final name = voice['name'];
+  return name is String && name.trim().isNotEmpty ? name : '${voice['id']}';
+}
+
 /// Playback maintenance is coalesced; an explicit trim still enforces the full
 /// cache policy immediately. Other sources retain their existing trim contract.
 extension SpeechPlaybackMaintenance on SpeechAudioSource {
@@ -103,7 +110,7 @@ class SpeechAudioCache implements SpeechAudioSource, SpeechLanguageVoiceSource {
                   (voice['features'] as List).contains('notInstalled')))
             SpeechVoice(
               id: voice['id'],
-              label: '${voice['id']}',
+              label: systemSpeechVoiceLabel(voice),
               locale: chineseSpeechLocale(voice['locale']) ?? voice['locale'],
               source: ListeningSource.system,
               engine: preferred.engine,
@@ -142,7 +149,7 @@ class SpeechAudioCache implements SpeechAudioSource, SpeechLanguageVoiceSource {
           found.add(
             SpeechVoice(
               id: voice['id'],
-              label: '$name · ${voice['id']}',
+              label: '$name · ${systemSpeechVoiceLabel(voice)}',
               engine: engine,
               locale: chineseSpeechLocale(voice['locale'])!,
               source: ListeningSource.system,

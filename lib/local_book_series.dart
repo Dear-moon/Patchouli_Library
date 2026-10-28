@@ -1,3 +1,5 @@
+import 'book_tag_catalog.dart';
+
 /// A series refers to durable originals instead of rewriting their EPUBs or
 /// illustration URLs. Assigned chapter IDs survive reordering and later imports.
 class LocalSeriesVolume {
@@ -16,6 +18,7 @@ class LocalSeriesVolume {
   };
 }
 
+/// Durable series metadata; absent legacy tags are distinct from cleared tags.
 class LocalBookSeries {
   const LocalBookSeries({
     required this.id,
@@ -25,16 +28,19 @@ class LocalBookSeries {
     required this.volumes,
     required this.nextChapterId,
     required this.updatedAt,
+    this.tags,
     this.deleted = false,
   });
   final int id, nextChapterId, updatedAt;
   final String title, author, summary;
   final List<LocalSeriesVolume> volumes;
+  final List<String>? tags;
   final bool deleted;
   LocalBookSeries copyWith({
     String? title,
     String? author,
     String? summary,
+    List<String>? tags,
     List<LocalSeriesVolume>? volumes,
     int? nextChapterId,
     int? updatedAt,
@@ -44,6 +50,7 @@ class LocalBookSeries {
     title: title ?? this.title,
     author: author ?? this.author,
     summary: summary ?? this.summary,
+    tags: tags ?? this.tags,
     volumes: volumes ?? this.volumes,
     nextChapterId: nextChapterId ?? this.nextChapterId,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -54,6 +61,7 @@ class LocalBookSeries {
     'title': title,
     'author': author,
     'summary': summary,
+    'tags': ?tags,
     'volumes': [for (final volume in volumes) volume.toJson()],
     'nextChapterId': nextChapterId,
     'at': updatedAt,
@@ -142,6 +150,7 @@ List<LocalBookSeries> decodeLocalSeries(Object? raw) {
         title: item['title'].trim(),
         author: item['author'].trim(),
         summary: item['summary'].trim(),
+        tags: item.containsKey('tags') ? decodeBookTags(item['tags']) : null,
         volumes: List.unmodifiable(volumes),
         nextChapterId: item['nextChapterId'],
         updatedAt: item['at'],

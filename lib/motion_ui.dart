@@ -1168,12 +1168,21 @@ class GlassOverlayTransition extends StatelessWidget {
         child: RepaintBoundary(child: child),
       );
     }
+    if (anchor != null) {
+      return SizeTransition(
+        sizeFactor: animation.drive(CurveTween(curve: NovelMotion.ease)),
+        axisAlignment: 1,
+        child: RepaintBoundary(child: child),
+      );
+    }
     return ArchivePlaneTransition(
       key: ValueKey('glass-${kind.name}-transition'),
       animation: animation,
       kind: ArchivePlaneKind.sheet,
       bottomClearance: MediaQuery.viewPaddingOf(context).bottom + 24,
-      child: child,
+      // Move the retained sheet display list. Its backdrop layer still samples
+      // the current scene; only unchanged foreground paint is retained.
+      child: RepaintBoundary(child: child),
     );
   }
 }
@@ -1284,10 +1293,12 @@ class LoadedContentItem extends StatelessWidget {
         : null;
     final order = index - (scope?.firstIndex ?? 0);
     final clock = animation ?? scope?.animation;
-    if (clock == null || order < 0) return child;
-    final start = order.clamp(0, 8) * .055;
+    // Appending a page makes the previous batch static. Keep its element
+    // ancestry intact so in-flight image decodes/arrivals are not remounted.
+    final active = clock != null && order >= 0;
+    final start = active ? order.clamp(0, 8) * .055 : 0.0;
     return RevealFromTop(
-      animation: clock,
+      animation: active ? clock : const AlwaysStoppedAnimation<double>(1),
       start: start,
       end: start + .52,
       placeholder: placeholder,

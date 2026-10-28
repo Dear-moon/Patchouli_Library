@@ -40,6 +40,9 @@ class UserFontStore extends ChangeNotifier {
   Directory? _directory;
   final _fonts = <UserFont>[];
   final Map<String, Future<void>> _loads = {};
+  final _loadedFaces = <String>{};
+  bool isLoaded(String id) =>
+      id == AppTypeface.system.name || _loadedFaces.contains(id);
   final FontDownloadClient _downloads;
   final _availableDownloads = <String>{};
   Future<void>? _download;
@@ -127,8 +130,10 @@ class UserFontStore extends ChangeNotifier {
     });
     try {
       await loading;
+      _loadedFaces.add(id);
     } catch (_) {
       _loads.remove(id);
+      _loadedFaces.remove(id);
       rethrow;
     }
   }
@@ -275,6 +280,7 @@ class UserFontStore extends ChangeNotifier {
       if (await file.exists()) await file.delete();
       _availableDownloads.remove(id);
       _loads.remove(id);
+      _loadedFaces.remove(id);
       _changed();
       return;
     }
@@ -291,6 +297,7 @@ class UserFontStore extends ChangeNotifier {
     final file = _file(await _root(), font);
     if (await file.exists()) await file.delete();
     _loads.remove(id);
+    _loadedFaces.remove(id);
     _changed();
   }
 

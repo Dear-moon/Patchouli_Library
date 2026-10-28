@@ -6,6 +6,7 @@ import 'reader_pagination.dart';
 import 'reader_preferences.dart';
 import 'reader_vertical_text.dart';
 import 'reader_selection.dart';
+import 'reader_underline.dart';
 
 class ReaderEmbeddedVertical extends StatefulWidget {
   const ReaderEmbeddedVertical({
@@ -18,6 +19,8 @@ class ReaderEmbeddedVertical extends StatefulWidget {
     required this.selection,
     required this.onNote,
     this.chapter,
+    this.annotationChanges,
+    this.annotations,
   });
   final String text;
   final int paragraph;
@@ -27,6 +30,8 @@ class ReaderEmbeddedVertical extends StatefulWidget {
   final ReaderPreferences preferences;
   final ReaderSelectionController selection;
   final ValueChanged<String> onNote;
+  final Listenable? annotationChanges;
+  final List<ReaderTextMark> Function()? annotations;
   @override
   State<ReaderEmbeddedVertical> createState() => _ReaderEmbeddedVerticalState();
 }
@@ -113,13 +118,34 @@ class _ReaderEmbeddedVerticalState extends State<ReaderEmbeddedVertical> {
                     child: Stack(
                       children: [
                         Positioned.fill(
-                          child: ReaderVerticalText(
-                            page: page,
-                            glyphCache: _cache,
-                            style: widget.style.copyWith(
-                              fontSize: MediaQuery.textScalerOf(
-                                context,
-                              ).scale(widget.style.fontSize ?? 19),
+                          child: AnimatedBuilder(
+                            animation:
+                                widget.annotationChanges ??
+                                const AlwaysStoppedAnimation(0),
+                            builder: (context, _) => ReaderVerticalText(
+                              page: page,
+                              glyphCache: _cache,
+                              style: widget.style.copyWith(
+                                fontSize: MediaQuery.textScalerOf(
+                                  context,
+                                ).scale(widget.style.fontSize ?? 19),
+                              ),
+                              annotations: [
+                                for (final mark
+                                    in widget.annotations?.call() ??
+                                        const <ReaderTextMark>[])
+                                  ReaderAnnotationRange(
+                                    ReaderUnderlineRange(
+                                      chapterId: 1,
+                                      startParagraph: 0,
+                                      startOffset: mark.start,
+                                      endParagraph: 0,
+                                      endOffset: mark.end,
+                                    ),
+                                    mark.style,
+                                    mark.color,
+                                  ),
+                              ],
                             ),
                           ),
                         ),

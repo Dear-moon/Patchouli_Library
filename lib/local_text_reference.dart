@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'book_import_limits.dart';
+import 'local_document_input.dart';
 import 'local_text_import.dart';
 
 class LocalTextReferenceFailure extends FormatException {
@@ -58,8 +59,42 @@ abstract class LocalTextAccess {
   Future<void> release(String reference);
 }
 
-class PlatformLocalTextAccess implements LocalTextAccess {
+/// Optional raw-input capability for background indexing. Existing text-access
+/// implementations continue to supply bounded decoded blocks unchanged.
+abstract interface class LocalTextInputAccess {
+  Future<T> withInput<T>(
+    LocalTextSource source,
+    Future<T> Function(LocalDocumentInput input) read,
+  );
+}
+
+class PlatformLocalTextAccess implements LocalTextAccess, LocalTextInputAccess {
   static const _channel = MethodChannel('org.mewx.wenku8/book_documents');
+  @override
+  Future<T> withInput<T>(
+    LocalTextSource source,
+    Future<T> Function(LocalDocumentInput input) read,
+  ) async {
+    final lease = (await _channel.invokeMapMethod<String, dynamic>(
+      'openLinkedDocument',
+      {...source.toJson(), 'purpose': 'text-index'},
+    ))!;
+    try {
+      final input = lease['descriptor'] is int
+          ? LocalDocumentInput.descriptor(
+              lease['descriptor'] as int,
+              lease['size'] as int,
+              offset: (lease['offset'] as int?) ?? 0,
+            )
+          : LocalDocumentInput.file(lease['path'] as String);
+      return await read(input);
+    } finally {
+      await _channel.invokeMethod<void>('closeLinkedDocument', {
+        'lease': lease['lease'],
+      });
+    }
+  }
+
   @override
   Future<LocalTextSource> inspect(
     String reference, {

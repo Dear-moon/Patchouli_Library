@@ -17,6 +17,8 @@ import 'library_reflow.dart';
 import 'legacy_cover.dart';
 import 'local_book_media.dart';
 import 'archive_spine_title.dart';
+import 'library_state.dart';
+import 'ui_notifiers.dart';
 
 /// Scroll position is the single clock for the continuous extraction wave.
 class ArchiveFileCarousel extends StatefulWidget {
@@ -27,12 +29,26 @@ class ArchiveFileCarousel extends StatefulWidget {
     this.reduceMotion = false,
     this.animateEntrance = false,
     this.sourceLabel,
+    this.library,
+    this.entry = ReadingEntry.discovery,
+    this.repeatFill = true,
+    this.showChrome = true,
+    this.initialIndex = 0,
   });
   final List<Novel> books;
   final void Function(Novel book, Object heroTag) onOpen;
   final bool reduceMotion;
   final bool animateEntrance;
   final String? Function(Novel)? sourceLabel;
+  final LibraryState? library;
+  final ReadingEntry entry;
+  final bool repeatFill;
+
+  /// Keeps the physical bank while omitting its browsing labels and actions.
+  final bool showChrome;
+
+  /// Applied only when this carousel is first mounted, within the book range.
+  final int initialIndex;
   @override
   State<ArchiveFileCarousel> createState() => _ArchiveFileCarouselState();
 }
@@ -63,9 +79,17 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
   @override
   void initState() {
     super.initState();
-    _pose = _WavePose(widget.books.length, 0, _entrance);
+    final initialIndex = widget.books.isEmpty
+        ? 0
+        : widget.initialIndex.clamp(0, widget.books.length - 1).toInt();
+    _pose = _WavePose(
+      widget.books.length,
+      initialIndex.toDouble(),
+      _entrance,
+      repeatFill: widget.repeatFill,
+    );
     _entrance.addListener(_pose.inkChanged);
-    _active = ValueNotifier(0);
+    _active = ValueNotifier(initialIndex);
   }
 
   @override
@@ -84,8 +108,27 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
   @override
   void didUpdateWidget(ArchiveFileCarousel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final repeatChanged = oldWidget.repeatFill != widget.repeatFill;
+    final oldIndex = oldWidget.books.isEmpty
+        ? 0
+        : _pose.logicalFocus.round() % oldWidget.books.length;
+    final oldBook = oldWidget.books.isEmpty
+        ? null
+        : oldWidget.books[oldIndex].id;
+    _pose.repeatFill = widget.repeatFill;
     _pose.count = widget.books.length;
-    _pose.move(_pose.logicalFocus);
+    if (repeatChanged) {
+      final nextIndex = widget.books.indexWhere((book) => book.id == oldBook);
+      _pose.move(nextIndex < 0 ? 0 : nextIndex.toDouble());
+      _command++;
+      _targetIndex = null;
+      _hapticGesture = false;
+      if (_scroll?.hasClients == true) {
+        _scroll!.jumpTo(_pose.logicalFocus * _pose.pitch);
+      }
+    } else {
+      _pose.move(_pose.logicalFocus);
+    }
     _active.value = _pose.logicalFocus.round();
     if (widget.reduceMotion) _finishEntrance();
   }
@@ -128,6 +171,8 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
     if (widget.books.length < 2 || _scroll?.hasClients != true) {
       return;
     }
+    if (!widget.repeatFill) index = index.clamp(0, widget.books.length - 1);
+    if ((_scroll!.offset - index * _pose.pitch).abs() < .01) return;
     _finishEntrance();
     final command = ++_command;
     _targetIndex = index;
@@ -186,88 +231,99 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
           books: widget.books,
           onOpen: widget.onOpen,
           sourceLabel: widget.sourceLabel,
+          repeatFill: widget.repeatFill,
+          showChrome: widget.showChrome,
+          initialIndex: widget.initialIndex,
         ),
       );
     }
     _reduced = widget.reduceMotion || MediaQuery.disableAnimationsOf(context);
     return LibraryReflowPart(
       id: this,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: ArchiveShelfGeometry.maxViewportWidth,
-          ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              final spine = _WavePose.spineFor(width);
-              final pitch = _WavePose.pitchFor(width);
-              final cover = _WavePose.coverFor(width);
-              final height = ArchiveShelfGeometry.bodyHeight(cover);
-              _pose.configure(width, pitch);
-              _scroll ??= ScrollController(
-                initialScrollOffset: _pose.logicalFocus * pitch,
-                // This state owns the unbounded lane. Nested discovery PageStorage
-                // must not restore vertical feed pixels into the horizontal bank.
-                keepScrollOffset: false,
-              )..addListener(_scrolled);
-              final rowHeight = ArchiveShelfGeometry.rowHeight(cover, height);
-              final dark = Theme.of(context).brightness == Brightness.dark;
-              return Column(
-                key: const ValueKey('archive-shelf-arrival'),
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    height: rowHeight,
-                    child: NotificationListener<ScrollNotification>(
-                      onNotification: (notification) {
-                        if (notification is ScrollStartNotification &&
-                            notification.dragDetails != null) {
-                          _finishEntrance();
-                          _targetIndex = null;
-                          _command++;
-                          _hapticGesture = true;
-                          _lastDetent = _pose.logicalFocus.round();
-                        } else if (notification is ScrollStartNotification &&
-                            _targetIndex != null) {
-                          _hapticGesture = true;
-                        } else if (notification is ScrollEndNotification) {
-                          _hapticGesture = false;
-                        }
-                        return false;
-                      },
-                      child: Scrollable(
-                        key: const ValueKey('archive-file-carousel'),
-                        controller: _scroll,
-                        axisDirection: AxisDirection.right,
-                        physics: widget.books.length == 1
-                            ? const NeverScrollableScrollPhysics()
-                            : _ArchiveSnapPhysics(pose: _pose),
-                        viewportBuilder: (context, offset) => _ShelfRow(
-                          offset: offset,
-                          pose: _pose,
-                          spine: spine,
-                          cover: cover,
-                          height: height,
-                          dark: dark,
-                          children: [
-                            for (var i = 0; i < _pose.poolCount; i++)
-                              _volume(
-                                context,
-                                widget.books[_pose.bookIndex(i)],
-                                i,
-                                spine,
-                                cover,
-                                height,
-                              ),
-                          ],
-                        ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Use the browsing pane's actual width, not the device width.
+          // Opening an existing workspace detail pane naturally returns
+          // this shelf to its compact form instead of nesting two splits.
+          final wide =
+              widget.showChrome &&
+              constraints.maxWidth >= 880 &&
+              MediaQuery.orientationOf(context) == Orientation.landscape;
+          final width = math.min(
+            constraints.maxWidth,
+            ArchiveShelfGeometry.maxViewportWidth,
+          );
+          final spine = _WavePose.spineFor(width);
+          final pitch = _WavePose.pitchFor(width);
+          final cover = _WavePose.coverFor(width);
+          final height = ArchiveShelfGeometry.bodyHeight(cover);
+          _pose.configure(width, pitch);
+          _scroll ??= ScrollController(
+            initialScrollOffset: _pose.logicalFocus * pitch,
+            // This state owns the unbounded lane. Nested discovery PageStorage
+            // must not restore vertical feed pixels into the horizontal bank.
+            keepScrollOffset: false,
+          )..addListener(_scrolled);
+          final rowHeight = ArchiveShelfGeometry.rowHeight(cover, height);
+          final dark = Theme.of(context).brightness == Brightness.dark;
+          final shelf = SizedBox(
+            width: width,
+            child: Column(
+              key: const ValueKey('archive-shelf-arrival'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  height: rowHeight,
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      if (notification is ScrollStartNotification &&
+                          notification.dragDetails != null) {
+                        _finishEntrance();
+                        _targetIndex = null;
+                        _command++;
+                        _hapticGesture = true;
+                        _lastDetent = _pose.logicalFocus.round();
+                      } else if (notification is ScrollStartNotification &&
+                          _targetIndex != null) {
+                        _hapticGesture = true;
+                      } else if (notification is ScrollEndNotification) {
+                        _hapticGesture = false;
+                      }
+                      return false;
+                    },
+                    child: Scrollable(
+                      key: const ValueKey('archive-file-carousel'),
+                      controller: _scroll,
+                      axisDirection: AxisDirection.right,
+                      physics: widget.books.length == 1
+                          ? const NeverScrollableScrollPhysics()
+                          : _ArchiveSnapPhysics(pose: _pose),
+                      viewportBuilder: (context, offset) => _ShelfRow(
+                        offset: offset,
+                        pose: _pose,
+                        spine: spine,
+                        cover: cover,
+                        height: height,
+                        dark: dark,
+                        children: [
+                          for (var i = 0; i < _pose.poolCount; i++)
+                            _volume(
+                              context,
+                              widget.books[_pose.bookIndex(i)],
+                              i,
+                              spine,
+                              cover,
+                              height,
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                  // Only labels change at index crossings. Never rebuild the bank for
-                  // each scroll pixel, and never restart a separate extraction timer.
+                ),
+                // Only labels change at index crossings. Never rebuild the bank for
+                // each scroll pixel, and never restart a separate extraction timer.
+                if (widget.showChrome && !wide)
                   ValueListenableBuilder<int>(
                     valueListenable: _active,
                     builder: (context, index, _) {
@@ -337,6 +393,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                       );
                     },
                   ),
+                if (widget.showChrome)
                   ValueListenableBuilder<int>(
                     valueListenable: _active,
                     builder: (context, index, _) => Row(
@@ -346,7 +403,9 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                           ArchiveIconButton(
                             tooltip: '上一份档案',
                             haptic: null,
-                            onPressed: () => _step(-1),
+                            onPressed: widget.repeatFill || index > 0
+                                ? () => _step(-1)
+                                : null,
                             icon: const ArchiveIcon(
                               CupertinoIcons.chevron_left,
                               size: 13,
@@ -355,7 +414,7 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                           ),
                           Semantics(
                             label:
-                                '第 ${index % widget.books.length + 1} 本，共 ${widget.books.length} 本，循环浏览',
+                                '第 ${index % widget.books.length + 1} 本，共 ${widget.books.length} 本${widget.repeatFill ? '，循环浏览' : ''}',
                             child: ArchiveCode(
                               '${(index % widget.books.length + 1).toString().padLeft(2, '0')} / ${widget.books.length.toString().padLeft(2, '0')}',
                             ),
@@ -363,7 +422,11 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                           ArchiveIconButton(
                             tooltip: '下一份档案',
                             haptic: null,
-                            onPressed: () => _step(1),
+                            onPressed:
+                                widget.repeatFill ||
+                                    index < widget.books.length - 1
+                                ? () => _step(1)
+                                : null,
                             icon: const ArchiveIcon(
                               CupertinoIcons.chevron_right,
                               size: 13,
@@ -374,14 +437,200 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                       ],
                     ),
                   ),
+              ],
+            ),
+          );
+          return Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: wide ? 1040 : width),
+              child: Row(
+                children: [
+                  shelf,
+                  if (wide) ...[
+                    const SizedBox(width: 48),
+                    Expanded(
+                      child: KeyedSubtree(
+                        key: const ValueKey('archive-shelf-wide'),
+                        child: _information(context),
+                      ),
+                    ),
+                  ],
                 ],
-              );
-            },
-          ),
-        ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
+
+  Widget _information(BuildContext context) => ActiveListenableBuilder(
+    listenable: widget.library?.historyChanges ?? _active,
+    builder: (context) => ValueListenableBuilder<int>(
+      valueListenable: _active,
+      builder: (context, index, _) {
+        final book = widget.books[index % widget.books.length];
+        final library = widget.library;
+        final read = library?.hasRead(book.id) == true;
+        final direct = library?.directReadingOn(widget.entry) == true;
+        final chapter = library?.chapterForNovel(book) ?? 0;
+        final count = book.chapters.isEmpty
+            ? book.chapterCount
+            : book.chapters.length;
+        final saved = library?.positionFor(book.id);
+        final progress = count > 0
+            ? ((chapter + (saved?.fraction ?? 0)) / count).clamp(0.0, 1.0)
+            : null;
+        final chapterTitle = read && book.chapters.isNotEmpty
+            ? book.readingTitleFor(
+                chapter.clamp(0, book.chapters.length - 1),
+                paragraph: saved?.paragraphIndex ?? 0,
+                offset: saved?.textOffset ?? 0,
+              )
+            : null;
+        final colors = Theme.of(context).colorScheme;
+        final muted = colors.onSurfaceVariant;
+        final summary = book.summary.trim();
+        final scaler = MediaQuery.textScalerOf(context);
+        return AnimatedSwitcher(
+          key: const ValueKey('archive-shelf-information-switch'),
+          duration: _reduced ? Duration.zero : NovelMotion.enter,
+          reverseDuration: _reduced ? Duration.zero : NovelMotion.exit,
+          switchInCurve: NovelMotion.ease,
+          switchOutCurve: NovelMotion.retract,
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.topLeft,
+            children: [
+              // Fast swipes can cross many books before a fade completes.
+              // Paint only the latest outgoing book, and never let it take taps.
+              if (previous.isNotEmpty)
+                IgnorePointer(child: ExcludeSemantics(child: previous.last)),
+              ?current,
+            ],
+          ),
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: animation.drive(
+                Tween(begin: const Offset(0, .04), end: Offset.zero),
+              ),
+              child: child,
+            ),
+          ),
+          child: Column(
+            key: ValueKey(book.id),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ArchiveCode(
+                '${(index % widget.books.length + 1).toString().padLeft(2, '0')} / ${widget.books.length.toString().padLeft(2, '0')}',
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                key: const ValueKey('archive-shelf-title-slot'),
+                height: scaler.scale(28) * 1.25 * 2,
+                child: AppText(
+                  book.title,
+                  key: const ValueKey('archive-shelf-wide-title'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 28,
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: scaler.scale(14) * 1.5,
+                child: AppText(
+                  '${book.author} · ${book.isComplete ? '已完结' : '连载中'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, height: 1.5, color: muted),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: scaler.scale(12) * 1.5 * 2,
+                child: AppText(
+                  book.tags.take(3).join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, height: 1.5, color: muted),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                key: const ValueKey('archive-shelf-summary-slot'),
+                height: scaler.scale(14) * 1.7 * 3,
+                child: AppText(
+                  summary,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, height: 1.7, color: muted),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                key: const ValueKey('archive-shelf-progress-slot'),
+                height: scaler.scale(13) * 1.5 * 2 + 13,
+                child: library == null
+                    ? null
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AppText(
+                            !read
+                                ? '尚未开始阅读'
+                                : library.finishedReading(book)
+                                ? '已读完'
+                                : chapterTitle == null
+                                ? '读到第 ${chapter + 1} 章'
+                                : '读到 $chapterTitle',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.5,
+                              color: muted,
+                            ),
+                          ),
+                          const Spacer(),
+                          if (read && progress != null)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(2),
+                              child: LinearProgressIndicator(
+                                value: progress,
+                                minHeight: 3,
+                                color: colors.onSurface.withValues(alpha: .65),
+                                backgroundColor: colors.onSurface.withValues(
+                                  alpha: .08,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 24),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: GlassPillButton(
+                  key: const ValueKey('archive-shelf-wide-open'),
+                  icon: direct
+                      ? CupertinoIcons.play_fill
+                      : CupertinoIcons.arrow_up_right,
+                  label: direct ? (read ? '继续阅读' : '开始阅读') : '查看详情',
+                  onPressed: () => _open(_pose.focus.round()),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
 
   Widget _volume(
     BuildContext context,
@@ -503,8 +752,10 @@ class _ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                         reduced: _reduced,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    ArchiveCode(ArchiveDesign.fileCode(book.id)),
+                    if (widget.showChrome) ...[
+                      const SizedBox(height: 4),
+                      ArchiveCode(ArchiveDesign.fileCode(book.id)),
+                    ],
                   ],
                 ),
               ),
@@ -523,10 +774,16 @@ class _FlatArchiveCarousel extends StatefulWidget {
     required this.books,
     required this.onOpen,
     this.sourceLabel,
+    required this.repeatFill,
+    required this.showChrome,
+    required this.initialIndex,
   });
   final List<Novel> books;
   final void Function(Novel book, Object heroTag) onOpen;
   final String? Function(Novel)? sourceLabel;
+  final bool repeatFill;
+  final bool showChrome;
+  final int initialIndex;
   @override
   State<_FlatArchiveCarousel> createState() => _FlatArchiveCarouselState();
 }
@@ -534,11 +791,39 @@ class _FlatArchiveCarousel extends StatefulWidget {
 class _FlatArchiveCarouselState extends State<_FlatArchiveCarousel> {
   final _heroSource = Object();
   bool _userPaging = false;
-  late final _start = widget.books.length * 10000;
-  late final _pages = PageController(
-    initialPage: _start,
+  late var _pages = PageController(
+    initialPage:
+        (widget.repeatFill ? widget.books.length * 10000 : 0) +
+        widget.initialIndex.clamp(0, widget.books.length - 1).toInt(),
     viewportFraction: .62,
+    keepPage: false,
   );
+
+  @override
+  void didUpdateWidget(_FlatArchiveCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repeatFill == widget.repeatFill &&
+        (widget.repeatFill || oldWidget.books.length == widget.books.length)) {
+      return;
+    }
+    final oldPage = _pages.hasClients
+        ? _pages.page?.round() ?? 0
+        : _pages.initialPage;
+    final oldId = oldWidget.books.isEmpty
+        ? null
+        : oldWidget.books[oldPage % oldWidget.books.length].id;
+    final matching = widget.books.indexWhere((book) => book.id == oldId);
+    final next = matching < 0 ? 0 : matching;
+    final previous = _pages;
+    _pages = PageController(
+      initialPage: (widget.repeatFill ? widget.books.length * 10000 : 0) + next,
+      viewportFraction: .62,
+      // A finite bank must not restore a previously saved unbounded lane.
+      keepPage: false,
+    );
+    _userPaging = false;
+    previous.dispose();
+  }
 
   @override
   void dispose() {
@@ -564,7 +849,9 @@ class _FlatArchiveCarouselState extends State<_FlatArchiveCarousel> {
             return false;
           },
           child: PageView.builder(
+            key: ObjectKey(_pages),
             controller: _pages,
+            itemCount: widget.repeatFill ? null : widget.books.length,
             onPageChanged: (_) {
               if (_userPaging) AppHaptics.play(context, HapticCue.shelfStep);
             },
@@ -610,38 +897,40 @@ class _FlatArchiveCarouselState extends State<_FlatArchiveCarousel> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        Center(
-                          child: SizedBox(
-                            width: 154,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                AppText(
-                                  book.title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.4,
+                        if (widget.showChrome) ...[
+                          const SizedBox(height: 12),
+                          Center(
+                            child: SizedBox(
+                              width: 154,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  AppText(
+                                    book.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.4,
+                                    ),
                                   ),
-                                ),
-                                AppText(
-                                  book.author,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
+                                  AppText(
+                                    book.author,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 8),
+                          const SizedBox(height: 8),
+                        ],
                       ],
                     ),
                   ),
@@ -780,12 +1069,17 @@ class _LazyArchiveCoverState extends State<_LazyArchiveCover> {
               ),
               child: TickerMode(
                 enabled: _near,
-                child: NovelCover(
-                  widget.book,
-                  width: widget.width,
-                  height: widget.height,
-                  heroTag: _focused ? widget.heroTag : null,
-                  fadeIn: true,
+                // Keep the face mounted as focus crosses a detent. Swapping
+                // Hero for a plain cover would restart a partly loaded fade.
+                child: HeroMode(
+                  enabled: _focused,
+                  child: NovelCover(
+                    widget.book,
+                    width: widget.width,
+                    height: widget.height,
+                    heroTag: widget.heroTag,
+                    fadeIn: true,
+                  ),
                 ),
               ),
             ),
@@ -860,30 +1154,69 @@ class _ArchiveSnapPhysics extends ScrollPhysics {
 }
 
 class _WavePose extends ChangeNotifier {
-  _WavePose(this.count, this.logicalFocus, this.entrance);
+  _WavePose(
+    this._count,
+    this.logicalFocus,
+    this.entrance, {
+    required bool repeatFill,
+  }) : _repeatFill = repeatFill;
   final Animation<double> entrance;
-  int count;
+  int _count;
+  bool _repeatFill;
+  bool get repeatFill => _repeatFill;
+  set repeatFill(bool value) {
+    if (_repeatFill == value) return;
+    _repeatFill = value;
+    revision++;
+  }
+
+  int revision = 0;
+  int get count => _count;
+  set count(int value) {
+    if (_count == value) return;
+    _count = value;
+    revision++;
+  }
+
   double logicalFocus;
   double viewport = 340, pitch = pitchFor(340);
+  bool _configured = false;
   int edgeSlots = 15;
   bool holdLayoutFocus = false;
-  void inkChanged() => notifyListeners();
+  void inkChanged() {
+    revision++;
+    notifyListeners();
+  }
+
   double inkStart(int index) => ((index - focus + 8) / 24).clamp(0.0, .65);
   double inkProgress(int index) => Interval(
     inkStart(index),
     inkStart(index) + .35,
     curve: Curves.easeOutCubic,
   ).transform(entrance.value.clamp(0.0, 1.0));
-  double loadingLift(int index) => archiveLoadingLift(
-    index - focus,
-    SchedulerBinding.instance.currentSystemFrameTimeStamp,
-    1 - inkProgress(index),
-  );
-  double get focus => count < 2 ? 0 : edgeSlots + logicalFocus % count;
-  int get poolCount => count < 2 ? count : count + edgeSlots * 2;
-  int bookIndex(int slot) => count < 2 ? 0 : (slot - edgeSlots) % count;
-  int logicalLane(int slot) =>
-      count < 2 ? 0 : (logicalFocus / count).floor() * count + slot - edgeSlots;
+  double loadingLift(int index) => entrance.value >= 1
+      ? 0
+      : archiveLoadingLift(
+          index - focus,
+          SchedulerBinding.instance.currentSystemFrameTimeStamp,
+          1 - inkProgress(index),
+        );
+  double get focus => count < 2
+      ? 0
+      : repeatFill
+      ? edgeSlots + logicalFocus % count
+      : logicalFocus;
+  int get poolCount => count < 2 || !repeatFill ? count : count + edgeSlots * 2;
+  int bookIndex(int slot) => count < 2
+      ? 0
+      : repeatFill
+      ? (slot - edgeSlots) % count
+      : slot.clamp(0, count - 1);
+  int logicalLane(int slot) => count < 2
+      ? 0
+      : repeatFill
+      ? (logicalFocus / count).floor() * count + slot - edgeSlots
+      : slot.clamp(0, count - 1);
   static const depthX = ArchiveShelfGeometry.depthX;
   static const depthY = ArchiveShelfGeometry.depthY;
   static const radius = 1.48;
@@ -897,6 +1230,8 @@ class _WavePose extends ChangeNotifier {
   static double baseY(double cover, double height) =>
       ArchiveShelfGeometry.baseY(cover, height);
   void configure(double width, double nextPitch) {
+    if (_configured && viewport == width && pitch == nextPitch) return;
+    _configured = true;
     viewport = width;
     pitch = nextPitch;
     final cover = coverFor(width);
@@ -907,12 +1242,15 @@ class _WavePose extends ChangeNotifier {
                 pitch)
             .ceil() +
         2;
+    revision++;
   }
 
   void move(double next, {bool notify = true}) {
     if (count < 2) next = 0;
+    if (!repeatFill && count > 1) next = next.clamp(0, count - 1).toDouble();
     if ((logicalFocus - next).abs() < .000001) return;
     logicalFocus = next;
+    revision++;
     if (notify) notifyListeners();
   }
 
@@ -977,6 +1315,18 @@ class ArchiveShelfSceneRender extends RenderBox
   final _x = <double>[];
   final _clipLayer = LayerHandle<ClipRectLayer>();
   int debugLayoutCount = 0;
+
+  /// Static shadow ink is shared by every translated volume in this scene.
+  @visibleForTesting
+  int debugFloorShaderBuildCount = 0;
+  Path? _floorPath;
+  Paint? _floorPaint;
+
+  /// Number of visibility projections, shared by paint, touch and cover flight.
+  @visibleForTesting
+  int debugVisibilityCount = 0;
+  int _visibleRevision = -1;
+  List<int> _visibleSlots = const [];
   double get debugFocus => _pose.logicalFocus;
   int get debugCentreSlot => _pose.focus.round();
   int get debugPoolCount => _pose.poolCount;
@@ -1012,10 +1362,16 @@ class ArchiveShelfSceneRender extends RenderBox
   Rect get _viewport => Offset.zero & size;
   Offset _offset(int i) =>
       Offset(_x[i] - _pose.focus * _pose.pitch, _pose.railY(i));
-  List<int> get _visible => [
-    for (var i = 0; i < _boxes.length; i++)
-      if (_viewport.overlaps(_boxes[i].paintBounds.shift(_offset(i)))) i,
-  ];
+  List<int> get _visible {
+    if (_visibleRevision == _pose.revision) return _visibleSlots;
+    _visibleRevision = _pose.revision;
+    debugVisibilityCount++;
+    return _visibleSlots = [
+      for (var i = 0; i < _boxes.length; i++)
+        if (_viewport.overlaps(_boxes[i].paintBounds.shift(_offset(i)))) i,
+    ];
+  }
+
   @override
   void setupParentData(RenderBox child) {
     if (child.parentData is! _ShelfParentData) {
@@ -1031,6 +1387,14 @@ class ArchiveShelfSceneRender extends RenderBox
     double height,
     bool dark,
   ) {
+    final geometryChanged =
+        _scrollOffset != offset ||
+        _pose != pose ||
+        _spine != spine ||
+        _cover != cover ||
+        _height != height;
+    final inkChanged = _dark != dark;
+    final surfaceChanged = _spine != spine || _cover != cover || inkChanged;
     _scrollOffset = offset;
     if (_pose != pose) {
       if (attached) _pose.removeListener(_changed);
@@ -1041,7 +1405,16 @@ class ArchiveShelfSceneRender extends RenderBox
     _cover = cover;
     _height = height;
     _dark = dark;
-    markNeedsLayout();
+    if (surfaceChanged) {
+      _floorPath = null;
+      _floorPaint = null;
+    }
+    if (geometryChanged) {
+      _visibleRevision = -1;
+      markNeedsLayout();
+    } else if (inkChanged) {
+      markNeedsPaint();
+    }
   }
 
   void _changed() {
@@ -1063,14 +1436,19 @@ class ArchiveShelfSceneRender extends RenderBox
 
   @override
   void performLayout() {
+    _visibleRevision = -1;
     size = constraints.biggest;
     _scrollOffset.applyViewportDimension(size.width);
     // A resized viewport may correct its pixels on the first attempt. Accept
     // the new dimensions before deriving the pool's fractional lane.
     for (var attempt = 0; attempt < 3; attempt++) {
       if (_scrollOffset.applyContentDimensions(
-        _pose.count < 2 ? 0 : double.negativeInfinity,
-        _pose.count < 2 ? 0 : double.infinity,
+        _pose.count < 2 || !_pose.repeatFill ? 0 : double.negativeInfinity,
+        _pose.count < 2
+            ? 0
+            : _pose.repeatFill
+            ? double.infinity
+            : (_pose.count - 1) * _pose.pitch,
       )) {
         break;
       }
@@ -1093,31 +1471,40 @@ class ArchiveShelfSceneRender extends RenderBox
   }
 
   void _floor(Canvas canvas, Offset offset, List<int> visible) {
-    final ink = _dark ? ArchiveDesign.milk : const Color(0xFF8A806B);
-    final depth = Offset(_cover * _WavePose.depthX, _cover * _WavePose.depthY);
+    if (_floorPath == null) {
+      final depth = Offset(
+        _cover * _WavePose.depthX,
+        _cover * _WavePose.depthY,
+      );
+      const tail = Offset(-10, 10);
+      final front = Offset(_spine, 1.4);
+      _floorPath = Path()
+        ..addPolygon([
+          Offset.zero,
+          front,
+          front + depth,
+          depth,
+          depth + tail,
+          tail,
+        ], true);
+      final ink = _dark ? ArchiveDesign.milk : const Color(0xFF8A806B);
+      _floorPaint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: [ink.withValues(alpha: .10), ink.withValues(alpha: 0)],
+        ).createShader(_floorPath!.getBounds());
+      debugFloorShaderBuildCount++;
+    }
     for (final i in visible) {
       final origin =
           offset +
           _offset(i) +
           Offset(0, _WavePose.baseY(_cover, _height) + _height);
-      final path = Path()
-        ..addPolygon([
-          origin,
-          origin + Offset(_spine, 1.4),
-          origin + Offset(_spine, 1.4) + depth,
-          origin + depth,
-          origin + depth + const Offset(-10, 10),
-          origin + const Offset(-10, 10),
-        ], true);
-      canvas.drawPath(
-        path,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.topRight,
-            end: Alignment.bottomLeft,
-            colors: [ink.withValues(alpha: .10), ink.withValues(alpha: 0)],
-          ).createShader(path.getBounds()),
-      );
+      canvas.save();
+      canvas.translate(origin.dx, origin.dy);
+      canvas.drawPath(_floorPath!, _floorPaint!);
+      canvas.restore();
     }
   }
 
@@ -1254,19 +1641,42 @@ class ArchiveBoxDepthRender extends RenderBox
   final _spineLayer = LayerHandle<TransformLayer>();
   final _coverLayer = LayerHandle<TransformLayer>();
   int debugLayoutCount = 0;
+
+  /// Translation does not change a book's cap geometry or gradient.
+  @visibleForTesting
+  int debugTopShaderBuildCount = 0;
+  Path? _capPath;
+  Paint? _capFill, _capStroke;
+
+  /// Culling, paint and accessibility reuse one exact pose per wave revision.
+  @visibleForTesting
+  int debugGeometryCount = 0;
+  int _geometryRevision = -1;
+  Offset _resolvedOrigin = Offset.zero;
+  Matrix4? _resolvedBase, _resolvedCover;
+  Path? _resolvedTop;
   double get debugOpenFraction => _pose.weight(_index);
   bool get debugSelected => _pose.focus.round() == _index;
   Matrix4 get debugTransform => _coverTransform.clone();
   Matrix4 get debugSpineTransform => _base.clone();
   double get debugFootprint => _WavePose.footprint(_spine, _cover);
   Offset get _origin {
-    return ArchiveShelfGeometry.origin(_cover, _height, debugOpenFraction) +
-        Offset(0, _pose.loadingLift(_index));
+    if (_geometryRevision != _pose.revision) {
+      _geometryRevision = _pose.revision;
+      debugGeometryCount++;
+      _resolvedBase = null;
+      _resolvedCover = null;
+      _resolvedTop = null;
+      _resolvedOrigin =
+          ArchiveShelfGeometry.origin(_cover, _height, debugOpenFraction) +
+          Offset(0, _pose.loadingLift(_index));
+    }
+    return _resolvedOrigin;
   }
 
   Matrix4 get _base {
     final origin = _origin;
-    return Matrix4.identity()
+    return _resolvedBase ??= Matrix4.identity()
       ..setEntry(0, 2, _WavePose.depthX)
       ..setEntry(1, 2, _WavePose.depthY)
       ..setEntry(1, 0, .10)
@@ -1276,7 +1686,7 @@ class ArchiveBoxDepthRender extends RenderBox
 
   Matrix4 get _coverTransform {
     final origin = _origin;
-    return Matrix4.identity()
+    return _resolvedCover ??= Matrix4.identity()
       ..setEntry(0, 0, _WavePose.depthX)
       ..setEntry(1, 0, _WavePose.depthY)
       ..setEntry(0, 3, origin.dx + _spine)
@@ -1287,12 +1697,13 @@ class ArchiveBoxDepthRender extends RenderBox
     final origin = _origin;
     final front = Offset(_spine, _spine * .10);
     final depth = Offset(_cover * _WavePose.depthX, _cover * _WavePose.depthY);
-    return Path()..addPolygon([
-      origin,
-      origin + front,
-      origin + front + depth,
-      origin + depth,
-    ], true);
+    return _resolvedTop ??= Path()
+      ..addPolygon([
+        origin,
+        origin + front,
+        origin + front + depth,
+        origin + depth,
+      ], true);
   }
 
   Path get _solidPath {
@@ -1329,6 +1740,12 @@ class ArchiveBoxDepthRender extends RenderBox
     TextDirection direction,
     VoidCallback onTap,
   ) {
+    _geometryRevision = -1;
+    if (_spine != spine || _cover != cover || _dark != dark) {
+      _capPath = null;
+      _capFill = null;
+      _capStroke = null;
+    }
     if (_pose != pose) {
       if (attached) _pose.removeListener(_changed);
       _pose = pose;
@@ -1384,24 +1801,34 @@ class ArchiveBoxDepthRender extends RenderBox
       (context, offset) => context.paintChild(lastChild!, offset),
       oldLayer: _coverLayer.layer,
     );
-    final top = _topPath.shift(offset);
-    context.canvas.drawPath(
-      top,
-      Paint()
+    if (_capPath == null) {
+      final front = Offset(_spine, _spine * .10);
+      final depth = Offset(
+        _cover * _WavePose.depthX,
+        _cover * _WavePose.depthY,
+      );
+      _capPath = Path()
+        ..addPolygon([Offset.zero, front, front + depth, depth], true);
+      _capFill = Paint()
         ..shader = LinearGradient(
           colors: _dark
               ? [ArchiveDesign.darkRaisedHigh, ArchiveDesign.darkRaised]
               : [const Color(0xFFE3DFD3), ArchiveDesign.milk],
-        ).createShader(top.getBounds()),
-    );
-    context.canvas.drawPath(
-      top,
-      Paint()
+        ).createShader(_capPath!.getBounds());
+      _capStroke = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = .4
         ..color = (_dark ? ArchiveDesign.darkMilk : const Color(0xFF9A927F))
-            .withValues(alpha: .24),
-    );
+            .withValues(alpha: .24);
+      debugTopShaderBuildCount++;
+    }
+    final canvas = context.canvas;
+    final origin = offset + _origin;
+    canvas.save();
+    canvas.translate(origin.dx, origin.dy);
+    canvas.drawPath(_capPath!, _capFill!);
+    canvas.drawPath(_capPath!, _capStroke!);
+    canvas.restore();
     _spineLayer.layer = context.pushTransform(
       needsCompositing,
       offset,

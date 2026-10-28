@@ -14,7 +14,7 @@ SKIP = {'.git', '.dart_tool', '.gradle', '.cxx', 'build', 'Pods', '__pycache__',
 PRIVATE_NAMES = {'local.properties', 'key.properties', '.DS_Store', 'Generated.xcconfig',
                  'flutter_export_environment.sh', '.env', '.env.local'}
 PRIVATE_DIRS = {'.local-notes', '.local-samples', '.wrangler', 'node_modules', 'flutter_screenshots', 'xcuserdata'}
-PRIVATE_SUFFIXES = {'.iml', '.jks', '.keystore', '.pem', '.key', '.p12', '.mobileprovision', '.log', '.apk', '.aab'}
+PRIVATE_SUFFIXES = {'.iml', '.jks', '.keystore', '.pem', '.key', '.p12', '.p7b', '.cer', '.csr', '.mobileprovision', '.log', '.apk', '.aab', '.hap', '.hsp', '.har', '.so', '.pyc'}
 PRIVATE_COMPONENT_FILES = {
     'AccountSessionStore.kt', 'ApiSessionCookies.kt', 'IllustrationUrlPolicy.kt',
     'TokenManager.java', 'Wenku8Bridge.kt', 'WenkuEnginePlugins.kt',
@@ -31,6 +31,8 @@ PRIVATE_COMPONENT_FILES = {
     'android-release.yml',
 }
 PRIVATE_COMPONENT_DIRS = {'tools/content-gateway', 'android/app/src/main/java/org/mewx/wenku8/api', 'studio-android'}
+LOCAL_ONLY_PARTS = {'test', 'tests', 'integration_test', 'test_driver', 'androidTest', 'ohosTest', 'RunnerTests', 'RunnerDocumentUITests'}
+LOCAL_ONLY_NAMES = {'AGENTS.md', 'error_log.dart', 'error_diagnostics.dart', 'diagnostic_cipher.dart', 'network_diagnostics.dart', 'performance_diagnostics.dart', 'troubleshooting_page.dart', 'DiagnosticEnvironment.kt', 'AppStorageSnapshot.kt', 'AppStorageSnapshot.swift'}
 CONNECTIVITY_PATTERNS = {
     'restricted native binding': re.compile(r'getMagicVersion' + r'Cpp|System[.]loadLibrary\([\s\S]{0,40}[\"\']cpp[\"\']'),
     'restricted platform channel': re.compile(r'org[.]mewx[.]wenku8/' + r'legacy_api'),
@@ -73,6 +75,10 @@ def inspect(root: Path, files=None, *, require_manifest=False) -> list[str]:
             continue
         if not file.is_file():
             continue
+        if (any(part in LOCAL_ONLY_PARTS for part in relative.parts) or
+                file.name in LOCAL_ONLY_NAMES or file.name.startswith(('test_', '._')) or
+                re.search(r'(?:_test[.]|[.]test[.]|Tests[.]|Test[.])', file.name)):
+            issues.append(f'{relative}: local-only test or development material')
         if allowed is not None and relative.as_posix() not in allowed:
             issues.append(f'{relative}: source inventory review required')
         if file.name in PRIVATE_COMPONENT_FILES or any(

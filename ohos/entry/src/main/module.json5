@@ -1,0 +1,93 @@
+
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone", "tablet", "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "querySchemes": ["https", "http"],
+    "pages": "$profile:main_pages",
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:icon",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:icon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "backgroundModes": ["audioPlayback"],
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          },
+          {
+            "actions": ["ohos.want.action.viewData"],
+            "uris": [
+              {"scheme": "file", "type": "general.plain-text", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "general.epub", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "com.adobe.pdf", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "com.amazon.mobi", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "com.amazon.azw", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "com.amazon.azw3", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "general.zip-archive", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "general.html", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "general.xhtml", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "general.markdown", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "general.rich-text", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "org.openxmlformats.wordprocessingml.document", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "org.mewx.wenku8_flutter.fb2", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "org.mewx.wenku8_flutter.prc", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "text/plain", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/epub+zip", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/pdf", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/x-mobipocket-ebook", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/vnd.amazon.ebook", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/vnd.amazon.mobi8-ebook", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/x-mobi8-ebook", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/zip", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "text/html", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/xhtml+xml", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "text/markdown", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/x-fictionbook+xml", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "text/rtf", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/rtf", "linkFeature": "FileOpen"},
+              {"scheme": "file", "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "linkFeature": "FileOpen"}
+            ]
+          }
+        ]
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "ReadingFormAbility",
+        "srcEntry": "./ets/readingwidgets/ReadingFormAbility.ets",
+        "type": "form",
+        "description": "$string:reading_widget_description",
+        "label": "$string:reading_widget_name",
+        "exported": true,
+        "metadata": [
+          { "name": "ohos.extension.form", "resource": "$profile:reading_forms" }
+        ]
+      }
+    ],
+    "requestPermissions": [
+      {"name" :  "ohos.permission.INTERNET"},
+      {"name" :  "ohos.permission.GET_NETWORK_INFO"},
+      {"name" :  "ohos.permission.VIBRATE"},
+      {"name" :  "ohos.permission.FILE_ACCESS_PERSIST"},
+      {"name" :  "ohos.permission.KEEP_BACKGROUND_RUNNING"},
+    ]
+  }
+}

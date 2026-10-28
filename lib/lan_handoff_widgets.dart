@@ -4,6 +4,7 @@ import 'app_ui.dart';
 import 'app_interactions.dart';
 import 'archive_progress.dart';
 import 'catalog.dart';
+import 'book_identity.dart';
 import 'library_state.dart';
 import 'lan_reading_page.dart';
 import 'lan_reading_sync.dart';
@@ -37,6 +38,7 @@ class _LanSendBookSheetState extends State<LanSendBookSheet> {
       await widget.sync.handoff.send(
         peer: peer,
         bookId: widget.book.id,
+        book: widget.book,
         position: widget.position,
       );
       if (mounted) setState(() => _complete = true);
@@ -86,9 +88,11 @@ class _LanSendBookSheetState extends State<LanSendBookSheet> {
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 7),
-            const AppText(
-              '选择自己的设备；对方缺少这本书时会一并传送。请保持两台 App 在前台。',
-              style: TextStyle(fontSize: 13, height: 1.7),
+            AppText(
+              isLocalBook(widget.book.id)
+                  ? '选择自己的设备；对方缺少这本书时会一并传送。请保持两台 App 在前台。'
+                  : '只发送书籍与阅读位置，正文由对方设备自行加载。请保持两台 App 在前台；对方需能自行访问本书。',
+              style: const TextStyle(fontSize: 13, height: 1.7),
             ),
             const SizedBox(height: 16),
             if (_failure != null)
@@ -158,7 +162,7 @@ class _LanSendBookSheetState extends State<LanSendBookSheet> {
                                 working
                                     ? handoff.transfer!.phase
                                     : selected && _complete
-                                    ? '已准备好，在对方点「继续阅读」'
+                                    ? '已发送，在对方点「继续阅读」'
                                     : found
                                     ? '已发现 · 同一局域网'
                                     : '已配对 · 请保持对方 App 在前台',
@@ -177,7 +181,9 @@ class _LanSendBookSheetState extends State<LanSendBookSheet> {
                               : CupertinoIcons.arrow_right,
                           label: working
                               ? handoff.transfer!.cancellable
-                                    ? '停止传书'
+                                    ? isLocalBook(widget.book.id)
+                                          ? '停止传书'
+                                          : '取消发送'
                                     : '正在完成续读'
                               : selected && _complete
                               ? '再次发送续读位置'
@@ -337,7 +343,10 @@ class _LanHandoffMonitorState extends State<LanHandoffMonitor> {
                   AppText(
                     transfer != null
                         ? '${transfer.phase} · ${transfer.device}'
-                        : failure ?? '来自 ${receipt!.device} · 已准备好阅读位置',
+                        : failure ??
+                              (receipt!.online == null
+                                  ? '来自 ${receipt.device} · 已准备好阅读位置'
+                                  : '来自 ${receipt.device} · 在线书籍，正文由本机加载'),
                     style: const TextStyle(fontSize: 12, height: 1.6),
                   ),
                   if (transfer == null && failure == null) ...[
@@ -348,7 +357,7 @@ class _LanHandoffMonitorState extends State<LanHandoffMonitor> {
                         builder: (noticeContext) => GlassPillButton(
                           key: const ValueKey('handoff-continue-reading'),
                           icon: CupertinoIcons.book,
-                          label: '继续阅读',
+                          label: _opening ? '正在准备续读' : '继续阅读',
                           onPressed: _opening
                               ? null
                               : () => _continue(receipt!, noticeContext),

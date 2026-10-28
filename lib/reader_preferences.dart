@@ -27,6 +27,26 @@ enum ReaderMode {
   bool get paginated => this != scroll;
 }
 
+enum ReaderVerticalLatinOrientation {
+  rotated('随文旋转'),
+  upright('逐字直立');
+
+  const ReaderVerticalLatinOrientation(this.label);
+  final String label;
+}
+
+/// Stored layout keys may also carry typography and content-filter suffixes.
+/// Read the mode token rather than requiring it to be the last field.
+bool readerLayoutIsPaginated(String layout) => layout
+    .split('|')
+    .any(
+      (section) =>
+          !section.startsWith('languages=') &&
+          section
+              .split(':')
+              .any((part) => part == 'paged' || part == 'vertical'),
+    );
+
 enum ReaderTapLayout {
   standard('常规'),
   rightHand('右手'),
@@ -41,7 +61,8 @@ enum ReaderPageEffect {
   none('无动画'),
   slide('平移'),
   cover('覆盖'),
-  paper('纸页翻动');
+  paper('纸页翻动'),
+  fade('渐隐');
 
   const ReaderPageEffect(this.label);
   final String label;
@@ -51,6 +72,7 @@ enum ReaderPageEffect {
     slide => const Duration(milliseconds: 300),
     cover => const Duration(milliseconds: 340),
     paper => const Duration(milliseconds: 440),
+    fade => const Duration(milliseconds: 300),
   };
 }
 
@@ -88,6 +110,8 @@ class ReaderPreferences {
     this.marginTop = 8,
     this.marginBottom = 8,
     this.paragraphGap = 12,
+    this.paragraphGapOverride = false,
+    this.catalogueReversed = false,
     this.indent = false,
     this.justify = false,
     this.tapPaging = false,
@@ -96,23 +120,27 @@ class ReaderPreferences {
     this.brightness,
     this.autoScrollSpeed = 24,
     this.mode = ReaderMode.scroll,
+    this.verticalLatinOrientation = ReaderVerticalLatinOrientation.rotated,
     this.tapLayout = ReaderTapLayout.standard,
     this.edgeBrightness = false,
     this.pageEffect = ReaderPageEffect.staggered,
     this.pageSpeed = ReaderPageSpeed.normal,
     this.hideSystemStatus = false,
-    this.reflowOnChrome = true,
+    this.showStatusInfo = true,
     this.chapterEntrance = false,
     this.nightTextBrightness = .82,
     this.letterSpacing = .1,
     this.textWeight = ReaderTextWeight.regular,
     this.statusSideInset = 0,
+    this.statusFontSize = 12,
+    this.statusTopOffset = 0,
     this.backgroundImage,
     this.backgroundOpacity = .18,
     this.backgroundFit = BoxFit.cover,
   });
   final ReaderPaper paper;
   final double margin, paragraphGap, autoScrollSpeed;
+  final bool paragraphGapOverride, catalogueReversed;
   // Null horizontal edges preserve old records and existing margin callers.
   final double? marginLeft, marginRight;
   final double marginTop, marginBottom;
@@ -122,22 +150,25 @@ class ReaderPreferences {
   final bool indent, justify, tapPaging, tapBothSidesNext, volumePaging;
   final double? brightness;
   final ReaderMode mode;
+  final ReaderVerticalLatinOrientation verticalLatinOrientation;
   final ReaderTapLayout tapLayout;
   final bool edgeBrightness;
   final ReaderPageEffect pageEffect;
   final ReaderPageSpeed pageSpeed;
   final bool hideSystemStatus;
-  final bool reflowOnChrome;
+  final bool showStatusInfo;
+  bool get showReaderStatus => hideSystemStatus && showStatusInfo;
   final bool chapterEntrance;
   final double nightTextBrightness;
   final double letterSpacing;
   final ReaderTextWeight textWeight;
   final double statusSideInset;
+  final double statusFontSize, statusTopOffset;
   final String? backgroundImage;
   final double backgroundOpacity;
   final BoxFit backgroundFit;
   String get layoutKey {
-    final base =
+    final geometry =
         leftMargin == 26 &&
             rightMargin == 26 &&
             marginTop == 8 &&
@@ -147,10 +178,19 @@ class ReaderPreferences {
             !justify &&
             mode == ReaderMode.scroll
         ? ''
-        : '${leftMargin == rightMargin && marginTop == 8 && marginBottom == 8 ? '$leftMargin' : '$leftMargin,$marginTop,$rightMargin,$marginBottom'}:$paragraphGap:$indent:$justify${mode == ReaderMode.scroll ? '' : ':${mode.name}'}';
-    return letterSpacing == .1 && textWeight == ReaderTextWeight.regular
-        ? base
-        : '$base:text=$letterSpacing,${textWeight.name}';
+        : '${leftMargin == rightMargin && marginTop == 8 && marginBottom == 8 ? '$leftMargin' : '$leftMargin,$marginTop,$rightMargin,$marginBottom'}:$paragraphGap:$indent:$justify';
+    final modeKey = mode == ReaderMode.scroll ? '' : ':${mode.name}';
+    final gapKey = paragraphGapOverride ? ':gap=custom' : '';
+    final textKey =
+        letterSpacing == .1 && textWeight == ReaderTextWeight.regular
+        ? ''
+        : ':text=$letterSpacing,${textWeight.name}';
+    if (mode == ReaderMode.vertical &&
+        verticalLatinOrientation == ReaderVerticalLatinOrientation.upright) {
+      return '$geometry$gapKey$textKey:latin=upright$modeKey';
+    }
+    // Existing preferences retain exactly the same persisted layout key.
+    return '$geometry$gapKey$modeKey$textKey';
   }
 
   Color background(bool dark) => switch (paper) {
@@ -182,6 +222,9 @@ class ReaderPreferences {
     'marginTop': marginTop,
     'marginBottom': marginBottom,
     'paragraphGap': paragraphGap,
+    if (paragraphGapOverride || paragraphGap != 12)
+      'paragraphGapOverride': paragraphGapOverride,
+    if (catalogueReversed) 'catalogueReversed': true,
     'indent': indent,
     'justify': justify,
     'tapPaging': tapPaging,
@@ -190,17 +233,20 @@ class ReaderPreferences {
     'brightness': brightness,
     'autoScrollSpeed': autoScrollSpeed,
     'mode': mode.name,
+    'verticalLatinOrientation': verticalLatinOrientation.name,
     'tapLayout': tapLayout.name,
     'edgeBrightness': edgeBrightness,
     'pageEffect': pageEffect.name,
     'pageSpeed': pageSpeed.name,
     'hideSystemStatus': hideSystemStatus,
-    'reflowOnChrome': reflowOnChrome,
+    'showStatusInfo': showStatusInfo,
     'chapterEntrance': chapterEntrance,
     'nightTextBrightness': nightTextBrightness,
     'letterSpacing': letterSpacing,
     'textWeight': textWeight.name,
     'statusSideInset': statusSideInset,
+    'statusFontSize': statusFontSize,
+    'statusTopOffset': statusTopOffset,
     if (backgroundImage != null) 'backgroundImage': backgroundImage,
     'backgroundOpacity': backgroundOpacity,
     'backgroundFit': backgroundFit.name,
@@ -223,8 +269,10 @@ class ReaderPreferences {
       'volumePaging',
       'edgeBrightness',
       'hideSystemStatus',
-      'reflowOnChrome',
+      'showStatusInfo',
       'chapterEntrance',
+      'paragraphGapOverride',
+      'catalogueReversed',
     ]) {
       if (json[key] != null && json[key] is! bool) {
         throw const FormatException('阅读偏好格式有误');
@@ -248,6 +296,10 @@ class ReaderPreferences {
       marginTop: number('marginTop', 0, 80, 8),
       marginBottom: number('marginBottom', 0, 80, 8),
       paragraphGap: number('paragraphGap', 0, 32, 12),
+      paragraphGapOverride:
+          json['paragraphGapOverride'] as bool? ??
+          number('paragraphGap', 0, 32, 12) != 12,
+      catalogueReversed: json['catalogueReversed'] == true,
       indent: json['indent'] == true,
       justify: json['justify'] == true,
       tapPaging: json['tapPaging'] == true,
@@ -262,6 +314,8 @@ class ReaderPreferences {
         json['textWeight'] ?? 'regular',
       ),
       statusSideInset: number('statusSideInset', 0, 96, 0),
+      statusFontSize: number('statusFontSize', 9, 18, 12),
+      statusTopOffset: number('statusTopOffset', -8, 24, 0),
       backgroundImage: json['backgroundImage'] as String?,
       backgroundOpacity: number('backgroundOpacity', .05, 1, .18),
       backgroundFit: (json['backgroundFit'] ?? 'cover') == 'contain'
@@ -269,10 +323,13 @@ class ReaderPreferences {
           : BoxFit.cover,
       autoScrollSpeed: number('autoScrollSpeed', 8, 80, 24),
       mode: ReaderMode.values.byName(json['mode'] ?? 'scroll'),
+      verticalLatinOrientation: ReaderVerticalLatinOrientation.values.byName(
+        json['verticalLatinOrientation'] ?? 'rotated',
+      ),
       tapLayout: ReaderTapLayout.values.byName(json['tapLayout'] ?? 'standard'),
       edgeBrightness: json['edgeBrightness'] == true,
       hideSystemStatus: json['hideSystemStatus'] == true,
-      reflowOnChrome: json['reflowOnChrome'] != false,
+      showStatusInfo: json['showStatusInfo'] != false,
       chapterEntrance: json['chapterEntrance'] == true,
       pageEffect: ReaderPageEffect.values.byName(
         json['pageEffect'] ?? 'staggered',
@@ -296,6 +353,8 @@ class ReaderPreferences {
     double? marginTop,
     double? marginBottom,
     double? paragraphGap,
+    bool? paragraphGapOverride,
+    bool? catalogueReversed,
     bool? indent,
     bool? justify,
     bool? tapPaging,
@@ -305,17 +364,20 @@ class ReaderPreferences {
     bool systemBrightness = false,
     double? autoScrollSpeed,
     ReaderMode? mode,
+    ReaderVerticalLatinOrientation? verticalLatinOrientation,
     ReaderTapLayout? tapLayout,
     bool? edgeBrightness,
     ReaderPageEffect? pageEffect,
     ReaderPageSpeed? pageSpeed,
     bool? hideSystemStatus,
-    bool? reflowOnChrome,
+    bool? showStatusInfo,
     bool? chapterEntrance,
     double? nightTextBrightness,
     double? letterSpacing,
     ReaderTextWeight? textWeight,
     double? statusSideInset,
+    double? statusFontSize,
+    double? statusTopOffset,
     String? backgroundImage,
     bool clearBackground = false,
     double? backgroundOpacity,
@@ -328,6 +390,8 @@ class ReaderPreferences {
     marginTop: marginTop ?? this.marginTop,
     marginBottom: marginBottom ?? this.marginBottom,
     paragraphGap: paragraphGap ?? this.paragraphGap,
+    paragraphGapOverride: paragraphGapOverride ?? this.paragraphGapOverride,
+    catalogueReversed: catalogueReversed ?? this.catalogueReversed,
     indent: indent ?? this.indent,
     justify: justify ?? this.justify,
     tapPaging: tapPaging ?? this.tapPaging,
@@ -336,17 +400,21 @@ class ReaderPreferences {
     brightness: systemBrightness ? null : brightness ?? this.brightness,
     autoScrollSpeed: autoScrollSpeed ?? this.autoScrollSpeed,
     mode: mode ?? this.mode,
+    verticalLatinOrientation:
+        verticalLatinOrientation ?? this.verticalLatinOrientation,
     tapLayout: tapLayout ?? this.tapLayout,
     edgeBrightness: edgeBrightness ?? this.edgeBrightness,
     pageEffect: pageEffect ?? this.pageEffect,
     pageSpeed: pageSpeed ?? this.pageSpeed,
     hideSystemStatus: hideSystemStatus ?? this.hideSystemStatus,
-    reflowOnChrome: reflowOnChrome ?? this.reflowOnChrome,
+    showStatusInfo: showStatusInfo ?? this.showStatusInfo,
     chapterEntrance: chapterEntrance ?? this.chapterEntrance,
     nightTextBrightness: nightTextBrightness ?? this.nightTextBrightness,
     letterSpacing: letterSpacing ?? this.letterSpacing,
     textWeight: textWeight ?? this.textWeight,
     statusSideInset: statusSideInset ?? this.statusSideInset,
+    statusFontSize: statusFontSize ?? this.statusFontSize,
+    statusTopOffset: statusTopOffset ?? this.statusTopOffset,
     backgroundImage: clearBackground
         ? null
         : backgroundImage ?? this.backgroundImage,
@@ -364,9 +432,12 @@ class ReaderPreferences {
     marginTop: layout.marginTop,
     marginBottom: layout.marginBottom,
     paragraphGap: layout.paragraphGap,
+    paragraphGapOverride: layout.paragraphGapOverride,
+    catalogueReversed: catalogueReversed,
     indent: layout.indent,
     justify: layout.justify,
     mode: layout.mode,
+    verticalLatinOrientation: layout.verticalLatinOrientation,
     nightTextBrightness: layout.nightTextBrightness,
     letterSpacing: layout.letterSpacing,
     textWeight: layout.textWeight,
@@ -383,8 +454,10 @@ class ReaderPreferences {
     pageEffect: pageEffect,
     pageSpeed: pageSpeed,
     hideSystemStatus: hideSystemStatus,
-    reflowOnChrome: reflowOnChrome,
+    showStatusInfo: showStatusInfo,
     chapterEntrance: chapterEntrance,
     statusSideInset: statusSideInset,
+    statusFontSize: statusFontSize,
+    statusTopOffset: statusTopOffset,
   );
 }

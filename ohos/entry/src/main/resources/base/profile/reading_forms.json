@@ -1,0 +1,99 @@
+{
+  "forms": [
+    {
+      "name": "ReadingArchiveWidget",
+      "displayName": "$string:reading_card_focus",
+      "description": "$string:reading_widget_description",
+      "src": "./ets/readingwidgets/ReadingFormCard.ets",
+      "uiSyntax": "arkts",
+      "isDynamic": true,
+      "isDefault": true,
+      "colorMode": "auto",
+      "updateEnabled": false,
+      "updateDuration": 0,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2",
+        "2*4",
+        "4*4"
+      ],
+      "formConfigAbility": "ability://EntryAbility"
+    },
+    {
+      "name": "ReadingCard_week",
+      "displayName": "$string:reading_card_week",
+      "description": "$string:reading_widget_description",
+      "src": "./ets/readingwidgets/ReadingFormCard.ets",
+      "uiSyntax": "arkts",
+      "isDynamic": true,
+      "isDefault": false,
+      "colorMode": "auto",
+      "updateEnabled": false,
+      "updateDuration": 0,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2",
+        "2*4",
+        "4*4"
+      ],
+      "formConfigAbility": "ability://EntryAbility"
+    },
+    {
+      "name": "ReadingCard_calendar",
+      "displayName": "$string:reading_card_calendar",
+      "description": "$string:reading_widget_description",
+      "src": "./ets/readingwidgets/ReadingFormCard.ets",
+      "uiSyntax": "arkts",
+      "isDynamic": true,
+      "isDefault": false,
+      "colorMode": "auto",
+      "updateEnabled": false,
+      "updateDuration": 0,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2",
+        "2*4",
+        "4*4"
+      ],
+      "formConfigAbility": "ability://EntryAbility"
+    },
+    {
+      "name": "ReadingCard_memory",
+      "displayName": "$string:reading_card_memory",
+      "description": "$string:reading_widget_description",
+      "src": "./ets/readingwidgets/ReadingFormCard.ets",
+      "uiSyntax": "arkts",
+      "isDynamic": true,
+      "isDefault": false,
+      "colorMode": "auto",
+      "updateEnabled": false,
+      "updateDuration": 0,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2",
+        "2*4",
+        "4*4"
+      ],
+      "formConfigAbility": "ability://EntryAbility"
+    },
+    {
+      "name": "ReadingCard_quote",
+      "displayName": "$string:reading_card_quote",
+      "description": "$string:reading_widget_description",
+      "src": "./ets/readingwidgets/ReadingFormCard.ets",
+      "uiSyntax": "arkts",
+      "isDynamic": true,
+      "isDefault": false,
+      "colorMode": "auto",
+      "updateEnabled": false,
+      "updateDuration": 0,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2",
+        "2*4",
+        "4*4"
+      ],
+      "formConfigAbility": "ability://EntryAbility"
+    }
+  ]
+}

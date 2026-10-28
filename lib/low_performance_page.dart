@@ -85,27 +85,52 @@ class _LowPerformancePageState extends State<LowPerformancePage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ContentPanel(
-                  child: Column(
-                    children: [
-                      for (final effect in PerformanceEffect.values) ...[
-                        if (effect != PerformanceEffect.values.first)
-                          const Divider(height: 28),
-                        _option(
-                          title: effect.label,
-                          description: effect.description,
-                          value: preferences.allows(effect),
-                          switchKey: effect.preferenceKey,
-                          onChanged: !preferences.enabled || _saving
-                              ? null
-                              : (value) => _save(
-                                  preferences.withEffect(effect, value),
-                                ),
-                        ),
-                      ],
+                for (final group in const [
+                  (
+                    '玻璃与模糊',
+                    [
+                      PerformanceEffect.glass,
+                      PerformanceEffect.blur,
+                      PerformanceEffect.edgeBlur,
                     ],
                   ),
-                ),
+                  (
+                    '交互动效',
+                    [PerformanceEffect.motion, PerformanceEffect.animatedIcons],
+                  ),
+                  ('书架呈现', [PerformanceEffect.shelf3d]),
+                ]) ...[
+                  AppText(
+                    group.$1,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ContentPanel(
+                    child: Column(
+                      children: [
+                        for (final effect in group.$2) ...[
+                          if (effect != group.$2.first)
+                            const Divider(height: 28),
+                          _option(
+                            title: effect.label,
+                            description: effect.description,
+                            value: preferences.allows(effect),
+                            switchKey: effect.preferenceKey,
+                            onChanged: !preferences.enabled || _saving
+                                ? null
+                                : (value) => _save(
+                                    preferences.withEffect(effect, value),
+                                  ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
                 const SizedBox(height: 16),
                 GlassTextButton(
                   key: const ValueKey('performance-light-preset'),
@@ -129,35 +154,42 @@ class _LowPerformancePageState extends State<LowPerformancePage> {
     required bool value,
     required String switchKey,
     required ValueChanged<bool>? onChanged,
-  }) => Row(
-    children: [
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AppText(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            AppText(
-              description,
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.45,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+  }) => ArchivePart(
+    start: .18,
+    end: .84,
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppText(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w600),
               ),
-            ),
-          ],
+              const SizedBox(height: 6),
+              AppText(
+                description,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-      const SizedBox(width: 12),
-      Semantics(
-        label: title,
-        child: AppControls.toggle(
-          context,
-          key: ValueKey(switchKey),
-          value: value,
-          onChanged: onChanged,
+        const SizedBox(width: 12),
+        Semantics(
+          label: title,
+          child: AppControls.toggle(
+            context,
+            key: ValueKey(switchKey),
+            value: value,
+            onChanged: onChanged,
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   );
 }

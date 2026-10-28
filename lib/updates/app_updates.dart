@@ -18,8 +18,8 @@ const updateRepository = String.fromEnvironment(
   'UPDATE_REPOSITORY',
   defaultValue: officialUpdateRepository,
 );
-const currentAppVersion = '0.4.8';
-const currentAppBuild = 192;
+const currentAppVersion = '0.5.0';
+const currentAppBuild = 260;
 
 class ReleaseVersion implements Comparable<ReleaseVersion> {
   const ReleaseVersion(this.major, this.minor, this.patch, [this.build = 0]);
@@ -563,6 +563,7 @@ class _ReadyUpdate {
 class AppUpdates extends ChangeNotifier {
   AppUpdates({
     required this.preferences,
+    this.packageUpdates = true,
     UpdateSource? source,
     UpdatePlatform? platform,
     Future<Directory> Function()? directory,
@@ -578,6 +579,7 @@ class AppUpdates extends ChangeNotifier {
                ? LegacyTransport.setUpdatePriority
                : (_) async {});
   final SharedPreferences preferences;
+  final bool packageUpdates;
   final UpdateSource? _source;
   late final _githubSource = GithubUpdateSource();
   late final _mirrorSource = GithubUpdateSource(
@@ -660,9 +662,13 @@ class AppUpdates extends ChangeNotifier {
   }
 
   bool get available =>
-      release != null && installed != null && release!.isNewerThan(installed!);
-  UpdateAsset? get asset =>
-      installed == null ? null : release?.assetFor(installed!.abis);
+      packageUpdates &&
+      release != null &&
+      installed != null &&
+      release!.isNewerThan(installed!);
+  UpdateAsset? get asset => !packageUpdates || installed == null
+      ? null
+      : release?.assetFor(installed!.abis);
 
   /// Snooze only this release, including across process restarts. A different
   /// release can still be announced immediately; manual updating stays usable.
@@ -719,6 +725,10 @@ class AppUpdates extends ChangeNotifier {
 
   Future<void> check({bool automatic = false}) async {
     if (_disposed || busy) return;
+    if (!packageUpdates) {
+      await loadInstalled();
+      return;
+    }
     final now = _clock();
     if (automatic && !autoCheck) return;
     checking = true;

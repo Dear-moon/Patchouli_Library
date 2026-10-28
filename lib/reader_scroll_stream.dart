@@ -4,6 +4,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
 import 'reader_content.dart';
+import 'reader_scroll_index.dart';
 import 'reader_scroll_sliver.dart';
 
 /// Keeps source anchors separate from the continuous viewport's signed pixels.
@@ -23,10 +24,8 @@ class ReaderScrollStreamController<T> {
     if (state == null) return false;
     final backwards = chapter < state._origin;
     final rows = backwards ? state._before : state._after;
-    final at = rows.indexWhere(
-      (item) => item.chapter == chapter && item.row == row,
-    );
-    if (at < 0) return false;
+    final at = rows.indexOf((chapter: chapter, row: row));
+    if (at == null) return false;
     (backwards ? state._backAnchor : state._frontAnchor).restore(
       row: at,
       fraction: backwards ? 1 - fraction : fraction,
@@ -42,36 +41,26 @@ class _StreamChapter<T> {
   _StreamChapter(this.index);
   final int index;
   final registry = ReaderParagraphRegistry();
-  final heights = <int, double>{};
+  final heights = ReaderScrollRowHeights();
   T? data;
   Object? error;
   bool loading = false;
   bool known = false;
   bool foreground = false;
-  int rows = 0;
+  int get rows => heights.rows;
+  set rows(int value) => heights.rows = value;
   double? leading, retainedExtent;
-  double heightOf(int row) =>
-      heights[row] ??
-      (row < 0
-          ? 80
-          : row == rows
-          ? 24
-          : (extent - (heights[-1] ?? 80) - (heights[rows] ?? 24)) / rows);
+  double heightOf(int row) => heights.heightOf(
+    row,
+    retainedExtent: data == null ? retainedExtent : null,
+  );
   double get extent {
     if (data == null && retainedExtent != null) return retainedExtent!;
-    final body = heights.entries.where(
-      (entry) => entry.key >= 0 && entry.key < rows,
-    );
-    final measured = body.fold<double>(0, (sum, entry) => sum + entry.value);
-    final estimate = body.isEmpty ? 100.0 : measured / body.length;
-    return (heights[-1] ?? 80) +
-        (heights[rows] ?? 24) +
-        measured +
-        (rows - body.length) * estimate;
+    return heights.extent;
   }
 }
 
-typedef _StreamRow = ({int chapter, int? row});
+typedef _StreamRow = ReaderScrollRow;
 
 /// Two native lazy lists grow away from a fixed origin. Appending the next or
 /// previous chapter never replaces the current scroll activity or its pixels.
@@ -93,6 +82,7 @@ class ReaderScrollStream<T> extends StatefulWidget {
     this.readingInset = 0,
     this.canAdopt,
     this.deferPreparation = false,
+    this.continuous = true,
   });
   final ReaderScrollStreamController<T> controller;
   final ScrollController scroll;
@@ -116,6 +106,7 @@ class ReaderScrollStream<T> extends StatefulWidget {
   final double readingInset;
   final bool Function()? canAdopt;
   final bool deferPreparation;
+  final bool continuous;
   @override
   State<ReaderScrollStream<T>> createState() => _ReaderScrollStreamState<T>();
 }
@@ -125,7 +116,9 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
   final _mountedRows = <_StreamRow, _StreamExtentRender>{};
   final _frontAnchor = ReaderScrollAnchor(), _backAnchor = ReaderScrollAnchor();
   final _originKey = GlobalKey();
-  List<_StreamRow> _before = [], _after = [];
+  var _before = ReaderScrollRowIndex(const []);
+  var _after = ReaderScrollRowIndex(const []);
+  bool _rowsDirty = true;
   int _origin = 0, _active = 0, _epoch = 0;
   bool _frameQueued = false;
   bool _preparationEnabled = false;
@@ -142,6 +135,7 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
     _epoch++;
     if (!retainPreparation) _preparationEnabled = !widget.deferPreparation;
     _origin = _active = widget.chapter;
+    _rowsDirty = true;
     _chapters.clear();
     _chapters[_active] = _StreamChapter<T>(_active)
       ..data = widget.data
@@ -152,7 +146,7 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
     // particular, a saved line near a chapter's tail must be alignable before
     // the next chapter finishes loading; otherwise the viewport clamps it up.
     for (final index in [_active - 1, _active + 1]) {
-      if (index >= 0 && index < widget.chapterCount) {
+      if (widget.continuous && index >= 0 && index < widget.chapterCount) {
         _chapters[index] = _StreamChapter<T>(index);
       }
     }
@@ -163,36 +157,57 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
   void didUpdateWidget(ReaderScrollStream<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.identity != widget.identity ||
-        oldWidget.geometry != widget.geometry) {
+        oldWidget.geometry != widget.geometry ||
+        oldWidget.continuous != widget.continuous) {
       _reset(retainPreparation: oldWidget.identity == widget.identity);
     } else if (_chapters[widget.chapter] case final entry?) {
+      final rows = widget.rowCount(widget.data);
+      _rowsDirty |= !entry.known || entry.rows != rows;
       entry.data = widget.data;
       entry.known = true;
-      entry.rows = widget.rowCount(widget.data);
+      entry.rows = rows;
     }
     _queueMeasure();
   }
 
-  void _prepareAdjacent({bool enable = false}) {
+  void _prepareAdjacent({
+    bool enable = false,
+    int? viewportNext,
+    int? viewportPrevious,
+  }) {
     if (enable) _preparationEnabled = true;
     if (!mounted ||
+        !widget.continuous ||
         !_preparationEnabled ||
         ModalRoute.isCurrentOf(context) == false ||
         !TickerMode.valuesOf(context).enabled) {
       return;
     }
+    // A short loaded neighbour can end inside the viewport while its heading
+    // still cannot reach the reading line. Continue from that visible boundary
+    // rather than waiting for reading adoption to advance _active. Each layout
+    // adds at most one new chapter at either end; its real geometry determines
+    // whether another is needed on a later frame.
+    final visible = <int>{
+      if (viewportNext != null && viewportNext > _active) viewportNext,
+      if (viewportPrevious != null && viewportPrevious < _active - 1)
+        viewportPrevious,
+    };
     var added = false;
-    for (final index in [_active + 1, _active - 1]) {
+    for (final index in {...visible, _active + 1, _active - 1}) {
       if (index >= 0 && index < widget.chapterCount) {
         added |= !_chapters.containsKey(index);
-        _load(index);
+        _load(index, foreground: visible.contains(index));
       }
     }
     if (added) setState(() {});
   }
 
   void _load(int index, {bool retry = false, bool foreground = false}) {
-    final entry = _chapters.putIfAbsent(index, () => _StreamChapter<T>(index));
+    final entry = _chapters.putIfAbsent(index, () {
+      _rowsDirty = true;
+      return _StreamChapter<T>(index);
+    });
     if (foreground) {
       entry.foreground = true;
     }
@@ -211,9 +226,11 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
           setState(() {
             entry.loading = false;
             if (entry.foreground || (index - _active).abs() <= 1) {
+              final rows = widget.rowCount(data);
+              _rowsDirty |= !entry.known || entry.rows != rows;
               entry.data = data;
               entry.known = true;
-              entry.rows = widget.rowCount(data);
+              entry.rows = rows;
             }
           });
           _queueMeasure();
@@ -254,10 +271,12 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
   void _measure() {
     final position = widget.scroll.position;
     final reading = position.pixels + widget.readingInset;
+    final viewportEnd = position.pixels + position.viewportDimension;
     _StreamRow? visible;
     var nextTop = double.infinity;
+    int? viewportNext, viewportPrevious;
     final near = <int>{};
-    for (final entry in _mountedRows.entries.toList()) {
+    for (final entry in _mountedRows.entries) {
       final render = entry.value;
       if (!render.attached || !render.hasSize) continue;
       final viewport = RenderAbstractViewport.maybeOf(render);
@@ -265,6 +284,23 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
       final top = viewport.getOffsetToReveal(render, 0).offset;
       final bottom = top + render.size.height;
       if (entry.key.row == -1) _chapters[entry.key.chapter]?.leading = top;
+      final chapter = _chapters[entry.key.chapter];
+      if (chapter != null && chapter.data != null) {
+        if (entry.key.row == chapter.rows &&
+            top <= viewportEnd &&
+            bottom >= position.pixels) {
+          final next = chapter.index + 1;
+          if (viewportNext == null || next > viewportNext) viewportNext = next;
+        }
+        if (entry.key.row == -1 &&
+            top >= position.pixels &&
+            top <= viewportEnd) {
+          final previous = chapter.index - 1;
+          if (viewportPrevious == null || previous < viewportPrevious) {
+            viewportPrevious = previous;
+          }
+        }
+      }
       if (bottom >= position.pixels - position.viewportDimension * 2 &&
           top <= position.pixels + position.viewportDimension * 3) {
         near.add(entry.key.chapter);
@@ -297,32 +333,41 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
       entry.data = null;
       pruned = true;
     }
-    _prepareAdjacent();
+    _prepareAdjacent(
+      viewportNext: canAdopt ? viewportNext : null,
+      viewportPrevious: canAdopt ? viewportPrevious : null,
+    );
     if (pruned) setState(() {});
   }
 
-  List<_StreamRow> _rows(
-    Iterable<_StreamChapter<T>> chapters, {
-    bool backwards = false,
-  }) => [
-    for (final chapter in chapters)
-      if (!chapter.known)
-        (chapter: chapter.index, row: null)
-      else ...[
-        for (var i = 0; i < chapter.rows + 2; i++)
-          (chapter: chapter.index, row: backwards ? chapter.rows - i : i - 1),
-      ],
-  ];
+  void _ensureRowIndices() {
+    if (!_rowsDirty) return;
+    final ordered = _chapters.values.toList()
+      ..sort((a, b) => a.index.compareTo(b.index));
+    ReaderScrollChapterRows range(_StreamChapter<T> entry) =>
+        (chapter: entry.index, rows: entry.known ? entry.rows : null);
+    _before = ReaderScrollRowIndex(
+      ordered
+          .where((entry) => entry.index < _origin)
+          .toList()
+          .reversed
+          .map(range),
+      backwards: true,
+    );
+    _after = ReaderScrollRowIndex(
+      ordered.where((entry) => entry.index >= _origin).map(range),
+    );
+    _rowsDirty = false;
+  }
 
-  Widget _list(List<_StreamRow> rows, ReaderScrollAnchor anchor) {
-    final indices = {for (final (index, row) in rows.indexed) row: index};
+  Widget _list(ReaderScrollRowIndex rows, ReaderScrollAnchor anchor) {
     return ReaderScrollSliver(
       anchor: anchor,
       itemCount: rows.length,
       findChildIndexCallback: (key) =>
-          key is ValueKey<_StreamRow> ? indices[key.value] : null,
+          key is ValueKey<_StreamRow> ? rows.indexOf(key.value) : null,
       itemBuilder: (context, index) {
-        final row = rows[index], chapter = _chapters[rows[index].chapter]!;
+        final row = rows[index], chapter = _chapters[row.chapter]!;
         final data = chapter.data;
         final Widget child;
         if (row.row != null && data == null) {
@@ -366,7 +411,7 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
           row: row,
           onHeight: (height) {
             if (row.row != null) {
-              chapter.heights[row.row!] = height;
+              chapter.heights.record(row.row!, height);
             } else {
               chapter.retainedExtent = height;
             }
@@ -380,13 +425,7 @@ class _ReaderScrollStreamState<T> extends State<ReaderScrollStream<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final ordered = _chapters.values.toList()
-      ..sort((a, b) => a.index.compareTo(b.index));
-    _before = _rows(
-      ordered.where((entry) => entry.index < _origin).toList().reversed,
-      backwards: true,
-    );
-    _after = _rows(ordered.where((entry) => entry.index >= _origin));
+    _ensureRowIndices();
     return CustomScrollView(
       key: const ValueKey('reader-scroll'),
       controller: widget.scroll,

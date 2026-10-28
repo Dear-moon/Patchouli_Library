@@ -2,6 +2,8 @@ import 'package:html/dom.dart';
 import 'reader_rich_content.dart';
 import 'reader_languages.dart';
 
+const epubPublisherLanguageVersion = 3;
+
 String epubSemantic(Element node) =>
     '${node.attributes['epub:type'] ?? ''} ${node.attributes['role'] ?? ''}';
 bool epubNoteElement(Element node) => epubSemantic(node)
@@ -17,10 +19,17 @@ bool epubNoteElement(Element node) => epubSemantic(node)
     );
 
 class EpubRichText {
-  EpubRichText(this.styles, this.baseWriting, {this.baseLanguage = ''});
+  EpubRichText(
+    this.styles,
+    this.baseWriting, {
+    this.baseLanguage = '',
+    this.languageRoot,
+  });
   final Map<Element, Map<String, String>> styles;
   final String baseWriting;
   final String baseLanguage;
+  final Element? languageRoot;
+  late final _documentLanguage = _defaultLanguage();
   final _text = StringBuffer();
   final _ruby = <ReaderRuby>[];
   final _refs = <ReaderNoteReference>[];
@@ -41,13 +50,97 @@ class EpubRichText {
     return '';
   }
 
+  String _defaultLanguage() {
+    var language = readerLanguageCode(baseLanguage);
+    final root = languageRoot;
+    if (root == null) return language;
+    for (Element? at = root; at != null; at = at.parent) {
+      final declared = at.attributes['lang'] ?? at.attributes['xml:lang'];
+      if (declared != null) {
+        language = readerLanguageCode(declared);
+        break;
+      }
+    }
+    final chineseTranslation =
+        language == 'ja' && readerLanguageCode(baseLanguage) == 'zh';
+    if (language != 'en' && !chineseTranslation) return language;
+
+    // Some EPUB generators stamp English on every XHTML document regardless
+    // of its prose. Only reject that document-level default for substantial,
+    // overwhelmingly CJK text. A local lang declaration remains authoritative.
+    final text = StringBuffer();
+    void collect(Node node) {
+      if (node is Text) {
+        text.write(node.text);
+      } else if (node is Element) {
+        if (!identical(node, root) &&
+            (node.attributes.containsKey('lang') ||
+                node.attributes.containsKey('xml:lang'))) {
+          return;
+        }
+        if (const {
+          'script',
+          'style',
+          'rt',
+          'rp',
+          'rtc',
+        }.contains(node.localName)) {
+          return;
+        }
+        for (final child in node.nodes) {
+          collect(child);
+        }
+      }
+    }
+
+    collect(root);
+    var letters = 0, cjk = 0, han = 0, kana = 0, hangul = 0;
+    for (final match in RegExp(
+      r'\p{L}',
+      unicode: true,
+    ).allMatches(text.toString())) {
+      letters++;
+      final rune = match.group(0)!.runes.single;
+      final isHan =
+          rune >= 0x3400 && rune <= 0x4dbf ||
+          rune >= 0x4e00 && rune <= 0x9fff ||
+          rune >= 0xf900 && rune <= 0xfaff ||
+          rune >= 0x20000 && rune <= 0x323af;
+      final isKana =
+          rune >= 0x3040 && rune <= 0x30ff ||
+          rune >= 0x31f0 && rune <= 0x31ff ||
+          rune >= 0xff66 && rune <= 0xff9f;
+      final isHangul =
+          rune >= 0xac00 && rune <= 0xd7af || rune >= 0x1100 && rune <= 0x11ff;
+      if (isHan) han++;
+      if (isKana) kana++;
+      if (isHangul) hangul++;
+      if (isHan || isKana || isHangul) cjk++;
+    }
+    // Translated EPUBs may retain a Japanese XHTML template while declaring
+    // Chinese in the package. Resolve only that contradiction, using the prose
+    // rather than the book's title; locally tagged bilingual text is excluded
+    // above. Short Han-only title/contents pages follow the Chinese package too.
+    if (chineseTranslation &&
+        han > 0 &&
+        han * 2 >= letters &&
+        kana * 100 <= han &&
+        hangul == 0) {
+      return 'zh';
+    }
+    if (chineseTranslation) return language;
+    return cjk >= 32 && cjk * 10 >= letters * 9 ? '' : language;
+  }
+
   void begin(Element node) {
-    _language = readerLanguageCode(baseLanguage);
+    _language = _documentLanguage;
     _opacity = 1;
     var languageFound = false;
+    var documentDefault = false;
     for (Element? at = node; at != null; at = at.parent) {
+      documentDefault |= identical(at, languageRoot);
       final language = at.attributes['lang'] ?? at.attributes['xml:lang'];
-      if (!languageFound && language != null) {
+      if (!languageFound && !documentDefault && language != null) {
         _language = readerLanguageCode(language);
         languageFound = true;
       }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/painting.dart';
 import 'package:characters/characters.dart';
 import 'reader_coordinate_map.dart';
@@ -23,6 +24,205 @@ class ReaderEmphasis {
   const ReaderEmphasis(this.start, this.end, this.mask);
   final int start, end, mask;
   Map<String, int> toJson() => {'start': start, 'end': end, 'mask': mask};
+}
+
+/// Paragraph-sized annotation indexes. Plain paragraphs do not need one, and a
+/// vertical layout shares this data across its lazily materialized pages.
+class ReaderRichParagraphIndex {
+  ReaderRichParagraphIndex(ReaderRichParagraph paragraph)
+    : _emphasis = _ReaderEmphasisIndex(paragraph.emphasis),
+      _ruby = _ReaderRangeIndex([
+        for (final ruby in paragraph.ruby)
+          (ruby.start, ruby.end, _ReaderRubyParts(ruby)),
+      ]),
+      _references = _ReaderRangeIndex([
+        for (final note in paragraph.references)
+          (note.start, note.end, note.id),
+      ]);
+
+  final _ReaderEmphasisIndex _emphasis;
+  final _ReaderRangeIndex<_ReaderRubyParts> _ruby;
+  final _ReaderRangeIndex<String> _references;
+
+  int emphasisAt(int offset) => _emphasis.at(offset);
+
+  String rubyAt(int start, int end) =>
+      _ruby.overlapping(start, end).map((ruby) => ruby.part(start, end)).join();
+
+  String? noteAt(int start, int end) =>
+      _references.firstOverlapping(start, end);
+
+  @visibleForTesting
+  int get debugRangeVisits => _ruby.debugVisits + _references.debugVisits;
+  @visibleForTesting
+  int get debugEmphasisComparisons => _emphasis.debugComparisons;
+}
+
+class _ReaderEmphasisIndex {
+  _ReaderEmphasisIndex(List<ReaderEmphasis> runs) {
+    final events = <(int, int, int)>[
+      for (final run in runs)
+        if (run.start < run.end) ...[
+          (run.start, run.mask, 1),
+          (run.end, run.mask, -1),
+        ],
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+    final active = <int, int>{};
+    var i = 0, mask = 0;
+    while (i < events.length) {
+      final offset = events[i].$1;
+      do {
+        final (_, flag, change) = events[i++];
+        final count = (active[flag] ?? 0) + change;
+        if (count == 0) {
+          active.remove(flag);
+        } else {
+          active[flag] = count;
+        }
+      } while (i < events.length && events[i].$1 == offset);
+      // EPUB has three flags (eight possible masks). Count complete masks so
+      // ending one overlapping run never clears a flag still used by another.
+      var next = 0;
+      for (final flag in active.keys) {
+        next |= flag;
+      }
+      if (next != mask) {
+        _offsets.add(offset);
+        _masks.add(next);
+        mask = next;
+      }
+    }
+  }
+
+  final _offsets = <int>[], _masks = <int>[];
+  int debugComparisons = 0;
+
+  int at(int offset) {
+    var low = 0, high = _offsets.length;
+    while (low < high) {
+      assert(() {
+        debugComparisons++;
+        return true;
+      }());
+      final middle = (low + high) ~/ 2;
+      if (_offsets[middle] <= offset) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return low == 0 ? 0 : _masks[low - 1];
+  }
+}
+
+/// A balanced interval index skips whole subtrees that cannot overlap a glyph.
+/// Results retain source order, including overlapping ruby and note references.
+class _ReaderRangeIndex<T> {
+  _ReaderRangeIndex(List<(int, int, T)> ranges)
+    : _ranges =
+          [
+            for (var i = 0; i < ranges.length; i++)
+              (ranges[i].$1, ranges[i].$2, i, ranges[i].$3),
+          ]..sort((a, b) {
+            final start = a.$1.compareTo(b.$1);
+            return start == 0 ? a.$3.compareTo(b.$3) : start;
+          }),
+      _maxEnd = List.filled(ranges.length, 0),
+      _minOrder = List.filled(ranges.length, 0) {
+    _measure(0, _ranges.length);
+  }
+
+  final List<(int, int, int, T)> _ranges;
+  final List<int> _maxEnd, _minOrder;
+  int debugVisits = 0;
+
+  (int, int)? _measure(int first, int end) {
+    if (first == end) return null;
+    final middle = (first + end) ~/ 2;
+    var maximum = _ranges[middle].$2;
+    var order = _ranges[middle].$3;
+    final left = _measure(first, middle);
+    final right = _measure(middle + 1, end);
+    if (left != null) {
+      if (left.$1 > maximum) maximum = left.$1;
+      if (left.$2 < order) order = left.$2;
+    }
+    if (right != null) {
+      if (right.$1 > maximum) maximum = right.$1;
+      if (right.$2 < order) order = right.$2;
+    }
+    _maxEnd[middle] = maximum;
+    _minOrder[middle] = order;
+    return (maximum, order);
+  }
+
+  T? firstOverlapping(int start, int end) {
+    var bestOrder = _ranges.length;
+    T? found;
+    void visit(int first, int last) {
+      if (first == last) return;
+      final middle = (first + last) ~/ 2;
+      assert(() {
+        debugVisits++;
+        return true;
+      }());
+      if (_maxEnd[middle] <= start || _minOrder[middle] >= bestOrder) return;
+      final range = _ranges[middle];
+      if (range.$1 < end && range.$2 > start && range.$3 < bestOrder) {
+        bestOrder = range.$3;
+        found = range.$4;
+      }
+      // Find the earliest source reference first; overlapping notes do not
+      // require collecting or sorting every match just to use the first one.
+      final leftOrder = first == middle
+          ? _ranges.length
+          : _minOrder[(first + middle) ~/ 2];
+      final rightOrder = middle + 1 == last || range.$1 >= end
+          ? _ranges.length
+          : _minOrder[(middle + 1 + last) ~/ 2];
+      if (leftOrder <= rightOrder) {
+        visit(first, middle);
+        if (range.$1 < end) visit(middle + 1, last);
+      } else {
+        visit(middle + 1, last);
+        visit(first, middle);
+      }
+    }
+
+    visit(0, _ranges.length);
+    return found;
+  }
+
+  List<T> overlapping(int start, int end) {
+    if (_ranges.isEmpty) return const [];
+    final found = <(int, int, int, T)>[];
+    void visit(int first, int last) {
+      if (first == last) return;
+      final middle = (first + last) ~/ 2;
+      assert(() {
+        debugVisits++;
+        return true;
+      }());
+      if (_maxEnd[middle] <= start) return;
+      final range = _ranges[middle];
+      visit(first, middle);
+      if (range.$1 >= end) return;
+      if (range.$2 > start) found.add(range);
+      visit(middle + 1, last);
+    }
+
+    visit(0, _ranges.length);
+    if (found.length > 1) found.sort((a, b) => a.$3.compareTo(b.$3));
+    return [for (final range in found) range.$4];
+  }
+}
+
+class _ReaderRubyParts {
+  _ReaderRubyParts(this.ruby) : letters = ruby.text.characters.toList();
+  final ReaderRuby ruby;
+  final List<String> letters;
+  String part(int start, int end) =>
+      ReaderRichParagraph._rubyPart(ruby, start, end, letters);
 }
 
 class ReaderRichParagraph {
@@ -126,12 +326,14 @@ class ReaderRichParagraph {
     required double lineHeight,
     required double width,
     required double defaultGap,
+    bool overrideGap = false,
   }) => spacing.gapBefore(
     previous?.spacing,
     font: font,
     lineHeight: lineHeight,
     width: width,
     defaultGap: defaultGap,
+    overrideGap: overrideGap,
   );
   bool get allowsIndent =>
       !const {'center', 'right', 'end'}.contains(alignment);
@@ -166,6 +368,7 @@ class ReaderRichParagraph {
         );
   List<InlineSpan> spans(String text) {
     if (emphasis.isEmpty) return [TextSpan(text: text)];
+    final indexed = _ReaderEmphasisIndex(emphasis);
     final boundaries = <int>{
       0,
       text.length,
@@ -178,7 +381,7 @@ class ReaderRichParagraph {
       for (var i = 0; i < boundaries.length - 1; i++)
         TextSpan(
           text: text.substring(boundaries[i], boundaries[i + 1]),
-          style: emphasized(const TextStyle(), emphasisAt(boundaries[i])),
+          style: emphasized(const TextStyle(), indexed.at(boundaries[i])),
         ),
     ];
   }
@@ -267,6 +470,15 @@ class ReaderRichParagraph {
   );
   static String rubyPart(ReaderRuby ruby, int start, int end) {
     final letters = ruby.text.characters.toList();
+    return _rubyPart(ruby, start, end, letters);
+  }
+
+  static String _rubyPart(
+    ReaderRuby ruby,
+    int start,
+    int end,
+    List<String> letters,
+  ) {
     final a =
         (((start - ruby.start).clamp(0, ruby.end - ruby.start)) /
                 (ruby.end - ruby.start) *

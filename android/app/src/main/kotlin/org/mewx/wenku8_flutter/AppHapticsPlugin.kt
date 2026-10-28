@@ -46,14 +46,32 @@ internal object AppHapticPolicy {
         "error" -> if (sdk >= 30) HapticFeedbackConstants.REJECT else HapticFeedbackConstants.VIRTUAL_KEY
         else -> null
     }
+
+    /** Amplitude is the only honest strength distinction on OEMs that expose it. */
+    fun amplitude(strength: String): Int = when (strength) {
+        "light" -> 70
+        "strong" -> 220
+        else -> 140
+    }
+
+    fun timings(cue: String, strength: String): LongArray =
+        pulses(cue, strength).flatMap { listOf(it.delayMs.toLong(), 18L) }.toLongArray()
+
+    fun amplitudes(cue: String, strength: String, adjustable: Boolean): IntArray =
+        pulses(cue, "standard").flatMap {
+            listOf(0, if (adjustable) (amplitude(strength) * it.scale).toInt().coerceIn(1, 255) else -1)
+        }.toIntArray()
+
+    /** One accepted route: never double-play a successful system preset. */
+    fun dispatch(adjustable: Boolean, preset: () -> Boolean, waveform: () -> Boolean): Boolean =
+        if (adjustable) waveform() else preset() || waveform()
 }
 
-/** Standard retains OEM presets; adjustable transients respect system touch settings. */
+/** Adjustable transients and unsupported-preset recovery respect touch settings. */
 class AppHapticsPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandler {
     private var channel: MethodChannel? = null
     private var activity: Activity? = null
     private var vibrator: Vibrator? = null
-    private var supportedPrimitives: Set<Int>? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(binding.binaryMessenger, "org.mewx.wenku8_flutter/haptics").also {
@@ -62,6 +80,18 @@ class AppHapticsPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "capabilities") {
+            val owner = activity
+            val motor = owner?.let { motor(it) }
+            result.success(mapOf(
+                "hasVibrator" to (motor?.hasVibrator() == true),
+                "hasAmplitudeControl" to (Build.VERSION.SDK_INT >= 26 && motor?.hasAmplitudeControl() == true),
+                "sdk" to Build.VERSION.SDK_INT,
+                "hapticFeedbackEnabled" to if (owner?.window?.decorView?.isHapticFeedbackEnabled != true)
+                    false else legacyTouchFeedbackEnabled(owner),
+            ))
+            return
+        }
         if (call.method != "play") { result.notImplemented(); return }
         val options = call.arguments as? Map<*, *>
         val cue = (options?.get("cue") ?: call.arguments) as? String ?: ""
@@ -75,53 +105,61 @@ class AppHapticsPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
             !view.isHapticFeedbackEnabled) {
             result.success(false); return
         }
-        if (strength == "standard" || Build.VERSION.SDK_INT < 31) {
-            result.success(view.performHapticFeedback(feedback)); return
-        }
         try {
-            val motor = vibrator ?: owner.getSystemService(VibratorManager::class.java)
-                ?.defaultVibrator?.also { vibrator = it }
-            val supported = supportedPrimitives ?: setOf(
-                VibrationEffect.Composition.PRIMITIVE_TICK,
-                VibrationEffect.Composition.PRIMITIVE_CLICK,
-            ).filter { motor?.areAllPrimitivesSupported(it) == true }
-                .toSet().also { supportedPrimitives = it }
-            val tick = VibrationEffect.Composition.PRIMITIVE_TICK
-            val click = VibrationEffect.Composition.PRIMITIVE_CLICK
-            val primitive = when {
-                cue in setOf("shelfStep", "selection", "detent") && tick in supported -> tick
-                click in supported -> click
-                else -> null
-            }
-            if (motor == null || primitive == null) {
-                // Choose the fallback before playback; false must never cause a second pulse.
-                result.success(view.performHapticFeedback(feedback)); return
-            }
-            @Suppress("DEPRECATION")
-            if (Build.VERSION.SDK_INT < 33 && Settings.System.getInt(
-                    owner.contentResolver, Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) == 0) {
+            if (legacyTouchFeedbackEnabled(owner) == false) {
                 result.success(false); return
             }
-            val composition = VibrationEffect.startComposition()
-            for (pulse in AppHapticPolicy.pulses(cue, strength)) {
-                composition.addPrimitive(primitive, pulse.scale, pulse.delayMs)
-            }
-            val effect = composition.compose()
-            if (Build.VERSION.SDK_INT >= 33) {
-                motor.vibrate(effect, VibrationAttributes.Builder()
-                    .setUsage(VibrationAttributes.USAGE_TOUCH).build())
-            } else {
-                @Suppress("DEPRECATION")
-                motor.vibrate(effect, AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-            }
-            result.success(true)
+            val motor = motor(owner)
+            val adjustable = Build.VERSION.SDK_INT >= 26 && motor?.hasAmplitudeControl() == true
+            result.success(AppHapticPolicy.dispatch(
+                adjustable = adjustable,
+                preset = { view.performHapticFeedback(feedback) },
+                waveform = {
+                    if (motor == null || !motor.hasVibrator()) false
+                    else {
+                        val timings = AppHapticPolicy.timings(cue, strength)
+                        if (Build.VERSION.SDK_INT < 26) {
+                            @Suppress("DEPRECATION")
+                            motor.vibrate(timings, -1)
+                        } else {
+                            val effect = VibrationEffect.createWaveform(
+                                timings, AppHapticPolicy.amplitudes(cue, strength, adjustable), -1)
+                            if (Build.VERSION.SDK_INT >= 33) {
+                                // USAGE_TOUCH applies the platform's current feedback setting.
+                                motor.vibrate(effect, VibrationAttributes.Builder()
+                                    .setUsage(VibrationAttributes.USAGE_TOUCH).build())
+                            } else {
+                                @Suppress("DEPRECATION")
+                                motor.vibrate(effect, AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                            }
+                        }
+                        true
+                    }
+                }
+            ))
         } catch (_: RuntimeException) {
             // Optional feedback must not interrupt the accepted action or double-play.
             result.success(false)
         }
     }
+
+    private fun motor(owner: Activity): Vibrator? {
+        if (vibrator == null) {
+            vibrator = if (Build.VERSION.SDK_INT >= 31)
+                owner.getSystemService(VibratorManager::class.java)?.defaultVibrator
+            else owner.getSystemService(Vibrator::class.java)
+        }
+        return vibrator
+    }
+
+    // This setting was replaced by USAGE_TOUCH in API 33; do not report its
+    // obsolete value as the current system state on newer Android versions.
+    @Suppress("DEPRECATION")
+    private fun legacyTouchFeedbackEnabled(owner: Activity): Boolean? =
+        if (Build.VERSION.SDK_INT >= 33) null else Settings.System.getInt(
+            owner.contentResolver, Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) != 0
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel?.setMethodCallHandler(null)
@@ -134,6 +172,5 @@ class AppHapticsPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
     private fun detachActivity() {
         activity = null
         vibrator = null
-        supportedPrimitives = null
     }
 }

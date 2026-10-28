@@ -6,6 +6,7 @@ import 'app_ui.dart';
 import 'catalog.dart';
 import 'feature_pages.dart';
 import 'local_image_layout.dart';
+import 'reader_appearance.dart';
 import 'reader_content.dart';
 import 'reader_illustrations.dart';
 
@@ -132,12 +133,16 @@ class _ReaderVolumeIllustrationsPageState
 
   Future<void> _open(String url) => pushNovelPage<void>(
     context,
-    ReaderIllustrationGallery(
-      urls: _urls,
-      initialUrl: url,
-      title: '本卷插图',
-      fileNamePrefix: widget.novel.title,
+    ReaderAppearance.inherit(
+      context,
+      child: ReaderIllustrationGallery(
+        urls: _urls,
+        initialUrl: url,
+        title: '本卷插图',
+        fileNamePrefix: widget.novel.title,
+      ),
     ),
+    slot: ReaderIllustrationGallery,
     reduceMotion: widget.reduceMotion,
   );
 

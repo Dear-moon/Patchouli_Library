@@ -1,0 +1,2 @@
+// WidgetKit stays independent of Flutter/Pods linking, but shares app versions.
+#include? "../Flutter/Generated.xcconfig"

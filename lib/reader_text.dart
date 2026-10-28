@@ -5,10 +5,14 @@ import 'package:flutter/widgets.dart';
 const readerIndentLength = 1;
 const readerIndentPlaceholder = '\ufffc';
 
+/// Builds source text with geometry-only indentation and optional continuation.
+/// A continuation occupies the clipped next line, so a page edge is not treated
+/// as a paragraph ending by justification; it never enters copied source text.
 TextSpan readerParagraphSpan({
   required List<InlineSpan> children,
   required TextStyle style,
   required bool indent,
+  double? continuationWidth,
 }) => TextSpan(
   style: style,
   children: [
@@ -22,6 +26,16 @@ TextSpan readerParagraphSpan({
         ),
       ),
     ...children,
+    if (continuationWidth != null)
+      WidgetSpan(
+        child: ExcludeSemantics(
+          child: SelectionContainer.disabled(
+            // A geometry-only next line keeps a page break a soft wrap. It
+            // contributes no selectable text and is clipped by the fragment.
+            child: SizedBox(width: continuationWidth, height: 0),
+          ),
+        ),
+      ),
   ],
 );
 

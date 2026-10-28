@@ -65,17 +65,24 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final label = Row(
-      children: [
-        ArchiveIcon(widget.icon, size: 21),
-        const SizedBox(width: 12),
-        Expanded(
-          child: AppText(
-            widget.label,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    final label = ArchivePart(
+      start: .18,
+      end: .84,
+      child: Row(
+        children: [
+          ArchiveIcon(widget.icon, size: 21),
+          const SizedBox(width: 12),
+          Expanded(
+            child: AppText(
+              widget.label,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
     final selector = GlassMenuAnchor(
       child: Builder(
@@ -86,20 +93,25 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
           semanticLabel: widget.semanticLabel ?? '选择${widget.label}',
           onTap: _saving ? null : _open,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: AppText(
-                  widget.options[widget.value] ?? '',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13),
+          child: ArchivePart(
+            start: .24,
+            end: .88,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: AppText(
+                    widget.options[widget.value] ?? '',
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 7),
-              const ArchiveIcon(CupertinoIcons.chevron_down, size: 14),
-            ],
+                const SizedBox(width: 7),
+                const ArchiveIcon(CupertinoIcons.chevron_down, size: 14),
+              ],
+            ),
           ),
         ),
       ),
@@ -122,11 +134,13 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
                   children: [
                     Expanded(child: label),
                     const SizedBox(width: 12),
-                    Flexible(
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: selector,
+                    // Short values use only their natural width instead of
+                    // reserving two thirds of the row and wrapping its label.
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: constraints.maxWidth * .55,
                       ),
+                      child: selector,
                     ),
                   ],
                 );

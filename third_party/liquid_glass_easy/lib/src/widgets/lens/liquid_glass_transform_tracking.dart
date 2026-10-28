@@ -11,6 +11,7 @@ class LiquidGlassSceneGeometry {
       _scenes[builder] ??= LiquidGlassSceneGeometry._();
   final _surfaces = <RenderObject, RenderObject?>{};
   final _transforms = <RenderObject?, Map<RenderObject, Matrix4>>{};
+  final _layerClips = <Layer?, Map<Layer, LiquidGlassLayerClip>>{};
 
   RenderObject? surfaceFor(RenderObject from) =>
       from.parent == null ? null : _surfaceFrom(from.parent!);
@@ -44,6 +45,33 @@ class LiquidGlassSceneGeometry {
     final result = transformFor(parent, target).clone();
     parent.applyPaintTransform(from, result);
     return cache[from] = result;
+  }
+
+  /// Resolves the actual layer clips once per shared ancestor in this scene.
+  /// The cache ends with the SceneBuilder: retained layers may move, change
+  /// clips or enter a filtered subpass in the very next frame.
+  LiquidGlassLayerClip ancestorClipFor(Layer from, {Layer? until}) {
+    final cache = _layerClips.putIfAbsent(until, () => {});
+    final known = cache[from];
+    if (known != null) return known;
+    final parent = from.parent;
+    if (parent == null || identical(parent, until) || parent.parent == null) {
+      // Root coordinates are logical pixels, below its device-pixel transform.
+      return cache[from] = LiquidGlassLayerClip(
+        clip: null,
+        toTop: Matrix4.identity(),
+      );
+    }
+    final above = ancestorClipFor(parent, until: until);
+    final toTop = above.toTop.clone();
+    final own = liquidGlassLayerClipBounds(parent);
+    var clip = above.clip;
+    if (own != null) {
+      final inTop = MatrixUtils.transformRect(toTop, own);
+      clip = clip == null ? inTop : clip.intersect(inTop);
+    }
+    parent.applyTransform(from, toTop);
+    return cache[from] = LiquidGlassLayerClip(clip: clip, toTop: toTop);
   }
 }
 

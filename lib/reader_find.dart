@@ -11,6 +11,8 @@ import 'app_search_field.dart';
 import 'reader_content.dart';
 import 'reader_rich_content.dart';
 import 'reader_annotations.dart';
+import 'reader_underline.dart';
+import 'reader_mark_style.dart';
 
 class ReaderMatch {
   const ReaderMatch(this.paragraph, this.start, this.end, {this.chapter});
@@ -64,9 +66,15 @@ Future<ReaderFindResult> findInReader(
 }
 
 class ReaderFindPanel extends StatefulWidget {
-  const ReaderFindPanel({super.key, required this.content, this.onBookSearch});
+  const ReaderFindPanel({
+    super.key,
+    required this.content,
+    this.onBookSearch,
+    this.embedded = false,
+  });
   final ReaderContent content;
   final VoidCallback? onBookSearch;
+  final bool embedded;
   @override
   State<ReaderFindPanel> createState() => _ReaderFindPanelState();
 }
@@ -126,31 +134,32 @@ class _ReaderFindPanelState extends State<ReaderFindPanel> {
       key: const ValueKey('reader-find-scroll'),
       primary: false,
       slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 14, 8),
-          sliver: SliverToBoxAdapter(
-            child: Row(
-              children: [
-                const Expanded(
-                  child: ArchiveSection(
-                    title: '章内查找',
-                    code: 'READER / TEXT QUERY',
+        if (!widget.embedded)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 14, 8),
+            sliver: SliverToBoxAdapter(
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: ArchiveSection(
+                      title: '章内查找',
+                      code: 'READER / TEXT QUERY',
+                    ),
                   ),
-                ),
-                if (widget.onBookSearch != null)
-                  GlassTextButton(
-                    onPressed: widget.onBookSearch,
-                    child: const AppText('整书查找'),
+                  if (widget.onBookSearch != null)
+                    GlassTextButton(
+                      onPressed: widget.onBookSearch,
+                      child: const AppText('整书查找'),
+                    ),
+                  GlassIconButton(
+                    icon: CupertinoIcons.xmark,
+                    label: '关闭章内查找',
+                    onPressed: () => Navigator.pop(context),
                   ),
-                GlassIconButton(
-                  icon: CupertinoIcons.xmark,
-                  label: '关闭章内查找',
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
           sliver: SliverToBoxAdapter(
@@ -268,6 +277,10 @@ class ReaderHighlightText extends StatelessWidget {
     this.format,
     this.onNote,
     this.chapter,
+    this.underlineChanges,
+    this.underlines,
+    this.annotations,
+    this.continuesParagraph = false,
   });
   final int index;
   final int? chapter;
@@ -279,6 +292,12 @@ class ReaderHighlightText extends StatelessWidget {
   final int sourceStart;
   final ReaderRichParagraph? format;
   final ValueChanged<String>? onNote;
+  final Listenable? underlineChanges;
+  final List<TextRange> Function()? underlines;
+  final List<ReaderTextMark> Function()? annotations;
+
+  /// A paginated slice ends before its source paragraph's real final line.
+  final bool continuesParagraph;
   Widget _annotate(BuildContext context, Widget text) => format == null
       ? text
       : ReaderAnnotations(
@@ -291,71 +310,138 @@ class ReaderHighlightText extends StatelessWidget {
           onNote: onNote ?? (_) {},
           child: text,
         );
+
+  Widget _paragraph(BuildContext context, List<InlineSpan> children) {
+    final effectiveStyle = format?.textStyle(style) ?? style;
+    final alignment = format?.textAlign(textAlign) ?? textAlign;
+    Widget text({double? continuationWidth}) => Text.rich(
+      readerParagraphSpan(
+        children: children,
+        style: effectiveStyle,
+        indent: indent,
+        continuationWidth: continuationWidth,
+      ),
+      key: ValueKey('paragraph-$index'),
+      style: effectiveStyle,
+      textAlign: alignment,
+      overflow: continuesParagraph && alignment == TextAlign.justify
+          ? TextOverflow.clip
+          : null,
+    );
+    return _annotate(
+      context,
+      continuesParagraph && alignment == TextAlign.justify
+          ? LayoutBuilder(
+              builder: (context, constraints) =>
+                  text(continuationWidth: constraints.maxWidth),
+            )
+          : text(),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<ReaderMatch?>(
-    valueListenable: match,
-    builder: (context, selected, _) {
-      if (selected == null ||
-          (selected.chapter != null &&
-              chapter != null &&
-              selected.chapter != chapter) ||
-          selected.paragraph != index ||
-          selected.end <= sourceStart ||
-          selected.start >= sourceStart + text.length) {
-        return _annotate(
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: Listenable.merge([match, ?underlineChanges]),
+    builder: (context, _) {
+      final selected = match.value;
+      final marked =
+          (annotations?.call() ??
+                  [
+                    for (final range
+                        in underlines?.call() ?? const <TextRange>[])
+                      ReaderTextMark(
+                        range.start,
+                        range.end,
+                        ReaderMarkStyle.underline,
+                        ReaderMarkColor.ink,
+                      ),
+                  ])
+              .where((mark) => mark.style != ReaderMarkStyle.none)
+              .toList();
+      final matching =
+          selected != null &&
+          (selected.chapter == null ||
+              chapter == null ||
+              selected.chapter == chapter) &&
+          selected.paragraph == index &&
+          selected.end > sourceStart &&
+          selected.start < sourceStart + text.length;
+      if (!matching && marked.isEmpty) {
+        return _paragraph(
           context,
-          Text.rich(
-            readerParagraphSpan(
-              children: format?.spans(text) ?? [TextSpan(text: text)],
-              style: format?.textStyle(style) ?? style,
-              indent: indent,
+          format?.spans(text) ?? [TextSpan(text: text)],
+        );
+      }
+      final matchStart = matching
+          ? (selected.start - sourceStart).clamp(0, text.length)
+          : 0;
+      final matchEnd = matching
+          ? (selected.end - sourceStart).clamp(matchStart, text.length)
+          : 0;
+      final points = <int>{
+        0,
+        text.length,
+        if (matching) ...[matchStart, matchEnd],
+      };
+      for (final range in marked) {
+        points.add(range.start.clamp(0, text.length));
+        points.add(range.end.clamp(0, text.length));
+      }
+      final boundaries = points.toList()..sort();
+      final spans = <InlineSpan>[];
+      for (var i = 0; i + 1 < boundaries.length; i++) {
+        final start = boundaries[i], end = boundaries[i + 1];
+        if (end <= start) continue;
+        final highlighted = matching && start < matchEnd && end > matchStart;
+        final covering = marked.where(
+          (range) => start < range.end && end > range.start,
+        );
+        final underline = covering
+            .where((range) => range.style == ReaderMarkStyle.underline)
+            .firstOrNull;
+        final highlight = covering
+            .where((range) => range.style == ReaderMarkStyle.highlight)
+            .firstOrNull;
+        final ink = style.color ?? Theme.of(context).colorScheme.onSurface;
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        spans.add(
+          TextSpan(
+            children:
+                format?.slice(start, end).spans(text.substring(start, end)) ??
+                [TextSpan(text: text.substring(start, end))],
+            style: TextStyle(
+              backgroundColor: highlighted
+                  ? Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: .14)
+                  : highlight == null
+                  ? null
+                  : readerMarkTint(highlight.color, ink, dark: dark),
+              decoration: underline != null ? TextDecoration.underline : null,
+              decorationColor: underline != null
+                  ? readerMarkInk(underline.color, ink, dark: dark).withValues(
+                      alpha: underline.color == ReaderMarkColor.ink ? .8 : .9,
+                    )
+                  : null,
+              decorationThickness: underline != null ? 1.3 : null,
             ),
-            key: ValueKey('paragraph-$index'),
-            style: format?.textStyle(style) ?? style,
-            textAlign: format?.textAlign(textAlign) ?? textAlign,
           ),
         );
       }
-      final start = (selected.start - sourceStart).clamp(0, text.length);
-      final end = (selected.end - sourceStart).clamp(start, text.length);
-      return _annotate(
-        context,
-        Text.rich(
-          readerParagraphSpan(
-            style: format?.textStyle(style) ?? style,
-            indent: indent,
-            children: [
-              TextSpan(
-                children:
-                    format?.slice(0, start).spans(text.substring(0, start)) ??
-                    [TextSpan(text: text.substring(0, start))],
-              ),
-              TextSpan(
-                children:
-                    format
-                        ?.slice(start, end)
-                        .spans(text.substring(start, end)) ??
-                    [TextSpan(text: text.substring(start, end))],
-                style: TextStyle(
-                  backgroundColor: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: .14),
-                ),
-              ),
-              TextSpan(
-                children:
-                    format
-                        ?.slice(end, text.length)
-                        .spans(text.substring(end)) ??
-                    [TextSpan(text: text.substring(end))],
-              ),
-            ],
-          ),
-          key: ValueKey('paragraph-$index'),
-          style: format?.textStyle(style) ?? style,
-          textAlign: format?.textAlign(textAlign) ?? textAlign,
-        ),
-      );
+      final paragraph = _paragraph(context, spans);
+      final outlines = marked
+          .where((mark) => mark.style == ReaderMarkStyle.outline)
+          .toList();
+      return outlines.isEmpty
+          ? paragraph
+          : ReaderAnnotationOutlines(
+              marks: outlines,
+              foreground:
+                  style.color ?? Theme.of(context).colorScheme.onSurface,
+              dark: Theme.of(context).brightness == Brightness.dark,
+              prefix: indent ? readerIndentLength : 0,
+              child: paragraph,
+            );
     },
   );
 }

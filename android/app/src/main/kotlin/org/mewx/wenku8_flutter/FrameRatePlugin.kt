@@ -6,6 +6,7 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.view.Display
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -36,12 +37,42 @@ class FrameRatePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
     @Suppress("DEPRECATION")
     private fun display(): Display = activity?.let { if (Build.VERSION.SDK_INT >= 30) it.display else it.windowManager.defaultDisplay } ?: error("请在文库页面调整帧率")
     private fun mode(value: Display.Mode) = RefreshRatePolicy.Mode(value.modeId, value.physicalWidth, value.physicalHeight, value.refreshRate)
-    private fun info(): Map<String, Any> {
+    private fun info(): Map<String, Any?> {
         val display = display()
-        return mapOf("target" to context.getSharedPreferences("frame_rate_settings", 0).getFloat("target", 0f).toDouble(),
-            "current" to display.mode.refreshRate.toDouble(),
-            "rates" to RefreshRatePolicy.rates(mode(display.mode), display.supportedModes.map(::mode)).map { it.toDouble() })
+        val current = mode(display.mode)
+        val modes = display.supportedModes.map(::mode)
+        val target = context.getSharedPreferences("frame_rate_settings", 0).getFloat("target", 0f)
+        val selected = RefreshRatePolicy.select(Build.VERSION.SDK_INT, current, modes, target)
+        val window = activity?.window ?: error("请在文库页面调整帧率")
+        val attrs = window.attributes
+        val requested = modes.firstOrNull { it.id == attrs.preferredDisplayModeId }?.rate
+            ?: attrs.preferredRefreshRate
+        val status = (activity as? ReaderActivity)?.frameRateStatus()
+        val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        // Intent, submitted votes, and the display mode reported to this app are
+        // different facts. OEM overrides may also differ from the physical mode.
+        return mapOf("target" to target.toDouble(),
+            "current" to display.refreshRate.toDouble(),
+            "currentModeId" to current.id,
+            "currentModeRate" to current.rate.toDouble(),
+            "selectedModeId" to (selected?.modeId ?: 0),
+            "selectedRate" to (selected?.rate ?: 0f).toDouble(),
+            "requestStatusAvailable" to (status != null),
+            "requestedModeId" to attrs.preferredDisplayModeId,
+            "requestedRate" to requested.toDouble(),
+            "controllerActive" to status?.active,
+            "windowFocused" to window.decorView.hasWindowFocus(),
+            "surfaceCount" to status?.surfaceCount,
+            "submittedSurfaceCount" to status?.submittedSurfaceCount,
+            "surfaceRequestedRate" to status?.surfaceRate?.toDouble(),
+            "surfaceRequestState" to status?.surfaceState,
+            "surfaceRequestError" to status?.surfaceError,
+            "viewRequestedRate" to status?.viewRate?.toDouble(),
+            "powerSaveMode" to power.isPowerSaveMode,
+            "thermalStatus" to if (Build.VERSION.SDK_INT >= 29) power.currentThermalStatus else null,
+            "rates" to RefreshRatePolicy.rates(current, modes).map { it.toDouble() })
     }
+    internal fun onRequestChanged() { if (activity != null) channel.invokeMethod("changed", null) }
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {

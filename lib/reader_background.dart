@@ -59,6 +59,9 @@ class _ReaderBackgroundState extends State<ReaderBackground> {
                 key: const ValueKey('reader-background-layer'),
                 child: FutureBuilder<File?>(
                   future: _file,
+                  initialData: widget.store.resolvedFile(
+                    widget.preferences.backgroundImage,
+                  ),
                   builder: (context, snapshot) => AnimatedSwitcher(
                     duration: widget.reduceMotion
                         ? Duration.zero
@@ -74,7 +77,14 @@ class _ReaderBackgroundState extends State<ReaderBackground> {
                             height: double.infinity,
                             fit: widget.preferences.backgroundFit,
                             color: widget.paper.withValues(
-                              alpha: 1 - widget.preferences.backgroundOpacity,
+                              alpha:
+                                  widget.preferences.darkPaper(
+                                    Theme.of(context).brightness ==
+                                        Brightness.dark,
+                                  )
+                                  ? (1 - widget.preferences.backgroundOpacity)
+                                        .clamp(.55, 1.0)
+                                  : 1 - widget.preferences.backgroundOpacity,
                             ),
                             colorBlendMode: BlendMode.srcOver,
                             filterQuality: FilterQuality.low,

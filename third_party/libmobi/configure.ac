@@ -369,43 +369,6 @@ fi
 AC_SUBST([LIBZ_LDFLAGS])
 AC_SUBST([MINIZ_CFLAGS])
 
-# Check for md5 or md5sum program, needed for tests
-AC_ARG_VAR([MD5PROG], [md5 hashing program executable])
-AS_IF([test -z "$MD5PROG"], [AC_CHECK_PROG([MD5PROG], [md5sum], [md5sum -t])], [])
-AS_IF([test -z "$MD5PROG"], [AC_CHECK_PROG([MD5PROG], [md5], [md5 -r])], [])
-AS_IF([test -z "$MD5PROG"], [AC_MSG_WARN([md5 hashing program not found, some tests will be skipped])], [])
-AC_PATH_PROG([BASH_PATH], [bash])
-AS_IF(
-    [test -z "$BASH_PATH"],
-    [AC_MSG_WARN([bash not found, tests will be skipped])
-     RUN_TESTS="no"],
-    [RUN_TESTS="yes"
-     AC_SUBST([BASH_PATH])])
-AC_SUBST([RUN_TESTS])
-
-if test x$RUN_TESTS = xyes; then
-    # List test files
-    cur_dir=`pwd`
-    cd "$srcdir"/tests
-
-    for sample_path in samples/*.mobi
-    do
-        TESTLIST="${TESTLIST} ${sample_path} \\
-"
-    done
-    for sample_path in samples/*.fail
-    do
-        TESTLIST="${TESTLIST} ${sample_path} \\
-"
-        FAILLIST="${FAILLIST} ${sample_path} \\
-"
-    done
-    cd $cur_dir
-fi
-
-AC_SUBST([TESTLIST])
-AC_SUBST([FAILLIST])
-
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([libmobi.pc])
 AC_CONFIG_FILES([src/Makefile])
@@ -413,7 +376,5 @@ AC_CONFIG_FILES([tools/Makefile])
 AC_CONFIG_FILES([tools/mobitool.1])
 AC_CONFIG_FILES([tools/mobimeta.1])
 AC_CONFIG_FILES([tools/mobidrm.1])
-AC_CONFIG_FILES([tests/Makefile])
-AC_CONFIG_FILES([tests/test.sh], [chmod +x tests/test.sh])
 
 AC_OUTPUT

@@ -9,6 +9,7 @@ import 'app_palette.dart';
 import 'archive_shelf_geometry.dart';
 import 'archive_shelf_loading.dart';
 import 'book_collection_layout.dart';
+import 'book_grid_density.dart';
 import 'performance_preferences.dart';
 
 enum SkeletonLayout {
@@ -292,10 +293,18 @@ class _SkeletonPainter extends CustomPainter {
       dark != oldDelegate.dark;
 }
 
+/// Keeps the loading collection aligned with the selected library layout.
 class LibrarySkeleton extends StatelessWidget {
-  const LibrarySkeleton({super.key, this.header, this.featured = true});
+  const LibrarySkeleton({
+    super.key,
+    this.header,
+    this.featured = true,
+    this.grid = false,
+    this.gridDensity = const BookGridDensity.auto(),
+  });
   final Widget? header;
-  final bool featured;
+  final bool featured, grid;
+  final BookGridDensity gridDensity;
   @override
   Widget build(BuildContext context) => Semantics(
     label: '正在翻开文库',
@@ -326,7 +335,7 @@ class LibrarySkeleton extends StatelessWidget {
             child: LoadingSkeleton(layout: SkeletonLayout.actions),
           ),
           const SizedBox(height: 8),
-          const BookCollectionSkeleton(),
+          BookCollectionSkeleton(grid: grid, gridDensity: gridDensity),
         ],
       ),
     ),
@@ -573,33 +582,66 @@ class SearchSkeleton extends StatelessWidget {
   );
 }
 
+/// Uses the arriving collection's cover geometry instead of an automatic grid.
 class BookCollectionSkeleton extends StatelessWidget {
   const BookCollectionSkeleton({
     super.key,
     this.rows = 3,
     this.label = '正在载入书籍',
+    this.grid = false,
+    this.gridDensity = const BookGridDensity.auto(),
   });
   final int rows;
   final String label;
+  final bool grid;
+  final BookGridDensity gridDensity;
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final columns = BookCollectionLayout.columnsFor(constraints.maxWidth);
-      return Column(
+      final geometry = grid && !gridDensity.automatic
+          ? BookGridViewport(
+              width: constraints.maxWidth,
+              height: MediaQuery.sizeOf(context).height,
+              textScaler: MediaQuery.textScalerOf(context),
+            ).resolve(gridDensity)
+          : null;
+      final columns = grid
+          ? geometry?.columns ??
+                BookCollectionLayout.gridColumnsFor(constraints.maxWidth)
+          : BookCollectionLayout.columnsFor(constraints.maxWidth);
+      final gap = grid
+          ? BookCollectionLayout.gridGap
+          : BookCollectionLayout.gap;
+      final collection = Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           for (var row = 0; row < rows; row++)
-            Row(
-              children: [
-                for (var column = 0; column < columns; column++) ...[
-                  if (column != 0)
-                    const SizedBox(width: BookCollectionLayout.gap),
-                  Expanded(child: BookRowSkeleton(label: label)),
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: !grid
+                    ? 0
+                    : geometry?.fixed == true
+                    ? BookCollectionLayout.gridGap
+                    : BookCollectionLayout.gap,
+              ),
+              child: Row(
+                children: [
+                  for (var column = 0; column < columns; column++) ...[
+                    if (column != 0) SizedBox(width: gap),
+                    Expanded(
+                      child: grid
+                          ? BookGridSkeleton(label: label)
+                          : BookRowSkeleton(label: label),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
         ],
       );
+      return geometry?.fixed == true
+          ? BookGridScope(geometry: geometry!, child: collection)
+          : collection;
     },
   );
 }
@@ -657,4 +699,75 @@ class BookRowSkeleton extends StatelessWidget {
     width: double.infinity,
     child: LoadingSkeleton(layout: SkeletonLayout.bookRow, label: label),
   );
+}
+
+class BookGridSkeleton extends StatelessWidget {
+  const BookGridSkeleton({super.key, this.label = '正在载入书籍'});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final geometry = BookGridScope.of(context);
+    if (geometry?.fixed == true) {
+      return Semantics(
+        label: label,
+        child: ExcludeSemantics(
+          child: SizedBox(
+            height: geometry!.rowHeight,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: SizedBox(
+                    width: geometry.coverWidth,
+                    height: geometry.coverHeight,
+                    child: const LoadingSkeleton(layout: SkeletonLayout.cover),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                InlineSkeleton(height: geometry.viewport.titleHeight),
+                const SizedBox(height: 4),
+                InlineSkeleton(height: geometry.viewport.authorHeight),
+                const SizedBox(height: 4),
+                InlineSkeleton(height: geometry.viewport.progressHeight),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final coverHeight =
+            constraints.maxWidth / BookCollectionLayout.gridCoverAspectRatio;
+        final captionHeight = constraints.maxHeight - coverHeight;
+        return Semantics(
+          label: label,
+          liveRegion: true,
+          child: ExcludeSemantics(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: coverHeight,
+                  child: const LoadingSkeleton(layout: SkeletonLayout.cover),
+                ),
+                // Auto-layout cells reserve their own footer space. Keep the
+                // cover ratio and only draw captions that fit the actual cell.
+                if (captionHeight >= 28) ...[
+                  const SizedBox(height: 10),
+                  const InlineSkeleton(height: 18),
+                ],
+                if (captionHeight >= 48) ...[
+                  const SizedBox(height: 6),
+                  InlineSkeleton(width: constraints.maxWidth * .65, height: 14),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

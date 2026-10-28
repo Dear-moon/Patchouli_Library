@@ -15,6 +15,9 @@ import 'models.dart';
 import 'languages.dart';
 import 'custom_tts_page.dart';
 import 'system_tts_page.dart';
+import 'listening_speed_control.dart';
+import 'reader_target.dart';
+import 'enhancement_controls.dart';
 
 class ListeningScope extends InheritedWidget {
   const ListeningScope({
@@ -39,17 +42,26 @@ Future<void> showListeningPanel(
   Set<String> languages = const {},
   bool reduceMotion = false,
   Widget Function(Widget)? surfaceWrapper,
+  Future<void> Function(ListeningReaderTarget target)? onOpenReader,
 }) => showJellySheet<void>(
   context: context,
   reduceMotion: reduceMotion,
   heightFactor: .86,
   surfaceWrapper: surfaceWrapper,
-  builder: (_) => ListeningPanel(
+  builder: (sheetContext) => ListeningPanel(
     controller: controller,
     novel: novel,
     chapter: chapter,
     paragraph: paragraph,
     languages: languages,
+    onOpenReader: onOpenReader == null
+        ? null
+        : (target) async {
+            final route = ModalRoute.of(sheetContext);
+            Navigator.pop(sheetContext);
+            if (route != null) await route.completed;
+            if (context.mounted) await onOpenReader(target);
+          },
   ),
 );
 
@@ -62,12 +74,14 @@ class ListeningPanel extends StatefulWidget {
     this.paragraph = 0,
     this.embedded = false,
     this.languages = const {},
+    this.onOpenReader,
   });
   final ListeningController controller;
   final Novel novel;
   final int chapter, paragraph;
   final bool embedded;
   final Set<String> languages;
+  final Future<void> Function(ListeningReaderTarget target)? onOpenReader;
   @override
   State<ListeningPanel> createState() => _ListeningPanelState();
 }
@@ -75,6 +89,17 @@ class ListeningPanel extends StatefulWidget {
 const listeningGestureHint = '双击其他段落可快速跳转朗读；双击当前段落可暂停，再次双击继续播放。';
 
 class _ListeningPanelState extends State<ListeningPanel> {
+  bool _routeCurrent = true;
+  int _routeActivation = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final current = ModalRoute.isCurrentOf(context) != false;
+    if (current && !_routeCurrent) _routeActivation++;
+    _routeCurrent = current;
+  }
+
   Future<void> _systemEngine() async {
     final voice = await showJellySheet<SpeechVoice>(
       context: context,
@@ -144,13 +169,98 @@ class _ListeningPanelState extends State<ListeningPanel> {
     );
   }
 
+  Widget _bookEntry(ListeningSnapshot state) {
+    final live = state.active && state.novel != null;
+    final book = live ? state.novel! : widget.novel;
+    final canOpen =
+        widget.onOpenReader != null && live && state.current != null;
+    final secondary = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Semantics(
+      button: canOpen,
+      label: canOpen ? '打开正在听的小说' : null,
+      child: JellyTapSurface(
+        key: const ValueKey('listening-open-reader'),
+        onTap: canOpen
+            ? () => _act(() async {
+                final target = currentListeningReaderTarget(widget.controller);
+                if (target != null) await widget.onOpenReader!(target);
+              })
+            : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              ExcludeSemantics(
+                child: NovelCover(
+                  book,
+                  key: ValueKey((
+                    'listening-book-cover',
+                    book.id,
+                    book.coverUrl,
+                  )),
+                  width: 44,
+                  height: 60,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppText(
+                      book.title,
+                      key: const ValueKey('listening-book-title'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    AppText(
+                      live
+                          ? state.chapterTitle.isEmpty
+                                ? '第 ${state.chapter + 1} 章'
+                                : state.chapterTitle
+                          : '从第 ${widget.chapter + 1} 章当前段落开始',
+                      key: const ValueKey('listening-book-chapter'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.4,
+                        color: secondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (canOpen) ...[
+                const SizedBox(width: 10),
+                ArchiveIcon(
+                  CupertinoIcons.chevron_right,
+                  size: 16,
+                  color: secondary,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
     key: const ValueKey('listening-panel-scroll'),
     primary: false,
     padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-    child: ValueListenableBuilder<ListeningSnapshot>(
-      valueListenable: widget.controller.snapshot,
+    child: SelectedValueBuilder<ListeningSnapshot, ListeningSnapshot>(
+      listenable: widget.controller.snapshot,
+      select: (value) => value,
+      pauseWhenCovered: true,
       child: _preferences(),
       builder: (context, state, preferences) {
         final own = state.novel?.id == widget.novel.id;
@@ -177,11 +287,8 @@ class _ListeningPanelState extends State<ListeningPanel> {
               ),
               const SizedBox(height: 16),
             ],
-            AppText(
-              own && state.active ? state.novel!.title : widget.novel.title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
+            _bookEntry(state),
+            const SizedBox(height: 12),
             AppText(
               '当前音源 · ${switch (state.voice.source) {
                 ListeningSource.system => '系统引擎',
@@ -193,15 +300,21 @@ class _ListeningPanelState extends State<ListeningPanel> {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 6),
-            AppText(
-              own && state.current != null
-                  ? '第 ${state.chapter + 1} 章 · ${state.chapterTitle}'
-                  : '从第 ${widget.chapter + 1} 章当前段落开始',
-              style: const TextStyle(fontSize: 13),
-            ),
+            if (!own && state.active)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: AppText(
+                  '从《${widget.novel.title}》第 ${widget.chapter + 1} 章当前段落开始',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
             if (own && state.active)
-              _ListeningTransportStatus(phase: state.phase),
+              _ListeningTransportStatus(
+                phase: widget.controller.seeking
+                    ? ListeningPhase.preparing
+                    : state.phase,
+                seeking: widget.controller.seeking,
+              ),
             if (own && state.error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
@@ -273,6 +386,18 @@ class _ListeningPanelState extends State<ListeningPanel> {
                       : null,
                 ),
                 GlassIconButton(
+                  key: const ValueKey('listening-rewind-15'),
+                  icon: CupertinoIcons.gobackward_15,
+                  label: '后退15秒',
+                  onPressed: own && widget.controller.canSeek
+                      ? () => _act(
+                          () => widget.controller.seekBy(
+                            const Duration(seconds: -15),
+                          ),
+                        )
+                      : null,
+                ),
+                GlassIconButton(
                   key: const ValueKey('listening-play-pause'),
                   icon: own && (state.requestingPlayback)
                       ? CupertinoIcons.pause_fill
@@ -292,6 +417,18 @@ class _ListeningPanelState extends State<ListeningPanel> {
                         ),
                 ),
                 GlassIconButton(
+                  key: const ValueKey('listening-forward-15'),
+                  icon: CupertinoIcons.goforward_15,
+                  label: '前进15秒',
+                  onPressed: own && widget.controller.canSeek
+                      ? () => _act(
+                          () => widget.controller.seekBy(
+                            const Duration(seconds: 15),
+                          ),
+                        )
+                      : null,
+                ),
+                GlassIconButton(
                   icon: CupertinoIcons.forward_end,
                   label: '听下一段',
                   onPressed:
@@ -301,21 +438,21 @@ class _ListeningPanelState extends State<ListeningPanel> {
                       ? () => _act(() => widget.controller.moveParagraph(1))
                       : null,
                 ),
-                GlassIconButton(
-                  key: const ValueKey('listening-stop'),
-                  icon: CupertinoIcons.stop_fill,
-                  label: '停止听书',
-                  onPressed: state.active
-                      ? () => _act(widget.controller.stop)
-                      : null,
-                ),
               ],
             ),
             if (own && state.current != null)
-              ValueListenableBuilder<ListeningChapterProgress>(
-                valueListenable: widget.controller.chapterProgress,
+              SelectedValueBuilder<
+                ListeningChapterProgress,
+                ListeningChapterProgress
+              >(
+                listenable: widget.controller.chapterProgress,
+                select: (value) => value,
+                pauseWhenCovered: true,
                 builder: (context, progress, _) =>
                     TweenAnimationBuilder<double>(
+                      // Return at the current position instead of animating
+                      // through progress accumulated behind another page.
+                      key: ValueKey(('listening-progress', _routeActivation)),
                       tween: Tween(end: progress.fraction),
                       duration: MediaQuery.disableAnimationsOf(context)
                           ? Duration.zero
@@ -341,6 +478,7 @@ class _ListeningPanelState extends State<ListeningPanel> {
                 ({int position, int duration})
               >(
                 listenable: widget.controller.progress,
+                pauseWhenCovered: true,
                 select: (progress) => (
                   position: progress.position.inSeconds,
                   duration: progress.duration.inSeconds,
@@ -360,6 +498,13 @@ class _ListeningPanelState extends State<ListeningPanel> {
               alignment: WrapAlignment.spaceBetween,
               spacing: 8,
               children: [
+                GlassTextButton(
+                  key: const ValueKey('listening-stop'),
+                  onPressed: state.active
+                      ? () => _act(widget.controller.stop)
+                      : null,
+                  child: const AppText('停止听书'),
+                ),
                 GlassTextButton(
                   key: const ValueKey('listening-from-here'),
                   onPressed: () => _playUsingSource(
@@ -409,6 +554,7 @@ class _ListeningPanelState extends State<ListeningPanel> {
         ({
           SpeechVoice voice,
           double speed,
+          int paragraphGapMs,
           bool follow,
           DateTime? sleepUntil,
           bool sleepAfterChapter,
@@ -418,9 +564,11 @@ class _ListeningPanelState extends State<ListeningPanel> {
         })
       >(
         listenable: widget.controller.snapshot,
+        pauseWhenCovered: true,
         select: (state) => (
           voice: state.voice,
           speed: state.speed,
+          paragraphGapMs: state.paragraphGapMs,
           follow: state.follow,
           sleepUntil: state.sleepUntil,
           sleepAfterChapter: state.sleepAfterChapter,
@@ -489,17 +637,33 @@ class _ListeningPanelState extends State<ListeningPanel> {
                 ),
               ),
               const SizedBox(height: 18),
-              ReaderValueSlider(
-                sliderKey: const ValueKey('listening-speed'),
-                label: '语速',
+              ListeningSpeedControl(
                 value: state.speed,
-                min: listeningMinimumSpeed,
-                max: listeningMaximumSpeed,
-                divisions: 50,
-                format: (value) => '${value.toStringAsFixed(2)}×',
                 onCommitted: (value) =>
                     _act(() => widget.controller.setSpeed(value)),
               ),
+              const SizedBox(height: 12),
+              ReaderValueSlider(
+                sliderKey: const ValueKey('listening-paragraph-gap'),
+                label: '段落间隔',
+                value: state.paragraphGapMs / 1000,
+                min: 0,
+                max: listeningMaximumParagraphGapMs / 1000,
+                divisions: listeningMaximumParagraphGapMs ~/ 100,
+                format: (value) =>
+                    value == 0 ? '不额外停顿' : '${value.toStringAsFixed(1)} 秒',
+                onCommitted: (value) => _act(
+                  () =>
+                      widget.controller.setParagraphGap((value * 1000).round()),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ListeningEnhancementSettings(
+                enhancement: widget.controller.enhancement,
+                onChanged: (value) =>
+                    _act(() => widget.controller.setEnhancement(value)),
+              ),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   const Expanded(child: AppText('跟随朗读段落')),
@@ -798,8 +962,9 @@ class _LanguageVoicePickerState extends State<_LanguageVoicePicker> {
 /// Short decoder handoffs keep the same line and height. Only a sustained wait
 /// changes the status, so changing paragraphs never inserts/removes a skeleton.
 class _ListeningTransportStatus extends StatefulWidget {
-  const _ListeningTransportStatus({required this.phase});
+  const _ListeningTransportStatus({required this.phase, this.seeking = false});
   final ListeningPhase phase;
+  final bool seeking;
   @override
   State<_ListeningTransportStatus> createState() =>
       _ListeningTransportStatusState();
@@ -817,7 +982,10 @@ class _ListeningTransportStatusState extends State<_ListeningTransportStatus> {
   @override
   void didUpdateWidget(_ListeningTransportStatus oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.phase != widget.phase) _update();
+    if (oldWidget.phase != widget.phase ||
+        oldWidget.seeking != widget.seeking) {
+      _update();
+    }
   }
 
   void _update() {
@@ -841,7 +1009,7 @@ class _ListeningTransportStatusState extends State<_ListeningTransportStatus> {
     padding: const EdgeInsets.only(top: 10),
     child: AppText(
       _waiting
-          ? '正在缓冲语音…'
+          ? (widget.seeking ? '正在加载跳转位置…' : '正在缓冲语音…')
           : widget.phase == ListeningPhase.paused
           ? '已暂停'
           : widget.phase == ListeningPhase.failed
@@ -866,9 +1034,11 @@ class ListeningParagraphHighlight extends StatelessWidget {
     required this.child,
     this.interactive = true,
     this.onDoubleTap,
+    this.chapterId,
   });
   final ListeningController controller;
   final int novelId, chapter, paragraph;
+  final int? chapterId;
   final Widget child;
   final bool interactive;
   final Future<void> Function()? onDoubleTap;
@@ -879,12 +1049,18 @@ class ListeningParagraphHighlight extends StatelessWidget {
         ({bool own, bool current, bool playing})
       >(
         listenable: controller.snapshot,
+        pauseWhenCovered: true,
         select: (state) {
           final own = state.active && state.novel?.id == novelId;
+          final source = state.novel;
+          final sameChapter = chapterId != null && chapterId! > 0
+              ? source != null &&
+                    state.chapter >= 0 &&
+                    state.chapter < source.chapters.length &&
+                    source.chapters[state.chapter].id == chapterId
+              : state.chapter == chapter;
           final current =
-              own &&
-              state.chapter == chapter &&
-              state.current?.paragraph == paragraph;
+              own && sameChapter && state.current?.paragraph == paragraph;
           return (
             own: own,
             current: current,

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.4.8+192
+version: 0.5.0+260
 
 environment:
   sdk: ^3.11.3
@@ -46,7 +46,7 @@ dependencies:
   crypto: ^3.0.6
   liquid_glass_easy:
     path: third_party/liquid_glass_easy
-  archive: ^4.0.9
+  archive: ^4.5.2
   html: ^0.15.6
   csslib: ^1.0.2
   tategaki: ^0.6.4
@@ -56,10 +56,11 @@ dependencies:
   flutter_markdown_plus: ^1.0.12
   markdown: ^7.3.0
   url_launcher: ^6.3.3
+  dict_reader: 1.6.1
+  blockchain_utils: 6.0.0
+  dart_jieba: 1.0.1
 
 dev_dependencies:
-  flutter_test:
-    sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -67,8 +68,6 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  integration_test:
-    sdk: flutter
   shared_preferences_platform_interface: ^2.4.1
   path_provider_platform_interface: ^2.1.3
   vm_service: 15.3.0
@@ -85,11 +84,28 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/app-icon.png
+    - assets/report/
+    - assets/reading_previews/archive-117.webp
+    - assets/reading_previews/shelf-117.webp
+    - assets/reading_previews/editorial-117.webp
+    - assets/reading_previews/constellation-117.webp
+    - assets/reading_previews/signal-117.webp
+    - assets/reading_previews/score-117.webp
+    - assets/reading_previews/ink-117.webp
+    - assets/reading_previews/festival-117.webp
+    - assets/fonts/OFL-BarlowCondensed.txt
+    - assets/fonts/OFL-NotoSerifSC.txt
     - assets/fonts/OFL-SourceHanSerif.txt
     - assets/fonts/OFL-SourceHanSans.txt
     - assets/fonts/OFL-LXGWWenKaiScreen.txt
     - assets/fonts/OFL-ZhuqueFangsong.txt
     - assets/fonts/OFL-Iansui.txt
+    - assets/fonts/OFL-LXGWZhenKai.txt
+    - assets/fonts/OFL-LXGWMarkerGothic.txt
+    - assets/fonts/OFL-Xiaolai.txt
+    - assets/fonts/OFL-Yozai.txt
+    - assets/fonts/OFL-LXGWWenKaiTC.txt
+    - assets/fonts/OFL-OpenHuninn.txt
     - assets/licenses/GPL-3.0.txt
     - assets/licenses/edge-tts.txt
     - assets/licenses/libmobi.txt
@@ -103,7 +119,20 @@ flutter:
     - assets/licenses/opencc.txt
     - assets/licenses/juniversalchardet.txt
     - assets/licenses/cronet.txt
+    - assets/licenses/dart-jieba.txt
+    - assets/tokenizer/jieba-1.0.1.dgz
     - assets/opencc/
+  fonts:
+    - family: ReadingDisplay
+      fonts:
+        - asset: assets/fonts/ReadingDisplay-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/ReadingDisplay-Bold.ttf
+          weight: 700
+    - family: ReadingSerifDisplay
+      fonts:
+        - asset: assets/fonts/ReadingSerifDisplay-Bold.ttf
+          weight: 700
   shaders:
     - shaders/continuous_blur.frag
     - shaders/analytic_glass.frag

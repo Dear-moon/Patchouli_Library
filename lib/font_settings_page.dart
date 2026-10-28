@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'app_interactions.dart';
 import 'app_typography.dart';
 import 'app_ui.dart';
@@ -52,6 +53,7 @@ class _FontSettingsPageState extends State<FontSettingsPage> {
       reduceMotion: state.reduceMotion,
       heightFactor: .72,
       builder: (sheet) => ListView(
+        cacheExtent: 0,
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
         children: [
           ArchiveSection(
@@ -246,7 +248,7 @@ class _FontSettingsPageState extends State<FontSettingsPage> {
                         ? '下载并使用 · ${download.sizeLabel}'
                         : failed
                         ? '字体预览暂不可用'
-                        : '春日的光，落在书页上。',
+                        : download?.previewText ?? '春日的光，落在书页上。',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -305,6 +307,7 @@ class _FontSettingsPageState extends State<FontSettingsPage> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 680),
               child: ListView(
+                cacheExtent: 0,
                 padding: EdgeInsets.fromLTRB(
                   24,
                   MediaQuery.paddingOf(context).top +
@@ -511,7 +514,7 @@ class _DownloadableFontRow extends StatelessWidget {
                         builder: (ready, _) => Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: AppText(
-                            '春日的光，落在书页上。',
+                            font.previewText,
                             style: TextStyle(
                               fontFamily: ready ? fonts.family(font.id) : null,
                               fontSize: 15,
@@ -564,19 +567,62 @@ class _FontFacePreview extends StatefulWidget {
 }
 
 class _FontFacePreviewState extends State<_FontFacePreview> {
+  static Future<void> _previewQueue = Future.value();
   Future<void>? _loading;
   bool _available = false;
+  Animation<double>? _routeAnimation;
+  ModalRoute<dynamic>? _route;
   @override
   void initState() {
     super.initState();
+    _available = widget.fonts.available(widget.id);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+    final animation = _route?.animation;
+    if (_routeAnimation != animation) {
+      _routeAnimation?.removeStatusListener(_routeChanged);
+      _routeAnimation = animation;
+      animation?.addStatusListener(_routeChanged);
+    }
     _prepare();
+  }
+
+  void _routeChanged(AnimationStatus status) {
+    if (status == AnimationStatus.completed && mounted) setState(_prepare);
   }
 
   void _prepare() {
     _available = widget.fonts.available(widget.id);
-    _loading = !_available || widget.id == 'system'
-        ? null
-        : widget.fonts.ensureLoaded(widget.id);
+    if (!_available ||
+        widget.fonts.isLoaded(widget.id) ||
+        _loading != null ||
+        _route?.isCurrent == false ||
+        (_routeAnimation != null &&
+            _routeAnimation!.status != AnimationStatus.completed)) {
+      return;
+    }
+    final id = widget.id, fonts = widget.fonts;
+    final work = _previewQueue.then(
+      (_) => SchedulerBinding.instance.scheduleTask(
+        () async {
+          if (!mounted || widget.id != id || _route?.isCurrent == false) return;
+          await fonts.ensureLoaded(id);
+        },
+        Priority.idle,
+        debugLabel: 'font-face-preview',
+      ),
+    );
+    _loading = work;
+    // Font registration invalidates text metrics. Do not register several large
+    // faces together, or register them while the page's glass transition draws.
+    _previewQueue = work.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
   }
 
   @override
@@ -585,19 +631,25 @@ class _FontFacePreviewState extends State<_FontFacePreview> {
     if (oldWidget.id != widget.id ||
         oldWidget.fonts != widget.fonts ||
         _available != widget.fonts.available(widget.id)) {
+      _loading = null;
       _prepare();
     }
   }
 
   @override
   Widget build(BuildContext context) => _loading == null
-      ? widget.builder(_available, false)
+      ? widget.builder(widget.fonts.isLoaded(widget.id), false)
       : FutureBuilder<void>(
           future: _loading,
           builder: (context, snapshot) => widget.builder(
-            snapshot.connectionState == ConnectionState.done &&
-                !snapshot.hasError,
+            widget.fonts.isLoaded(widget.id) && !snapshot.hasError,
             snapshot.hasError,
           ),
         );
+
+  @override
+  void dispose() {
+    _routeAnimation?.removeStatusListener(_routeChanged);
+    super.dispose();
+  }
 }

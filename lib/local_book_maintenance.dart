@@ -45,7 +45,11 @@ Future<Map<String, dynamic>> _upgradeStoredEpub(
   final source = Map<String, dynamic>.from(record['source']);
   if (source['richText'] == 2) return source;
   final oldPrefix =
-      {'layout-rich-v1', 'layout-rich-v2'}.contains(source['layoutFolder'])
+      {
+        'layout-rich-v1',
+        'layout-rich-v2',
+        'layout-markup-v1',
+      }.contains(source['layoutFolder'])
       ? '${source['layoutFolder']}/'
       : '';
   final staging = Directory('${folder.path}/.layout-rich-next');
@@ -60,6 +64,7 @@ Future<Map<String, dynamic>> _upgradeStoredEpub(
       job.id,
       source['digest'],
       archive: archive,
+      normalizeMarkup: source['epubMarkup'] == epubMarkupVersion,
       preserveRichText: source['richText'] == 1,
       richLayoutLevel: 1,
       autoTitles: job.options.autoTitles,
@@ -92,6 +97,7 @@ Future<Map<String, dynamic>> _upgradeStoredEpub(
       job.id,
       source['digest'],
       archive: archive,
+      normalizeMarkup: source['epubMarkup'] == epubMarkupVersion,
       autoTitles: job.options.autoTitles,
       mergeUnlistedIllustrations: job.options.inlineEpubImages,
       imageNames: names,
@@ -170,7 +176,7 @@ Future<Map<String, dynamic>> _upgradeStoredEpub(
       'richText': 2,
       'layoutFolder': 'layout-rich-v2',
       'publisherSpacing': 1,
-      'publisherLanguages': 1,
+      'publisherLanguages': epubPublisherLanguageVersion,
       'imageSizing': 1,
     };
     await _maintenanceRecord(metadata, {...record, 'source': changed});
@@ -276,7 +282,11 @@ Future<int> _compactStoredEpub(
       await file.delete();
       freed += length;
     }
-    if ({'layout-rich-v1', 'layout-rich-v2'}.contains(source['layoutFolder'])) {
+    if ({
+      'layout-rich-v1',
+      'layout-rich-v2',
+      'layout-markup-v1',
+    }.contains(source['layoutFolder'])) {
       final chapters = metadata['chapters'] as List;
       for (final chapter in chapters) {
         final active = File(
@@ -323,7 +333,6 @@ Future<int> _compactStoredEpub(
 
 extension LocalBookMaintenance on LocalBookStore {
   bool canResolveCoordinates(int id, Map<String, dynamic> position) {
-    if (position['contentRevision'] == 'epub-rich-v2') return false;
     final book = this.book(id);
     if (book == null || book.chapters.isEmpty) return false;
     final chapter = position['chapterId'] is int && position['chapterId'] > 0
@@ -331,7 +340,12 @@ extension LocalBookMaintenance on LocalBookStore {
         : book.chapters.elementAtOrNull(position['chapter'] as int? ?? 0);
     if (chapter == null) return false;
     final base = _seriesChapters[id]?[chapter.id]?.bookId ?? id;
-    return _sources[base]?['richText'] == 2;
+    if (position['contentRevision'] == 'epub-rich-v2' &&
+        _sources[base]?['layoutFolder'] != 'layout-markup-v1') {
+      return false;
+    }
+    return _sources[base]?['richText'] == 2 ||
+        _sources[base]?['layoutFolder'] == 'layout-markup-v1';
   }
 
   Future<Map<String, dynamic>> resolveReadingCoordinates(

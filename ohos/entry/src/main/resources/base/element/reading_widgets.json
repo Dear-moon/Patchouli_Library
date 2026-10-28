@@ -1,0 +1,11 @@
+{
+  "string": [
+    { "name": "reading_card_focus", "value": "今日阅读" },
+    { "name": "reading_card_week", "value": "本周热力" },
+    { "name": "reading_card_calendar", "value": "阅读日历" },
+    { "name": "reading_card_memory", "value": "阅读纪念" },
+    { "name": "reading_card_quote", "value": "摘录卡" },
+    { "name": "reading_widget_name", "value": "阅读日常" },
+    { "name": "reading_widget_description", "value": "核验阅读日常、七日节律与私密阅读纪念" }
+  ]
+}

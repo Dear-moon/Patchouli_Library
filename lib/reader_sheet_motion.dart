@@ -37,8 +37,13 @@ class ReaderSheetMotionRender extends RenderProxyBox {
   ReaderSheetMotion config;
   final _clip = LayerHandle<ClipPathLayer>();
   final _move = LayerHandle<TransformLayer>();
+  final _opacity = LayerHandle<OpacityLayer>();
   int debugLayoutCount = 0;
   double get progress => config.animation.value.clamp(0.0, 1.0);
+  double get opacity =>
+      config.active && config.effect == ReaderPageEffect.fade && config.front
+      ? (config.incoming ? progress : 1 - progress)
+      : 1;
   double get _sign => config.direction < 0 ? -1 : 1;
   double get _envelope => math.sin(progress * math.pi);
   double get _edge => size.width * (_sign > 0 ? 1 - progress : progress);
@@ -68,7 +73,9 @@ class ReaderSheetMotionRender extends RenderProxyBox {
     return path;
   }
 
-  Path get visiblePath => config.effect == ReaderPageEffect.cover
+  Path get visiblePath => config.effect == ReaderPageEffect.fade
+      ? (Path()..addRect(Offset.zero & size))
+      : config.effect == ReaderPageEffect.cover
       ? (Path()..addRect(
           (Offset.zero & size)
               .shift(displacement)
@@ -80,7 +87,10 @@ class ReaderSheetMotionRender extends RenderProxyBox {
         );
   void _tick() {
     markNeedsPaint();
-    if (config.effect == ReaderPageEffect.cover) markNeedsSemanticsUpdate();
+    if (config.effect == ReaderPageEffect.cover ||
+        config.effect == ReaderPageEffect.fade) {
+      markNeedsSemanticsUpdate();
+    }
   }
 
   void update(ReaderSheetMotion next) {
@@ -124,6 +134,26 @@ class ReaderSheetMotionRender extends RenderProxyBox {
     }
     if (config.effect == ReaderPageEffect.cover) {
       _paintCover(context, offset);
+      return;
+    }
+    if (config.effect == ReaderPageEffect.fade) {
+      final alpha = (opacity * 255).round();
+      if (alpha == 0) return;
+      void paintLeaf(PaintingContext context, Offset offset) {
+        context.canvas.drawRect(offset & size, Paint()..color = config.paper);
+        super.paint(context, offset);
+      }
+
+      if (alpha == 255) {
+        paintLeaf(context, offset);
+      } else {
+        _opacity.layer = context.pushOpacity(
+          offset,
+          alpha,
+          paintLeaf,
+          oldLayer: _opacity.layer,
+        );
+      }
       return;
     }
     final t = progress;
@@ -247,6 +277,7 @@ class ReaderSheetMotionRender extends RenderProxyBox {
       transform.multiply(_transform);
   @override
   bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      opacity > 0 &&
       (!config.active || visiblePath.contains(position)) &&
       result.addWithPaintTransform(
         transform: _transform,
@@ -258,6 +289,7 @@ class ReaderSheetMotionRender extends RenderProxyBox {
   void dispose() {
     _clip.layer = null;
     _move.layer = null;
+    _opacity.layer = null;
     super.dispose();
   }
 }

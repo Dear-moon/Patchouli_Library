@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'app_ui.dart';
 import 'app_interactions.dart';
 import 'book_sync.dart';
+import 'cloud_library_page.dart';
+import 'cloud_sources.dart';
 
 class CloudBookSyncPanel extends StatelessWidget {
   const CloudBookSyncPanel({super.key, required this.sync});
@@ -16,6 +18,20 @@ class CloudBookSyncPanel extends StatelessWidget {
     } catch (_) {
       if (context.mounted) showNovelFeedback(context, '同步设置保存失败，请重试');
     }
+  }
+
+  Future<void> _configureS3(BuildContext context) async {
+    final settings = sync.cloudSources;
+    if (settings == null || sync.busy) return;
+    await pushNovelPage<CloudSourceConfig>(
+      context,
+      CloudConnectionPage(
+        settings: settings,
+        kind: CloudSourceKind.s3,
+        syncConnection: true,
+      ),
+      reduceMotion: sync.state.reduceMotion,
+    );
   }
 
   @override
@@ -45,10 +61,11 @@ class CloudBookSyncPanel extends StatelessWidget {
           Wrap(
             spacing: 8,
             children: [
-              for (final provider in ['OneDrive', 'Google Drive', '其他位置'])
+              for (final provider in ['S3', 'OneDrive', 'Google Drive', '其他位置'])
                 Semantics(
                   selected: sync.preferredProvider == provider,
                   child: GlassTextButton(
+                    key: ValueKey('sync-provider-$provider'),
                     compact: true,
                     selected: sync.preferredProvider == provider,
                     onPressed: sync.busy
@@ -66,27 +83,13 @@ class CloudBookSyncPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          AppText(
-            sync.connection == null
-                ? '在系统文件选择器侧栏选择 ${sync.preferredProvider}。首次新建同步文件，其他设备选择同一个文件。'
-                : '已连接 ${sync.providerLabel}\n${sync.connection!['name']}',
-            style: const TextStyle(height: 1.65),
+          AnimatedOptionSection(
+            expanded: sync.usingS3,
+            child: _s3Location(context),
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            children: [
-              GlassTextButton(
-                key: const ValueKey('sync-create-document'),
-                onPressed: sync.busy ? null : () => sync.connect(create: true),
-                child: const AppText('新建同步文件'),
-              ),
-              GlassTextButton(
-                key: const ValueKey('sync-select-document'),
-                onPressed: sync.busy ? null : () => sync.connect(create: false),
-                child: const AppText('选择已有文件'),
-              ),
-            ],
+          AnimatedOptionSection(
+            expanded: !sync.usingS3,
+            child: _documentLocation(),
           ),
           const Divider(height: 28),
           const AppText('同步内容', style: TextStyle(fontWeight: FontWeight.w600)),
@@ -125,18 +128,19 @@ class CloudBookSyncPanel extends StatelessWidget {
             ),
           const SizedBox(height: 12),
           GlassPillButton(
+            key: const ValueKey('sync-now'),
             icon: CupertinoIcons.arrow_2_circlepath,
             label: sync.busy ? '正在同步' : '立即同步',
             onPressed:
                 sync.busy ||
-                    sync.connection == null ||
+                    !sync.connected ||
                     !(sync.syncOriginals ||
                         sync.syncReading ||
                         sync.syncCategories)
                 ? null
                 : sync.sync,
           ),
-          if (sync.connection != null)
+          if (sync.connected)
             GlassTextButton(
               onPressed: sync.busy ? null : sync.disconnect,
               child: const AppText('断开连接'),
@@ -169,7 +173,9 @@ class CloudBookSyncPanel extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           AppText(
-            '文件选择器未显示网盘时，请先安装并登录对应网盘应用。只有获得读写授权的同步文件可以连接；移除本机书籍不会删除云端原书。',
+            sync.usingS3
+                ? '每次手动合并后写回同一同步文件；移除本机书籍不会删除云端原书。'
+                : '文件选择器未显示网盘时，请先安装并登录对应网盘应用。只有获得读写授权的同步文件可以连接；移除本机书籍不会删除云端原书。',
             style: TextStyle(
               fontSize: 12,
               height: 1.6,
@@ -181,6 +187,97 @@ class CloudBookSyncPanel extends StatelessWidget {
     ),
   );
 
+  Widget _s3Location(BuildContext context) {
+    final connection = sync.s3Connection;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (connection == null)
+          const AppText(
+            '连接 S3 或兼容存储，在不同设备间合并原书、阅读进度与分类。',
+            style: TextStyle(height: 1.65),
+          )
+        else
+          ContentPanel(
+            key: const ValueKey('sync-s3-location'),
+            child: ArchivePart(
+              start: .24,
+              end: .88,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const ArchiveIcon(CupertinoIcons.cloud, size: 18),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: AppText(
+                          connection.config.bucket,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 7),
+                  AppText(
+                    connection.config.endpoint.host,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  AppText(
+                    connection.objectKey,
+                    style: const TextStyle(fontSize: 13, height: 1.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: GlassTextButton(
+            key: const ValueKey('sync-configure-s3'),
+            onPressed: sync.busy || sync.cloudSources == null
+                ? null
+                : () => _configureS3(context),
+            child: AppText(connection == null ? '配置 S3 同步' : '修改 S3 连接'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _documentLocation() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      AppText(
+        sync.connection == null
+            ? '在系统文件选择器侧栏选择 ${sync.preferredProvider}。首次新建同步文件，其他设备选择同一个文件。'
+            : '已连接 ${sync.providerLabel}\n${sync.connection!['name']}',
+        style: const TextStyle(height: 1.65),
+      ),
+      const SizedBox(height: 12),
+      Wrap(
+        spacing: 8,
+        children: [
+          GlassTextButton(
+            key: const ValueKey('sync-create-document'),
+            onPressed: sync.busy ? null : () => sync.connect(create: true),
+            child: const AppText('新建同步文件'),
+          ),
+          GlassTextButton(
+            key: const ValueKey('sync-select-document'),
+            onPressed: sync.busy ? null : () => sync.connect(create: false),
+            child: const AppText('选择已有文件'),
+          ),
+        ],
+      ),
+    ],
+  );
+
   Widget _option(
     BuildContext context,
     String title,
@@ -190,38 +287,42 @@ class CloudBookSyncPanel extends StatelessWidget {
     Future<void> Function(bool) changed,
   ) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 10),
-    child: Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AppText(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 5),
-              AppText(
-                detail,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.5,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+    child: ArchivePart(
+      start: .24,
+      end: .88,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppText(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-              ),
-            ],
+                const SizedBox(height: 5),
+                AppText(
+                  detail,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.5,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(width: 12),
-        AppControls.toggle(
-          context,
-          key: ValueKey(key),
-          value: value,
-          onChanged: sync.busy
-              ? null
-              : (v) => _configure(context, () => changed(v)),
-        ),
-      ],
+          const SizedBox(width: 12),
+          AppControls.toggle(
+            context,
+            key: ValueKey(key),
+            value: value,
+            onChanged: sync.busy
+                ? null
+                : (v) => _configure(context, () => changed(v)),
+          ),
+        ],
+      ),
     ),
   );
 }

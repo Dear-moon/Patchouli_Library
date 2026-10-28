@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../local_platform.dart';
 import '../app_ui.dart';
 import '../feature_pages.dart';
 import 'cache.dart';
@@ -51,7 +52,7 @@ class SystemSpeechCatalog {
                 (item['features'] as List).contains('notInstalled')))
           SpeechVoice(
             id: item['id'],
-            label: item['id'],
+            label: systemSpeechVoiceLabel(item),
             locale: item['locale'],
             source: ListeningSource.system,
             engine: engine.id,
@@ -85,6 +86,7 @@ class _SystemSpeechEnginesPanelState extends State<SystemSpeechEnginesPanel>
   SystemSpeechEngine? _engine;
   bool _busy = true;
   String? _error;
+  bool _voiceHelp = false;
   int _request = 0;
   @override
   void initState() {
@@ -135,6 +137,10 @@ class _SystemSpeechEnginesPanelState extends State<SystemSpeechEnginesPanel>
   }
 
   Future<void> _settings() async {
+    if (LocalPlatform.ios || LocalPlatform.harmony) {
+      setState(() => _voiceHelp = !_voiceHelp);
+      return;
+    }
     try {
       await widget.catalog.settings();
     } catch (_) {
@@ -268,7 +274,11 @@ class _SystemSpeechEnginesPanelState extends State<SystemSpeechEnginesPanel>
                         !_busy &&
                         _engines.isEmpty &&
                         _error == null)
-                      const AppText('没有检测到系统 TTS 引擎。安装支持文字转语音的引擎后，点右上角重新检测。'),
+                      AppText(
+                        LocalPlatform.harmony
+                            ? '此设备没有提供系统语音服务，可选择在线音色或自定义接口。'
+                            : '没有检测到系统 TTS 引擎。安装支持文字转语音的引擎后，点右上角重新检测。',
+                      ),
                   ],
                 );
               }
@@ -283,7 +293,25 @@ class _SystemSpeechEnginesPanelState extends State<SystemSpeechEnginesPanel>
                   const SizedBox(height: 16),
                   GlassTextButton(
                     onPressed: _settings,
-                    child: const AppText('系统语音设置'),
+                    child: AppText(
+                      LocalPlatform.ios
+                          ? '如何添加系统音色'
+                          : LocalPlatform.harmony
+                          ? '系统音色说明'
+                          : '系统语音设置',
+                    ),
+                  ),
+                  AnimatedOptionSection(
+                    expanded: _voiceHelp,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: AppText(
+                        LocalPlatform.harmony
+                            ? '这里只列出设备已安装的系统音色。系统音色变更后，返回此页会自动刷新；也可使用在线音色或自定义接口。'
+                            : '在系统设置的「辅助功能 → 阅读与朗读 → 声音」下载音色；旧版系统中叫「朗读内容」。完成后回到这里，列表会自动刷新。',
+                        style: const TextStyle(fontSize: 12, height: 1.6),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   AppText(

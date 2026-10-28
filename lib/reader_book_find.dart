@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'app_ui.dart';
@@ -116,16 +117,98 @@ Stream<BookTextSearchResult> findInBook(
   }
 }
 
+/// Both scopes stay in one drawer; switching a tab retains its query/results.
+class ReaderSearchPanel extends StatefulWidget {
+  const ReaderSearchPanel({
+    super.key,
+    required this.content,
+    required this.novel,
+    required this.repository,
+    this.locale,
+    this.wholeBook = false,
+  });
+  final ReaderContent content;
+  final Novel novel;
+  final NovelRepository repository;
+  final Locale? locale;
+  final bool wholeBook;
+
+  @override
+  State<ReaderSearchPanel> createState() => _ReaderSearchPanelState();
+}
+
+class _ReaderSearchPanelState extends State<ReaderSearchPanel> {
+  late int _tab = widget.wholeBook ? 1 : 0;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: math.min(600, MediaQuery.sizeOf(context).height * .72),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 14, 8),
+          child: Row(
+            children: [
+              const Expanded(
+                child: AppText(
+                  '查找',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+              GlassIconButton(
+                icon: CupertinoIcons.xmark,
+                label: '关闭查找',
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+          child: AppControls.segments<int>(
+            context,
+            key: const ValueKey('reader-find-tabs'),
+            groupValue: _tab,
+            children: const {0: AppText('章内查找'), 1: AppText('整书查找')},
+            onValueChanged: (value) {
+              if (value == null || value == _tab) return;
+              FocusScope.of(context).unfocus();
+              setState(() => _tab = value);
+            },
+          ),
+        ),
+        Expanded(
+          child: IndexedStack(
+            index: _tab,
+            children: [
+              ReaderFindPanel(content: widget.content, embedded: true),
+              ReaderBookFindPanel(
+                novel: widget.novel,
+                repository: widget.repository,
+                locale: widget.locale,
+                embedded: true,
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class ReaderBookFindPanel extends StatefulWidget {
   const ReaderBookFindPanel({
     super.key,
     required this.novel,
     required this.repository,
     this.locale,
+    this.embedded = false,
   });
   final Novel novel;
   final NovelRepository repository;
   final Locale? locale;
+  final bool embedded;
   @override
   State<ReaderBookFindPanel> createState() => _ReaderBookFindPanelState();
 }
@@ -135,7 +218,30 @@ class _ReaderBookFindPanelState extends State<ReaderBookFindPanel> {
   Timer? _debounce;
   int _generation = 0;
   bool _busy = false;
+  String _editedText = '';
+  bool _wasComposing = false;
   BookTextSearchResult _result = const BookTextSearchResult([], 0, 0, 0);
+
+  @override
+  void initState() {
+    super.initState();
+    _query.addListener(_edited);
+  }
+
+  void _edited() {
+    final value = _query.value;
+    final composing = !value.composing.isCollapsed;
+    if (value.text == _editedText && composing == _wasComposing) return;
+    _editedText = value.text;
+    _wasComposing = composing;
+    _generation++;
+    _debounce?.cancel();
+    if (composing) return;
+    // An IME may commit the same characters by changing only its composing
+    // range. The controller observes that commit; onChanged does not.
+    _debounce = Timer(const Duration(milliseconds: 250), _search);
+  }
+
   Future<void> _search({bool network = false}) async {
     _debounce?.cancel();
     final term = _query.text.trim(), generation = ++_generation;
@@ -168,6 +274,7 @@ class _ReaderBookFindPanelState extends State<ReaderBookFindPanel> {
   void dispose() {
     _generation++;
     _debounce?.cancel();
+    _query.removeListener(_edited);
     _query.dispose();
     super.dispose();
   }
@@ -178,36 +285,31 @@ class _ReaderBookFindPanelState extends State<ReaderBookFindPanel> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 14, 8),
-          child: Row(
-            children: [
-              const Expanded(
-                child: ArchiveSection(
-                  title: '整书查找',
-                  code: 'READER / BOOK QUERY',
+        if (!widget.embedded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 14, 8),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: ArchiveSection(
+                    title: '整书查找',
+                    code: 'READER / BOOK QUERY',
+                  ),
                 ),
-              ),
-              GlassIconButton(
-                icon: CupertinoIcons.xmark,
-                label: '关闭整书查找',
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
+                GlassIconButton(
+                  icon: CupertinoIcons.xmark,
+                  label: '关闭整书查找',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
           ),
-        ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: AppSearchField(
             inputKey: const ValueKey('reader-book-find-field'),
             controller: _query,
             hint: '查找整本书的文字',
-            onChanged: (_) {
-              _generation++;
-              _debounce?.cancel();
-              if (!_query.value.composing.isCollapsed) return;
-              _debounce = Timer(const Duration(milliseconds: 250), _search);
-            },
             onSubmitted: (_) => _search(),
           ),
         ),

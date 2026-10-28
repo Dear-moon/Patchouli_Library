@@ -9,6 +9,7 @@ class ReaderPagePhysics extends PageScrollPhysics {
     double durationScale = 1,
     this.liveDurationScale,
     this.pageBounds,
+    this.onUserPageCommitted,
     super.parent,
   }) : _durationScale = durationScale;
   final int? Function() origin;
@@ -20,6 +21,11 @@ class ReaderPagePhysics extends PageScrollPhysics {
   /// Ready adjacent chapters extend the same page rail. Unprepared edges stay
   /// clamped so a slow request cannot expose an empty neighbouring sheet.
   final ({int first, int last}) Function()? pageBounds;
+
+  /// A released gesture has selected another page, before its snap animation.
+  /// A scroll position may recalculate ballistics; the owner deduplicates the
+  /// accepted gesture rather than queuing feedback until ScrollEnd.
+  final ValueChanged<int>? onUserPageCommitted;
   double get durationScale => liveDurationScale?.call() ?? _durationScale;
   static double commitDistance(double viewport) =>
       (viewport * .1).clamp(28, 48);
@@ -30,6 +36,7 @@ class ReaderPagePhysics extends PageScrollPhysics {
     durationScale: _durationScale,
     liveDurationScale: liveDurationScale,
     pageBounds: pageBounds,
+    onUserPageCommitted: onUserPageCommitted,
     parent: buildParent(ancestor),
   );
 
@@ -55,11 +62,12 @@ class ReaderPagePhysics extends PageScrollPhysics {
     position = _bounded(position);
     if (position is! PageMetrics ||
         position.pixels < position.minScrollExtent ||
-        position.pixels > position.maxScrollExtent ||
-        position.pixels <= position.minScrollExtent && velocity <= 0 ||
-        position.pixels >= position.maxScrollExtent && velocity >= 0) {
+        position.pixels > position.maxScrollExtent) {
       return super.createBallisticSimulation(position, velocity);
     }
+    final outwardBoundary =
+        position.pixels <= position.minScrollExtent && velocity <= 0 ||
+        position.pixels >= position.maxScrollExtent && velocity >= 0;
     final gestureOrigin = origin();
     if (gestureOrigin == null) {
       return super.createBallisticSimulation(position, velocity);
@@ -78,6 +86,15 @@ class ReaderPagePhysics extends PageScrollPhysics {
       position.maxScrollExtent / width,
     );
     final pixels = destination * width;
+    if (commit && destination != start) {
+      onUserPageCommitted?.call(destination.round());
+    }
+    // Reaching the first/last page can finish the whole turn under the finger.
+    // Acknowledge that accepted destination before preserving the parent's
+    // existing outward-edge behavior; starting at that edge is still silent.
+    if (outwardBoundary) {
+      return super.createBallisticSimulation(position, velocity);
+    }
     final durationScale = this.durationScale;
     final tolerance = toleranceFor(position);
     if ((pixels - position.pixels).abs() < tolerance.distance) return null;

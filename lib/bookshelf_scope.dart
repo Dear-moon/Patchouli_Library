@@ -33,8 +33,13 @@ Set<int> bookshelfIds(
         )
         .toSet();
 
-bool bookshelfMatchesCategory(int id, LibraryState state, {Novel? book}) {
-  final selected = state.organization.shelfSelected;
+bool bookshelfMatchesCategory(
+  int id,
+  LibraryState state, {
+  Novel? book,
+  String? category,
+}) {
+  final selected = category ?? state.organization.shelfSelected;
   if (LocalLibraryPreferences.categoryAuthor(selected) case final author?) {
     return LocalLibraryPreferences.authorName(
           (book ?? state.cachedNovel(id))?.author ?? '',
@@ -48,11 +53,12 @@ bool bookshelfMatchesCategory(int id, LibraryState state, {Novel? book}) {
 bool bookshelfMatchesSource(
   int id,
   LibraryState state,
-  OfflineNovelRepository? offline,
-) {
+  OfflineNovelRepository? offline, {
+  String? source,
+}) {
   if (!state.combinedShelf) return true;
   final local = offline?.local?.book(id) != null;
-  return switch (state.shelfSourceFilter) {
+  return switch (source ?? state.shelfSourceFilter) {
     'local' => local,
     'cached' => !local && offline?.availableOffline(id) == true,
     'online' => !local && state.contains(id),

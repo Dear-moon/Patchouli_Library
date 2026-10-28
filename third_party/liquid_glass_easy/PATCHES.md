@@ -1,5 +1,47 @@
 # Wenku8 performance patch
 
+## 2026-10-26 — Specialize mathematically absent optics
+
+The Impeller lens selects `liquid_glass_unlit.frag` only for circular rounded
+rectangles with all three light thicknesses and dispersion exactly zero. This
+entry includes the general shader with unused corner, lighting and chromatic
+sampling branches compiled out. Refraction, derivatives, AA, deformation,
+transforms, live input, blur, saturation and tint use the same equations and
+parameters. Changing the style restores the general program in the same frame.
+Skia and desktop retain their existing programs.
+
+The GLES3 compiler emits 690 rather than 2285 SPIR-V instructions, and 8421
+rather than 38175 bytes of GLSL. The 22 uniform names, locations and vector
+sizes match, so the existing uniform packer is unchanged. These are static
+program-size measurements; physical-device timing is evaluated separately.
+
+`integration_test/glass_unlit_shader_test.dart` compared both programs on the
+iOS 26.5 iPad simulator's Impeller renderer: 13 states of three lenses at 2x
+pixel capture had maximum channel difference 0. Capsule, circle, blur, live
+background, translation, width, theme tint, grouping, and switching to/from
+lit/other-corner/dispersion styles are covered. Pixels inside the capsule
+changed with the live source. `LIQUID_GLASS_SPECIALIZE_UNLIT=false` selects the
+general program for matched measurements, without changing material parameters.
+
+## 2026-10-26 — Retain unchanged native filter instructions
+
+The Impeller lens still resolves live scene geometry before every submission.
+When its immutable image filter and backdrop input group have not changed, the
+empty shader layer now uses `SceneBuilder.addRetained` instead of creating
+another native backdrop-filter layer. It retains the filter instruction, not a
+background image: scrolling pixels remain live. Geometry, material and input
+group changes submit a new instruction in the same frame.
+
+`integration_test/glass_filter_layer_retention_test.dart` compares retention
+disabled/enabled on the iOS 26.5 iPad simulator's Impeller renderer. Sixteen
+changing-background frames with two lenses (clear and blurred) required 32
+native filter pushes before and 0 after, replaced by 32 retained instructions.
+Six captured states, including movement, width, tint and batch changes, had
+maximum RGBA channel difference 0; pixels inside both stationary lenses changed
+with the live source. Physical-device raster/thermal benefit is measured
+separately. `LIQUID_GLASS_RETAIN_FILTER_LAYERS=false` retains the previous path
+for matched measurements without changing optical parameters.
+
 ## 2026-10-18 — Share geometry prefixes within one scene
 
 Moving lenses now share their ancestor-surface lookup and render-transform

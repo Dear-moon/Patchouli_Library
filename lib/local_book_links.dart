@@ -1,5 +1,9 @@
 part of 'local_books.dart';
 
+// One validated native block covers this many raw bytes on every host. Avoid
+// a separate lease/index-isolate startup when it cannot replace repeated reads.
+const _singleBlockLinkedTextBytes = 32 * 1024;
+
 String linkedTextFailureMessage(Object error) {
   if (error is FormatException) return error.message;
   // Platform messages contain the recovery action, never the document URI.
@@ -106,11 +110,33 @@ extension LocalLinkedBooks on LocalBookStore {
           }
         }
 
-        final parsed = await indexTextChapters(
-          chunks(),
-          name,
-          options: options.effective,
-        );
+        final access = textAccess;
+        final ({List<NovelChapter> chapters, List<List<int>> ranges}) parsed;
+        if (source.size > _singleBlockLinkedTextBytes &&
+            access is LocalTextInputAccess &&
+            supportsLinkedTextInput(source.encoding)) {
+          final indexed = await (access as LocalTextInputAccess).withInput(
+            source,
+            (input) => compute(
+              indexLinkedTextInput,
+              LocalLinkedTextIndexJob(
+                input: input,
+                source: source,
+                name: name,
+                options: options.effective,
+              ),
+              debugLabel: 'local-linked-text-index',
+            ),
+          );
+          checkpoints.addAll(indexed.checkpoints);
+          parsed = (chapters: indexed.chapters, ranges: indexed.ranges);
+        } else {
+          parsed = await indexTextChapters(
+            chunks(),
+            name,
+            options: options.effective,
+          );
+        }
         final index = LocalTextIndex(source, checkpoints, parsed.ranges);
         LocalTextIndex.fromJson(index.toJson());
         final title = name
@@ -165,7 +191,7 @@ extension LocalLinkedBooks on LocalBookStore {
         _books[id] = novel;
         _sources[id] = metadata;
         _linkedIndices[id] = index;
-        await _refreshSeries();
+        await _refreshSeries(originals: {id});
         if (!_disposed) notifyListeners();
         result = novel;
       } finally {
@@ -210,6 +236,7 @@ extension LocalLinkedBooks on LocalBookStore {
     _sources[id] = source;
     if (changed != null) _books[id] = changed;
     _linkedIndices.remove(id);
+    LocalBookMedia.evict(id);
     if (!_disposed) notifyListeners();
   }
 

@@ -15,20 +15,26 @@ import 'package:xml/xml.dart';
 
 import 'catalog.dart';
 import 'book_identity.dart';
+import 'book_tag_catalog.dart';
 import 'book_import_limits.dart';
 import 'local_book_media.dart';
 import 'local_epub_media.dart';
 import 'local_epub_navigation.dart';
 import 'local_book_archive.dart';
+import 'local_book_import_issues.dart';
+export 'local_book_import_issues.dart';
 import 'local_book_series.dart';
 import 'epub_image_styles.dart';
 import 'personal_images.dart';
 import 'local_text_import.dart';
+import 'local_text_rules.dart' show defaultLocalHeadingCandidate;
 import 'local_text_storage.dart';
 import 'local_text_reference.dart';
+import 'local_linked_text_index.dart';
 import 'local_document_reference.dart';
 import 'local_document_input.dart';
 import 'local_markup_decode.dart';
+import 'local_epub_markup.dart';
 import 'local_import_options.dart';
 import 'reader_content.dart' show readerIllustrationUrl;
 import 'reader_rich_content.dart';
@@ -54,6 +60,8 @@ class ImportedBook {
     this.seriesHint,
     this.warnings = const [],
     this.origins = const [],
+    this.damagedResources = const {},
+    this.damagedChapters = const {},
   });
   final Novel novel;
   final String digest;
@@ -62,6 +70,8 @@ class ImportedBook {
   final LocalSeriesHint? seriesHint;
   final List<String> warnings;
   final List<String> origins;
+  final Map<String, String> damagedResources;
+  final Map<int, String> damagedChapters;
 }
 
 class LocalBookInput {
@@ -169,15 +179,19 @@ ImportedBook parseLocalBook(
   for (final raw in lines) {
     final line = raw.trim();
     if (line.isEmpty) continue;
-    if (line.length <= 90 && localTextVolumePattern.hasMatch(line)) {
+    final candidate = line.length <= 90
+        ? defaultLocalHeadingCandidate(line)
+        : line;
+    if (line.length <= 90 && localTextVolumePattern.hasMatch(candidate)) {
       flush();
-      volume = line;
+      volume = candidate;
       volumeId++;
-      title = line;
+      title = candidate;
       hasTitle = true;
-    } else if (line.length <= 90 && localTextChapterPattern.hasMatch(line)) {
+    } else if (line.length <= 90 &&
+        localTextChapterPattern.hasMatch(candidate)) {
       flush();
-      title = line;
+      title = candidate;
       hasTitle = true;
     } else {
       buffer.add(line);
@@ -210,12 +224,13 @@ Novel _novel(
   List<NovelChapter> chapters, {
   String? cover,
   BookNavigation? navigation,
+  String summary = '已保存到本地书库，可离线阅读。',
 }) => Novel(
   id: id,
   title: _metadataText(title),
   author: author.isEmpty ? '本地书籍' : _metadataText(author),
   genre: '本地导入',
-  summary: '已保存到本地书库，可离线阅读。',
+  summary: summary,
   colors: const [Color(0xFF646464), Color(0xFF303030)],
   chapters: List.unmodifiable(chapters),
   chapterCount: chapters.length,
@@ -242,6 +257,8 @@ ImportedBook _epub(
   String digest, {
   Archive? archive,
   void Function(String name, ArchiveFile file)? saveImage,
+  void Function(ArchiveFile file)? verifyImage,
+  Map<String, String>? damagedEntries,
   void Function(int index, String body)? saveBody,
   void Function(int index, String body)? appendBody,
   bool autoTitles = true,
@@ -250,20 +267,30 @@ ImportedBook _epub(
   int richLayoutLevel = 2,
   Map<String, String> imageNames = const {},
   bool coverOnly = false,
+  bool normalizeMarkup = true,
 }) {
   final zip = archive ?? boundedZip(input.bytes, maxSize: 1024 * 1024 * 1024);
   final files = {
     for (final f in zip)
       if (f.isFile) f.name: f,
   };
+  final recovery = damagedEntries != null;
+  final damage = damagedEntries ?? <String, String>{};
   String read(String path) {
-    final file = files[path];
-    if (file == null || file.size > 8 * 1024 * 1024) {
-      throw const FormatException('EPUB 缺少有效的章节或目录');
+    if (damage[path] case final reason?) {
+      throw LocalBookArchiveCorruption(path, reason);
     }
-    final output = OutputMemoryStream();
-    file.writeContent(output);
-    return decodeLocalMarkup(output.getBytes());
+    final file = files[path];
+    if (file == null) throw FormatException('EPUB 缺少资源：$path');
+    if (file.size > 8 * 1024 * 1024) {
+      throw FormatException('EPUB 文本资源超过 8 MiB：$path');
+    }
+    try {
+      return decodeLocalMarkup(readLocalBookArchiveEntry(file));
+    } on LocalBookArchiveCorruption catch (error) {
+      if (recovery) damage[path] = error.reason;
+      rethrow;
+    }
   }
 
   final container = XmlDocument.parse(read('META-INF/container.xml'));
@@ -282,8 +309,13 @@ ImportedBook _epub(
     host: 'local',
     pathSegments: ['', if (base.isNotEmpty) ...base.split('/')],
   );
+  final urlEdgeWhitespace = RegExp(r'^[\x00-\x20]+|[\x00-\x20]+$');
+  final urlTabsAndNewlines = RegExp(r'[\t\n\r]');
+  Uri resolveUri(String base, String href) => baseUri(base).resolve(
+    href.replaceAll(urlEdgeWhitespace, '').replaceAll(urlTabsAndNewlines, ''),
+  );
   String resolve(String base, String href) {
-    final uri = baseUri(base).resolve(href);
+    final uri = resolveUri(base, href);
     if (uri.scheme != 'https' || uri.host != 'local') {
       throw const FormatException('EPUB 引用了外部资源');
     }
@@ -320,7 +352,16 @@ ImportedBook _epub(
       external.add(id);
     }
   }
-  if (files.containsKey('META-INF/encryption.xml')) {
+  final htmlPaths = {
+    for (final item in manifest.values)
+      if (item.type == 'text/html') item.path,
+  };
+  html.Document parseDocument(String path) => parseLocalEpubMarkup(
+    read(path),
+    normalizeEmptyRawText: normalizeMarkup && !htmlPaths.contains(path),
+  );
+  if (files.containsKey('META-INF/encryption.xml') ||
+      damage.containsKey('META-INF/encryption.xml')) {
     final encryption = XmlDocument.parse(read('META-INF/encryption.xml'));
     for (final data in encryption.descendants.whereType<XmlElement>().where(
       (e) => e.name.local == 'EncryptedData',
@@ -336,8 +377,9 @@ ImportedBook _epub(
           ?.getAttribute('URI');
       final path = reference == null ? null : resolve('', reference);
       final font = manifest.values.where((e) => e.path == path).firstOrNull;
-      // Only embedded-font obfuscation is optional to this text reader. One
-      // obfuscated font does not make encrypted prose or images readable.
+      // Publisher font faces are not loaded by this text reader; its selected
+      // reader font is used instead. Only font obfuscation can be ignored here,
+      // never encryption of prose or images.
       if (!const {
             'http://www.idpf.org/2008/embedding',
             'http://ns.adobe.com/pdf/enc#RC',
@@ -349,6 +391,7 @@ ImportedBook _epub(
                 'application/vnd.ms-opentype',
                 'application/x-font-otf',
                 'application/x-font-ttf',
+                'application/x-font-truetype',
                 'application/font-woff',
               }.contains(font.type))) {
         throw const FormatException('不支持受 DRM 保护的 EPUB，请选择未加密的完整原书');
@@ -357,7 +400,7 @@ ImportedBook _epub(
   }
   ({String path, String fragment}) target(String base, String href) => (
     path: resolve(base, href),
-    fragment: Uri.decodeComponent(baseUri(base).resolve(href).fragment),
+    fragment: Uri.decodeComponent(resolveUri(base, href).fragment),
   );
   final labels =
       <({String path, String fragment}), ({String title, String volume})>{};
@@ -408,27 +451,24 @@ ImportedBook _epub(
         walk(node, '');
       }
     } on FormatException {
-      warnings.add('原书目录无法读取，已按原书顺序和正文标题恢复章节。');
+      // Authored navigation below diagnoses this optional NCX once. If a valid
+      // EPUB3 NAV replaces it, the unused broken fallback needs no warning.
     }
   }
   final epubNav = manifest.values
-      .where((e) => e.props.split(' ').contains('nav'))
+      .where((e) => hasEpubToken(e.props, 'nav'))
       .firstOrNull;
   if (epubNav != null) {
     try {
-      final document = html.parse(read(epubNav.path));
-      final nav =
-          document.querySelector('nav[epub\\:type="toc"]') ??
-          document.querySelector('nav');
+      final document = parseDocument(epubNav.path);
+      final nav = epubTableOfContents(document);
       void walk(html.Element root, String parent, [int depth = 0]) {
         for (final li in root.children.where((e) => e.localName == 'li')) {
           final a = li.children.where((e) => e.localName == 'a').firstOrNull;
           final ol = li.children.where((e) => e.localName == 'ol').firstOrNull;
-          final title =
-              (a ?? li.children.where((e) => e.localName == 'span').firstOrNull)
-                  ?.text
-                  .trim() ??
-              '';
+          final title = epubNavigationLabel(
+            a ?? li.children.where((e) => e.localName == 'span').firstOrNull,
+          );
           final href = a?.attributes['href'];
           if (href != null) {
             try {
@@ -464,8 +504,12 @@ ImportedBook _epub(
     for (final entry in manifest.values)
       if (rasterExtensions.containsKey(entry.type)) entry.path: entry.type,
   };
-  String? addImage(String path, {bool cover = false}) {
-    if (imagePaths.containsKey(path) && !cover) return imagePaths[path];
+  final verifiedImagePaths = <String>{};
+  String? addImage(String path, {bool cover = false, bool required = false}) {
+    if (damage[path] case final reason?) {
+      if (required) throw LocalBookArchiveCorruption(path, reason);
+      return null;
+    }
     final file = files[path];
     final originalExtension = path.split('.').last.toLowerCase();
     final ext =
@@ -475,15 +519,41 @@ ImportedBook _epub(
     if (file == null || file.size > 8 * 1024 * 1024 || ext == null) {
       return null;
     }
-    final name =
-        imageNames[path] ??
-        (cover ? 'cover.$ext' : 'img-${imagePaths.length}.$ext');
-    if (saveImage == null) {
-      images[name] = file.readBytes()!;
-    } else {
-      saveImage(name, file);
+    Uint8List? verifiedBytes;
+    try {
+      if (required && !verifiedImagePaths.contains(path)) {
+        if (saveImage == null || verifyImage == null) {
+          verifiedBytes = readLocalBookArchiveEntry(file);
+        } else {
+          verifyImage(file);
+        }
+        verifiedImagePaths.add(path);
+      }
+      // A preceding inline reference may have indexed this image without reading
+      // it. An image used as the chapter itself must be checked before returning.
+      if (imagePaths.containsKey(path) && !cover) return imagePaths[path];
+      var name =
+          imageNames[path] ??
+          (cover ? 'cover.$ext' : 'img-${imagePaths.length}.$ext');
+      if (!imageNames.containsKey(path) && !cover) {
+        var index = imagePaths.length;
+        while (imageNames.values.contains(name)) {
+          name = 'img-${++index}.$ext';
+        }
+      }
+      if (saveImage == null) {
+        images[name] = verifiedBytes ?? readLocalBookArchiveEntry(file);
+        verifiedImagePaths.add(path);
+      } else {
+        saveImage(name, file);
+      }
+      return imagePaths[path] = 'wenku-local://$id/$name';
+    } on LocalBookArchiveCorruption catch (error) {
+      if (!recovery) rethrow;
+      damage[path] = error.reason;
+      if (required) rethrow;
+      return null;
     }
-    return imagePaths[path] = 'wenku-local://$id/$name';
   }
 
   final coverId = elements
@@ -493,7 +563,7 @@ ImportedBook _epub(
   final cover =
       manifest[coverId] ??
       manifest.values
-          .where((e) => e.props.split(' ').contains('cover-image'))
+          .where((e) => hasEpubToken(e.props, 'cover-image'))
           .firstOrNull;
   String? coverPath = cover?.path;
   // A broken optional cover reference must not reject an otherwise readable
@@ -510,12 +580,15 @@ ImportedBook _epub(
         .firstOrNull;
     if (coverPath != null &&
         RegExp(r'\.(x?html?|svg)$', caseSensitive: false).hasMatch(coverPath)) {
-      final doc = html.parse(read(coverPath));
+      final doc = parseDocument(coverPath);
       final image = doc.querySelector('img, image');
       final href =
           image?.attributes['src'] ??
           image?.attributes['href'] ??
-          image?.attributes['xlink:href'];
+          image?.attributes.entries
+              .where((e) => e.key.toString() == 'xlink:href')
+              .firstOrNull
+              ?.value;
       coverPath = href == null ? null : resolve(coverPath, href);
     }
   } on FormatException {
@@ -544,6 +617,7 @@ ImportedBook _epub(
   final chapters = <NovelChapter>[];
   final origins = <String>[];
   final bodies = <String>[];
+  final damagedChapters = <int, String>{};
   final leadingIllustrations = <String>[];
   final anchors = <String, BookReadingTarget>{};
   final linkTargets = <String>{};
@@ -577,18 +651,66 @@ ImportedBook _epub(
     if (!textTypes.contains(file.type) && !imagePage) {
       throw FormatException('EPUB 正文使用暂不支持的类型：${file.type}，且没有可读取的备用内容');
     }
-    if (imagePage && addImage(file.path) == null) {
-      throw const FormatException('EPUB 正文图片缺失或超过 8 MiB，请选择完整原书');
+    late html.Document document;
+    try {
+      if (imagePage && addImage(file.path, required: true) == null) {
+        throw const FormatException('EPUB 正文图片缺失或超过 8 MiB，请选择完整原书');
+      }
+      document = imagePage
+          ? (html.parse('<html><body></body></html>')
+              ..body!.append(
+                html.Element.tag('img')
+                  ..attributes['src'] = Uri(
+                    pathSegments: ['', ...file.path.split('/')],
+                  ).toString(),
+              ))
+          : parseDocument(file.path);
+    } on LocalBookArchiveCorruption catch (error) {
+      if (!recovery || error.path != file.path) rethrow;
+      damage[file.path] = error.reason;
+      final labelsForPath = labels.entries
+          .where((e) => e.key.path == file.path)
+          .toList();
+      if (labelsForPath.isEmpty) {
+        labelsForPath.add(
+          MapEntry(
+            (path: file.path, fragment: ''),
+            (title: file.path.split('/').last, volume: currentVolume),
+          ),
+        );
+      }
+      for (final entry in labelsForPath) {
+        final nextVolume = entry.value.volume.isEmpty
+            ? currentVolume
+            : entry.value.volume;
+        if (nextVolume != currentVolume) {
+          currentVolume = nextVolume;
+          volumeId++;
+        }
+        final chapterId = chapters.length + 1;
+        chapters.add(
+          NovelChapter(
+            '${_metadataText(entry.value.title)}（原文件损坏）',
+            '',
+            id: chapterId,
+            volumeTitle: currentVolume,
+            volumeId: volumeId,
+          ),
+        );
+        final origin = '${file.path}#${entry.key.fragment}';
+        origins.add(origin);
+        anchors[origin] = BookReadingTarget(chapterId);
+        anchors.putIfAbsent(
+          '${file.path}#',
+          () => BookReadingTarget(chapterId),
+        );
+        damagedChapters[chapterId] = file.path;
+        if (saveBody == null) bodies.add('');
+      }
+      lastBodyParagraphs = 0;
+      lastBodyBytes = 0;
+      continue;
     }
-    final document = imagePage
-        ? (html.parse('<html><body></body></html>')
-            ..body!.append(
-              html.Element.tag('img')
-                ..attributes['src'] = Uri(
-                  pathSegments: ['', ...file.path.split('/')],
-                ).toString(),
-            ))
-        : html.parse(read(file.path));
     final styles = epubStyleProperties(document, (href) {
       try {
         final path = resolve(file.path, href);
@@ -607,6 +729,7 @@ ImportedBook _epub(
           styles[document.body]?['-epub-writing-mode'] ??
           '',
       baseLanguage: field('language'),
+      languageRoot: document.body,
     );
     ReaderBlockSpacing blockSpacing(html.Element node) {
       final writing = rich.inherited(node, 'writing-mode').isNotEmpty
@@ -636,7 +759,7 @@ ImportedBook _epub(
               noteDocuments.keys.where((k) => k != file.path).first,
             );
           }
-          noteDocuments[to.path] = html.parse(read(to.path));
+          noteDocuments[to.path] = parseDocument(to.path);
         }
         final note = noteDocuments[to.path]!.getElementById(to.fragment);
         if (note == null) continue;
@@ -768,6 +891,7 @@ ImportedBook _epub(
       ).encode();
       final unlistedIllustration =
           mergeUnlistedIllustrations &&
+          !damagedChapters.containsKey(chapters.lastOrNull?.id) &&
           label?.title.isNotEmpty != true &&
           heading?.isNotEmpty != true &&
           output.isNotEmpty &&
@@ -1122,6 +1246,9 @@ ImportedBook _epub(
     }
   }
   if (chapters.isEmpty) throw const FormatException('EPUB 未找到可阅读的正文');
+  if (damagedChapters.length == chapters.length) {
+    throw const FormatException('EPUB 没有可恢复的完整正文，请重新获取原书');
+  }
   if (unavailableImages.isNotEmpty) {
     warnings.add(
       '原书有 ${unavailableImages.length} 张图片缺失、超过大小限制或暂不支持，其余正文和原书文件已保留。',
@@ -1133,34 +1260,68 @@ ImportedBook _epub(
           .where((e) => e.name.local == 'spine')
           .firstOrNull
           ?.getAttribute('toc')];
-  final authored = readEpubNavigation(
-    navPath: manifest.values
-        .where((e) => e.props.split(RegExp(r'\s+')).contains('nav'))
-        .firstOrNull
-        ?.path,
-    ncxPath: preferredNcx?.type == 'application/x-dtbncx+xml'
-        ? preferredNcx!.path
-        : ncx?.path,
-    read: read,
-    resolve: target,
-    contains: files.containsKey,
-    warnings: warnings,
-  );
+  final authored =
+      readEpubNavigation(
+            navPath: manifest.values
+                .where((e) => hasEpubToken(e.props, 'nav'))
+                .firstOrNull
+                ?.path,
+            ncxPath: preferredNcx?.type == 'application/x-dtbncx+xml'
+                ? preferredNcx!.path
+                : ncx?.path,
+            read: read,
+            resolve: target,
+            contains: (path) =>
+                files.containsKey(path) || damage.containsKey(path),
+            warnings: warnings,
+            normalizeMarkup:
+                normalizeMarkup && !htmlPaths.contains(epubNav?.path),
+          )
+          .where((entry) {
+            // A TOC's own top-level "#" link is not missing prose. Keep it only when
+            // that NAV document actually produced a reading destination.
+            return entry.key != '${epubNav?.path}#' ||
+                anchors.containsKey(entry.key);
+          })
+          .toList(growable: false);
   final wantedTargets = {...linkTargets, ...authored.map((e) => e.key)};
+  // Some EPUB generators retain stale NCX fragments after splitting HTML.
+  // Keep exact anchors first. A TOC entry may fall back only to its own
+  // document's real reading start, never another spine item or an invented ID.
+  final navigationFallbacks = <String, BookReadingTarget>{
+    for (final entry in authored)
+      if (!anchors.containsKey(entry.key) && entry.key != entry.documentKey)
+        entry.key: ?anchors[entry.documentKey],
+  };
   final navigation = BookNavigation(
     [
       for (final e in authored)
-        if (anchors[e.key] case final at?)
-          BookNavigationEntry(e.title, at, depth: e.depth),
+        if (anchors[e.key] ?? navigationFallbacks[e.key] case final at?)
+          BookNavigationEntry(
+            damagedChapters.containsKey(at.chapterId)
+                ? '${e.title}（原文件损坏）'
+                : e.title,
+            at,
+            depth: e.depth,
+          ),
     ],
     targets: Map.unmodifiable({
       for (final e in anchors.entries)
         if (wantedTargets.contains(e.key)) e.key: e.value,
+      ...navigationFallbacks,
     }),
   );
+  if (navigationFallbacks.isNotEmpty) {
+    warnings.add('原书有 ${navigationFallbacks.length} 个目录定位标记无法精确定位，已转到对应文档开头。');
+  }
   if (navigation.entries.length < authored.length) {
     warnings.add(
       '原书有 ${authored.length - navigation.entries.length} 个目录目标暂未解析，其他目录和正文仍可阅读。',
+    );
+  }
+  if (recovery && damage.isNotEmpty) {
+    warnings.add(
+      '已导入可读部分：${damagedChapters.length} 个章节无法读取，已发现 ${damage.length} 处资源问题。损坏章节保留在原书顺序中，请重新获取完整原件；新文件内容不同会作为新书导入，不会猜测合并进度与书签。',
     );
   }
   String meta(String name) =>
@@ -1195,12 +1356,17 @@ ImportedBook _epub(
       chapters,
       cover: coverUrl,
       navigation: navigation,
+      summary: damage.isEmpty
+          ? '已保存到本地书库，可离线阅读。'
+          : '已导入可读部分，${damagedChapters.length} 个章节无法读取，已发现 ${damage.length} 处资源问题。原文件未改动，请重新获取完整原件。',
     ),
     digest,
     bodies,
     images,
     warnings: List.unmodifiable(warnings),
     origins: List.unmodifiable(origins),
+    damagedResources: Map.unmodifiable(damage),
+    damagedChapters: Map.unmodifiable(damagedChapters),
     seriesHint:
         collection.isNotEmpty &&
             collectionNumber != null &&
@@ -1226,6 +1392,9 @@ class _ImportJob {
     this.preserveDirectory = false,
     this.linkedOriginal,
     this.document,
+    this.freshOriginal = false,
+    this.recoverDamagedEpub = false,
+    this.knownIncomplete = const {},
   });
   final String root, name;
   final Map<int, String> known;
@@ -1237,11 +1406,15 @@ class _ImportJob {
   final bool preserveDirectory;
   final Map<String, dynamic>? linkedOriginal;
   final LocalDocumentInput? document;
+  final bool freshOriginal;
+  final bool recoverDamagedEpub;
+  final Set<int> knownIncomplete;
 }
 
 class _ImportedFile {
-  const _ImportedFile(this.id, [this.novel, this.source]);
+  const _ImportedFile(this.id, this.digest, [this.novel, this.source]);
   final int id;
+  final String digest;
   final Novel? novel;
   final Map<String, dynamic>? source;
 }
@@ -1265,7 +1438,7 @@ Future<_ImportedFile> _importOriginal(_ImportJob job) async {
   final isEpub = job.name.toLowerCase().endsWith('.epub');
   final isText = job.name.toLowerCase().endsWith('.txt');
   final direct = job.linkedOriginal?['direct'] == true;
-  if (direct && job.linkedOriginal!['digest'] != digest) {
+  if (direct && !job.freshOriginal && job.linkedOriginal!['digest'] != digest) {
     throw const FormatException('原文件已变化，请重新选择原文件');
   }
   if (isEpub &&
@@ -1288,7 +1461,10 @@ Future<_ImportedFile> _importOriginal(_ImportJob job) async {
     if (previous != digest) {
       throw const FormatException('本地书籍标识冲突，原书已保留');
     }
-    return _ImportedFile(id);
+    if (!job.recoverDamagedEpub && job.knownIncomplete.contains(id)) {
+      throw const FormatException('书库中仅保存了这本书的可读部分，不能作为完整原书同步或恢复；请重新获取完整原件');
+    }
+    return _ImportedFile(id, digest);
   }
   final staging = Directory('${job.root}/.$id-import');
   if (await staging.exists()) await staging.delete(recursive: true);
@@ -1299,16 +1475,29 @@ Future<_ImportedFile> _importOriginal(_ImportJob job) async {
     late ImportedBook parsed;
     if (isEpub) {
       buffer = document?.open();
+      final verifiedImages = <String>{};
+      final stream = buffer?.stream ?? InputMemoryStream(job.input!.bytes);
+      final recovered = job.recoverDamagedEpub
+          ? readLocalBookArchiveForRecovery(stream, maxSize: 1024 * 1024 * 1024)
+          : null;
       parsed = _epub(
         LocalBookInput(job.name, Uint8List(0)),
         id,
         digest,
-        archive: readLocalBookArchive(
-          buffer?.stream ?? InputMemoryStream(job.input!.bytes),
-          maxSize: 1024 * 1024 * 1024,
-        ),
+        archive:
+            recovered?.archive ??
+            readLocalBookArchive(stream, maxSize: 1024 * 1024 * 1024),
+        damagedEntries: recovered?.damagedEntries,
         autoTitles: options.autoTitles,
         mergeUnlistedIllustrations: options.inlineEpubImages,
+        verifyImage: (image) {
+          // Covers may already have been consumed before the spine reaches the
+          // same image. Retain only verification state, not expanded images.
+          if (!verifiedImages.contains(image.name)) {
+            readLocalBookArchiveEntry(image);
+            verifiedImages.add(image.name);
+          }
+        },
         saveBody: (index, body) =>
             File('${staging.path}/c$index.txt').writeAsStringSync(body),
         appendBody: (index, body) => File(
@@ -1319,12 +1508,9 @@ Future<_ImportedFile> _importOriginal(_ImportJob job) async {
           // Covers remain immediately readable for large book lists. All other
           // illustrations retain their original bytes in the single EPUB copy.
           if (name.startsWith('cover.')) {
-            final output = OutputFileStream('${staging.path}/$name');
-            try {
-              image.writeContent(output);
-            } finally {
-              output.closeSync();
-            }
+            final bytes = readLocalBookArchiveEntry(image);
+            verifiedImages.add(image.name);
+            File('${staging.path}/$name').writeAsBytesSync(bytes);
           }
         },
       );
@@ -1374,18 +1560,43 @@ Future<_ImportedFile> _importOriginal(_ImportJob job) async {
     final source = <String, dynamic>{
       'name': job.name,
       'digest': digest,
+      if (parsed.damagedResources.isNotEmpty)
+        'epubImportIssues': [
+          for (final entry in parsed.damagedResources.entries)
+            {
+              'path': entry.key,
+              'reason': entry.value,
+              'kind': parsed.damagedChapters.containsValue(entry.key)
+                  ? 'chapter'
+                  : RegExp(
+                      r'\.(png|jpe?g|gif|webp)$',
+                      caseSensitive: false,
+                    ).hasMatch(entry.key)
+                  ? 'image'
+                  : 'resource',
+              'chapterIds': [
+                for (final chapter in parsed.damagedChapters.entries)
+                  if (chapter.value == entry.key) chapter.key,
+              ],
+            },
+        ],
       'encoding': text == null && job.decodedPath == null ? 'utf8' : 'decoded',
       'parser': options.inlineEpubImages ? 3 : 2,
       'imageSizing': 1,
       if (isEpub) 'richText': 2,
       if (isEpub) 'epubNavigation': 1,
       if (isEpub) 'publisherSpacing': 1,
-      if (isEpub) 'publisherLanguages': 1,
+      if (isEpub) 'publisherLanguages': epubPublisherLanguageVersion,
+      if (isEpub) 'epubMarkup': epubMarkupVersion,
       'importedAt': DateTime.now().millisecondsSinceEpoch,
       if (!options.isDefault) 'importOptions': options.toJson(),
       if (parsed.seriesHint != null) 'seriesHint': parsed.seriesHint!.toJson(),
       if (parsed.warnings.isNotEmpty) 'importWarnings': parsed.warnings,
-      if (job.linkedOriginal != null) 'linkedOriginal': job.linkedOriginal,
+      if (job.linkedOriginal != null)
+        'linkedOriginal': {
+          ...job.linkedOriginal!,
+          if (job.freshOriginal) 'digest': digest,
+        },
     };
     if (direct) {
       // The live descriptor belongs to the importer; no original is copied.
@@ -1429,7 +1640,11 @@ Future<_ImportedFile> _importOriginal(_ImportJob job) async {
       }
     }
     if (media.isNotEmpty) {
-      final index = jsonEncode({'version': 1, 'entries': media});
+      final index = jsonEncode({
+        'version': 1,
+        'entries': media,
+        if (parsed.damagedResources.isNotEmpty) 'recoverDamagedEpub': true,
+      });
       if (utf8.encode(index).length > 1024 * 1024) {
         throw const FormatException('本地插图索引过大');
       }
@@ -1458,7 +1673,7 @@ Future<_ImportedFile> _importOriginal(_ImportJob job) async {
       '${staging.path}/book.json',
     ).writeAsString(metadata, flush: true);
     await staging.rename('${job.root}/$id');
-    return _ImportedFile(id, parsed.novel, source);
+    return _ImportedFile(id, digest, parsed.novel, source);
   } on ArchiveException {
     throw const FormatException('EPUB 压缩文件损坏，请重新下载原书');
   } finally {
@@ -1649,7 +1864,8 @@ Future<Map<int, String>> _loadLocalCovers(String path) async {
 }
 
 /// Durable originals are separate from disposable network caches.
-class LocalBookStore extends ChangeNotifier {
+class LocalBookStore extends ChangeNotifier
+    implements LocalBookImportWarningAccess {
   LocalBookStore(
     this.directory, {
     LocalTextAccess? textAccess,
@@ -1736,6 +1952,7 @@ class LocalBookStore extends ChangeNotifier {
       'title': series.title,
       'author': series.author,
       'summary': series.summary,
+      'genre': localBookGenre(series.tags ?? const [], series: true),
       'coverUrl': null,
       'navigation': _seriesNavigation(series)?.toJson(),
     }).withChapters([
@@ -1886,6 +2103,72 @@ class LocalBookStore extends ChangeNotifier {
     }.toList(growable: false);
   }
 
+  @override
+  Listenable get importWarningChanges => this;
+
+  @override
+  List<LocalBookImportIssue> importIssues(int id) {
+    final originals = _series[id]?.volumes.map((v) => v.bookId) ?? [id];
+    final issues = <LocalBookImportIssue>[];
+    for (final original in originals) {
+      final stored = _sources[original]?['epubImportIssues'];
+      if (stored is! List) continue;
+      for (final raw in stored.whereType<Map>()) {
+        if (raw['path'] is! String || raw['reason'] is! String) continue;
+        final ids =
+            (raw['chapterIds'] is List ? raw['chapterIds'] as List : const [])
+                .whereType<int>()
+                .toList();
+        issues.add(
+          LocalBookImportIssue(
+            bookId: original,
+            path: raw['path'] as String,
+            reason: raw['reason'] as String,
+            kind: LocalBookImportIssueKind.values.firstWhere(
+              (kind) => kind.name == raw['kind'],
+              orElse: () => LocalBookImportIssueKind.resource,
+            ),
+            chapterIds: List.unmodifiable(ids),
+            chapterTitles: List.unmodifiable([
+              for (final chapter
+                  in _books[original]?.chapters ?? const <NovelChapter>[])
+                if (ids.contains(chapter.id)) chapter.title,
+            ]),
+          ),
+        );
+      }
+    }
+    return List.unmodifiable(issues);
+  }
+
+  bool isIncompleteBook(int id) => importIssues(id).isNotEmpty;
+
+  @override
+  bool shouldShowImportWarning(int id) => importIssues(
+    id,
+  ).any((issue) => _sources[issue.bookId]?['hideImportWarning'] != true);
+
+  @override
+  Future<void> setImportWarningHidden(int id, bool hidden) async {
+    final work = _writes.catchError((Object _) {}).then((_) async {
+      final originals = importIssues(id).map((issue) => issue.bookId).toSet();
+      for (final original in originals) {
+        if ((_sources[original]?['hideImportWarning'] == true) == hidden) {
+          continue;
+        }
+        final source = {..._sources[original]!};
+        if (hidden) {
+          source['hideImportWarning'] = true;
+        } else {
+          source.remove('hideImportWarning');
+        }
+        await _replaceLinkedSource(original, source);
+      }
+    });
+    _writes = work;
+    await work;
+  }
+
   LocalSeriesHint? seriesHint(int id) =>
       LocalSeriesHint.fromJson(_sources[id]?['seriesHint']) ??
       inferLocalSeries(_books[id]?.title ?? '') ??
@@ -1918,7 +2201,6 @@ class LocalBookStore extends ChangeNotifier {
       ),
     );
     await store.load();
-    LocalBookMedia.root = store.directory;
     return store;
   }
 
@@ -1937,6 +2219,7 @@ class LocalBookStore extends ChangeNotifier {
       ..clear()
       ..addAll(loaded.sources);
     LocalBookMedia.root = directory;
+    LocalBookMedia.importWarnings = this;
     LocalBookMedia.externalImage = (id, name) => _directOriginal(id)
         ? _withOriginalInput(
             id,
@@ -1945,6 +2228,16 @@ class LocalBookStore extends ChangeNotifier {
               name: name,
               original: input,
             )),
+          )
+        : null;
+    LocalBookMedia.externalImages = (id, names) => _directOriginal(id)
+        ? _withOriginalInput(
+            id,
+            (input) => compute(readLocalEpubImagesFromInput, (
+              directory: '${directory.path}/$id',
+              names: names,
+              original: input,
+            ), debugLabel: 'local-epub-image-batch'),
           )
         : null;
     _epubLayouts
@@ -1969,12 +2262,14 @@ class LocalBookStore extends ChangeNotifier {
     LocalImportOptions options = const LocalImportOptions(),
     bool requireMatchingOptions = false,
     Map<int, LocalImportOptions> optionsById = const {},
+    bool recoverDamagedEpub = false,
   }) => _import(
     input.name,
     input: input,
     options: options,
     requireMatchingOptions: requireMatchingOptions,
     optionsById: optionsById,
+    recoverDamagedEpub: recoverDamagedEpub,
   );
 
   Future<Novel> importFile(
@@ -1983,12 +2278,14 @@ class LocalBookStore extends ChangeNotifier {
     String? text,
     String? decodedPath,
     LocalImportOptions options = const LocalImportOptions(),
+    bool recoverDamagedEpub = false,
   }) => _import(
     name,
     path: path,
     text: text,
     decodedPath: decodedPath,
     options: options,
+    recoverDamagedEpub: recoverDamagedEpub,
   );
 
   Future<Novel> _import(
@@ -2002,14 +2299,20 @@ class LocalBookStore extends ChangeNotifier {
     Map<int, LocalImportOptions> optionsById = const {},
     Map<String, dynamic>? linkedOriginal,
     LocalDocumentInput? document,
+    String? linkedOriginalReference,
     bool renewOriginalReference = false,
+    bool recoverDamagedEpub = false,
   }) async {
     late Novel result;
     final work = _writes.catchError((Object _) {}).then((_) async {
       if (_epubLayoutError != null && name.toLowerCase().endsWith('.epub')) {
         throw FormatException(_epubLayoutError!);
       }
-      final imported = await compute(
+      var selectedOriginal = linkedOriginal;
+      Future<_ImportedFile> readOriginal(
+        LocalDocumentInput? selectedInput, {
+        bool freshOriginal = false,
+      }) => compute(
         _importOriginal,
         _ImportJob(
           root: directory.path,
@@ -2022,15 +2325,39 @@ class LocalBookStore extends ChangeNotifier {
           optionsById: optionsById,
           epubLayouts: _epubLayouts,
           preserveDirectory: requireMatchingOptions,
-          linkedOriginal: linkedOriginal,
-          document: document,
+          linkedOriginal: selectedOriginal,
+          document: selectedInput,
+          freshOriginal: freshOriginal,
+          recoverDamagedEpub: recoverDamagedEpub,
+          knownIncomplete: {
+            for (final id in _sources.keys)
+              if (isIncompleteBook(id)) id,
+          },
           known: {
             for (final e in _sources.entries)
               e.key: e.value['digest'] as String,
             for (final id in _series.keys) id: 'reserved-series',
           },
         ),
+        debugLabel: 'local-book-import',
       );
+      final _ImportedFile imported;
+      if (linkedOriginalReference != null) {
+        imported = await (documentAccess as LocalDocumentImportAccess)
+            .withFreshInput(linkedOriginalReference, (input, header) {
+              selectedOriginal = {
+                'reference': header.reference,
+                'size': header.size,
+                'modified': header.modified,
+                'name': name,
+                'direct': true,
+              };
+              return readOriginal(input, freshOriginal: true);
+            });
+        selectedOriginal = {...selectedOriginal!, 'digest': imported.digest};
+      } else {
+        imported = await readOriginal(document);
+      }
       if (requireMatchingOptions &&
           imported.novel == null &&
           importOptionsFor(imported.id).directoryIdentity !=
@@ -2042,13 +2369,13 @@ class LocalBookStore extends ChangeNotifier {
       if (imported.novel != null) {
         _books[imported.id] = imported.novel!;
         _sources[imported.id] = imported.source!;
-        await _refreshSeries();
+        await _refreshSeries(originals: {imported.id});
         if (!_disposed) notifyListeners();
       } else if (renewOriginalReference &&
-          linkedOriginal != null &&
+          selectedOriginal != null &&
           _sources[imported.id]?['linkedOriginal'] is Map) {
         final before = _documentSource(imported.id);
-        final after = LocalDocumentSource.fromJson(linkedOriginal);
+        final after = LocalDocumentSource.fromJson(selectedOriginal);
         if (before.digest == after.digest &&
             before.size == after.size &&
             (before.reference != after.reference ||
@@ -2093,6 +2420,14 @@ class LocalBookStore extends ChangeNotifier {
     }
     final source = _seriesChapters[id]?[chapter.id];
     final base = source?.bookId ?? id;
+    final chapterId = source?.chapterId ?? chapter.id;
+    if (importIssues(
+      base,
+    ).any((issue) => issue.chapterIds.contains(chapterId))) {
+      throw const FormatException(
+        '原文件本章数据损坏，需完整原件恢复。其他可读章节仍可阅读；请重新获取完整原件后重新导入，内容不同会作为新书保留，不会覆盖原有进度与书签。',
+      );
+    }
     if (isLinkedText(base)) {
       try {
         final index = _linkedIndex(base);
@@ -2112,7 +2447,7 @@ class LocalBookStore extends ChangeNotifier {
       }
     }
     final file = File(
-      '${directory.path}/$base/${{'layout-rich-v1', 'layout-rich-v2'}.contains(_sources[base]?['layoutFolder']) ? '${_sources[base]!['layoutFolder']}/' : ''}c${source?.chapterId ?? chapter.id}.txt',
+      '${directory.path}/$base/${{'layout-rich-v1', 'layout-rich-v2', 'layout-markup-v1'}.contains(_sources[base]?['layoutFolder']) ? '${_sources[base]!['layoutFolder']}/' : ''}c${source?.chapterId ?? chapter.id}.txt',
     );
     final body = await readLocalText(file);
     if (_sources[base]?['imageSizing'] != 1 &&
@@ -2206,17 +2541,29 @@ class LocalBookStore extends ChangeNotifier {
     await work;
   }
 
-  Future<void> _refreshSeries({Set<int>? coverOriginals}) async {
-    final novels = <int, Novel>{if (coverOriginals != null) ..._seriesBooks};
+  Future<void> _refreshSeries({
+    Set<int>? coverOriginals,
+    Set<int>? originals,
+  }) async {
+    if (coverOriginals == null) await _repairMarkupSeries(originals: originals);
+    final incremental = coverOriginals != null || originals != null;
+    final affected = _series.values
+        .where(
+          (s) =>
+              !s.deleted &&
+              (!incremental ||
+                  coverOriginals?.contains(s.volumes.first.bookId) == true ||
+                  s.volumes.any((v) => originals?.contains(v.bookId) == true)),
+        )
+        .toList();
+    if (incremental && affected.isEmpty) return;
+    final novels = <int, Novel>{if (incremental) ..._seriesBooks};
     final references = <int, Map<int, ({int bookId, int chapterId})>>{
-      if (coverOriginals != null) ..._seriesChapters,
+      if (incremental) ..._seriesChapters,
     };
-    for (final series in _series.values.where(
-      (s) =>
-          !s.deleted &&
-          (coverOriginals == null ||
-              coverOriginals.contains(s.volumes.first.bookId)),
-    )) {
+    for (final series in affected) {
+      novels.remove(series.id);
+      references.remove(series.id);
       if (series.volumes.any(
         (v) =>
             _books[v.bookId] == null ||
@@ -2251,7 +2598,7 @@ class LocalBookStore extends ChangeNotifier {
         final target = File('${folder.path}${uri.path}');
         if (await source.exists()) {
           await folder.create(recursive: true);
-          if (coverOriginals != null ||
+          if (coverOriginals?.contains(series.volumes.first.bookId) == true ||
               (_seriesCovers.containsKey(series.id) &&
                   _seriesCovers[series.id] != first.coverUrl) ||
               !await target.exists()) {
@@ -2269,7 +2616,7 @@ class LocalBookStore extends ChangeNotifier {
         'title': series.title,
         'author': series.author,
         'summary': series.summary,
-        'genre': '本地合订本',
+        'genre': localBookGenre(series.tags ?? const [], series: true),
         'coverUrl': cover,
         'chapterCount': chapters.length,
         'navigation': _seriesNavigation(series)?.toJson(),
@@ -2382,6 +2729,7 @@ class LocalBookStore extends ChangeNotifier {
         title: title.trim(),
         author: previous?.author ?? first.author,
         summary: previous?.summary ?? first.summary,
+        tags: previous?.tags,
         volumes: List.unmodifiable(members),
         nextChapterId: nextChapter,
         updatedAt: max(now, (previous?.updatedAt ?? 0) + 1),
@@ -2428,7 +2776,7 @@ class LocalBookStore extends ChangeNotifier {
                       series.toJson(),
                     ).compareTo(jsonEncode(old.toJson())) >
                     0)) {
-          next[series.id] = series;
+          next[series.id] = series.copyWith(tags: series.tags ?? old?.tags);
         }
       }
       await _writeSeries(next);
@@ -2464,6 +2812,7 @@ class LocalBookStore extends ChangeNotifier {
         'title': v['title'].trim(),
         'author': v['author'].trim(),
         'summary': v['summary'].trim(),
+        if (v.containsKey('tags')) 'tags': decodeBookTags(v['tags']),
         'at': v['at'],
       };
     }
@@ -2473,18 +2822,32 @@ class LocalBookStore extends ChangeNotifier {
   Map<String, dynamic> exportMetadata() => {
     for (final e in _sources.entries)
       if (e.value['userMetadata'] != null)
-        '${e.key}': Map<String, dynamic>.from(e.value['userMetadata']),
+        '${e.key}': {
+          ...Map<String, dynamic>.from(e.value['userMetadata']),
+          if (e.value['userMetadata']['tags'] case final List tags)
+            'tags': List<String>.from(tags),
+        },
   };
   Future<void> _writeMetadata(int id, Map<String, dynamic> value) async {
     final current = _books[id];
     if (current == null) return;
+    // Older clients have no tags field. Their title edits must not clear tags
+    // already saved on this device, including the next backup's metadata.
+    final previous = _sources[id]?['userMetadata'] as Map?;
+    final metadata = {
+      ...value,
+      if (!value.containsKey('tags') && previous?.containsKey('tags') == true)
+        'tags': previous!['tags'],
+    };
     final changed = Novel.fromSnapshot({
       ...current.toSnapshot(),
       'title': value['title'],
       'author': value['author'],
       'summary': value['summary'],
+      if (metadata.containsKey('tags'))
+        'genre': localBookGenre((metadata['tags'] as List).cast<String>()),
     }).withChapters(current.chapters);
-    final source = {..._sources[id]!, 'userMetadata': value};
+    final source = {..._sources[id]!, 'userMetadata': metadata};
     final target = File('${directory.path}/$id/book.json');
     final json =
         jsonDecode(await target.readAsString()) as Map<String, dynamic>;
@@ -2501,11 +2864,13 @@ class LocalBookStore extends ChangeNotifier {
     _books[id] = changed;
   }
 
+  /// Omitting [tags] preserves existing tags; an empty iterable clears them.
   Future<Novel> updateMetadata(
     int id, {
     required String title,
     required String author,
     required String summary,
+    Iterable<String>? tags,
   }) async {
     late Novel result;
     final work = _writes.catchError((Object _) {}).then((_) async {
@@ -2517,6 +2882,7 @@ class LocalBookStore extends ChangeNotifier {
           'title': title,
           'author': author,
           'summary': summary,
+          'tags': normalizeBookTags(tags ?? book(id)!.tags),
           'at': now > previousAt ? now : previousAt + 1,
         },
       });
@@ -2528,6 +2894,7 @@ class LocalBookStore extends ChangeNotifier {
             title: value['title'],
             author: value['author'],
             summary: value['summary'],
+            tags: (value['tags'] as List).cast<String>(),
             updatedAt: max(value['at'] as int, _series[id]!.updatedAt + 1),
           ),
         });
@@ -2718,6 +3085,9 @@ class LocalBookStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    if (identical(LocalBookMedia.importWarnings, this)) {
+      LocalBookMedia.importWarnings = null;
+    }
     super.dispose();
   }
 }

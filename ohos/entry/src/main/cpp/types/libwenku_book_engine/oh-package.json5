@@ -1,0 +1,5 @@
+{
+  "name": "libwenku_book_engine.so",
+  "version": "0.1.0",
+  "types": "./index.d.ts"
+}

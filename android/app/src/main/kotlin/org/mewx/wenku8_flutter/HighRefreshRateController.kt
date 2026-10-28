@@ -19,8 +19,24 @@ import io.flutter.embedding.android.FlutterTextureView
 import io.flutter.embedding.android.FlutterView
 
 /** Keeps the preference attached to the live Flutter rendering surface. */
-internal class HighRefreshRateController(private val activity: Activity) :
+internal class HighRefreshRateController(
+    private val activity: Activity,
+    private val onStatusChanged: () -> Unit = {},
+) :
     DisplayManager.DisplayListener, ViewTreeObserver.OnGlobalLayoutListener, android.content.SharedPreferences.OnSharedPreferenceChangeListener {
+    /** Submission evidence only; it does not measure compositor or Flutter FPS. */
+    data class Status(
+        val active: Boolean,
+        val windowModeId: Int,
+        val windowRate: Float,
+        val windowFocused: Boolean,
+        val surfaceCount: Int,
+        val submittedSurfaceCount: Int,
+        val surfaceRate: Float?,
+        val surfaceState: String,
+        val surfaceError: String?,
+        val viewRate: Float?,
+    )
     private val manager = activity.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     private val handler = Handler(Looper.getMainLooper())
     private val settings = activity.getSharedPreferences("frame_rate_settings", Context.MODE_PRIVATE)
@@ -29,7 +45,35 @@ internal class HighRefreshRateController(private val activity: Activity) :
     private val viewRates = LinkedHashMap<View, Float>()
     private var preference: RefreshRatePolicy.Preference? = null
     private var active = false
+    private var rendererWithoutSurface = false
+    private var lastStatus: Status? = null
     private val reconcile = Runnable { if (active) update() }
+
+    fun status(): Status {
+        val live = surfaces.values.filter { it.isValid }
+        val submitted = live.mapNotNull { it.submittedRate }
+        val error = live.firstNotNullOfOrNull { it.error }
+        val state = when {
+            !active -> "inactive"
+            Build.VERSION.SDK_INT < 30 -> "unavailable"
+            rendererWithoutSurface -> "unavailable"
+            live.isEmpty() -> "waiting_for_surface"
+            error != null -> "failed"
+            submitted.size != live.size -> "pending"
+            else -> "submitted"
+        }
+        val viewRate = if (Build.VERSION.SDK_INT >= 36) {
+            viewRates.keys.filter { it.isAttachedToWindow }.map { it.requestedFrameRate }.distinct().singleOrNull()
+        } else null
+        val attrs = activity.window.attributes
+        return Status(active, attrs.preferredDisplayModeId, attrs.preferredRefreshRate, root.hasWindowFocus(), live.size, submitted.size,
+            submitted.distinct().singleOrNull(), state, error, viewRate)
+    }
+
+    private fun publishStatus() {
+        val current = status()
+        if (current != lastStatus) { lastStatus = current; onStatusChanged() }
+    }
 
     fun start() {
         if (active) return
@@ -59,7 +103,9 @@ internal class HighRefreshRateController(private val activity: Activity) :
             viewRates.forEach { (view, previous) -> view.requestedFrameRate = previous }
         }
         viewRates.clear()
+        rendererWithoutSurface = false
         preference = null
+        publishStatus()
     }
 
     @Suppress("DEPRECATION")
@@ -81,10 +127,10 @@ internal class HighRefreshRateController(private val activity: Activity) :
             attrs.preferredRefreshRate = selected.rate
             activity.window.attributes = attrs
         }
-        bindRenderingViews(selected.rate)
+        bindRenderingViews(selected.rate, retryFailed = true)
     }
 
-    private fun bindRenderingViews(rate: Float) {
+    private fun bindRenderingViews(rate: Float, retryFailed: Boolean = false) {
         val liveSurfaces = HashSet<SurfaceView>()
         val liveViews = HashSet<View>()
         fun visit(view: View) {
@@ -101,24 +147,34 @@ internal class HighRefreshRateController(private val activity: Activity) :
                 }
                 if (view is SurfaceView) {
                     liveSurfaces.add(view)
-                    surfaces.getOrPut(view) { SurfaceBinding(view) }.applyRate(rate)
+                    surfaces.getOrPut(view) { SurfaceBinding(view) }.applyRate(rate, retryFailed)
                 }
             }
             if (view is ViewGroup) for (i in 0 until view.childCount) visit(view.getChildAt(i))
         }
         visit(root)
+        rendererWithoutSurface = liveSurfaces.isEmpty() &&
+            liveViews.any { it is FlutterTextureView || it is FlutterImageView }
         surfaces.keys.filter { it !in liveSurfaces }.forEach { surfaces.remove(it)?.close() }
         viewRates.keys.filter { it !in liveViews }.forEach { view ->
             val previous = viewRates.remove(view)!!
             if (Build.VERSION.SDK_INT >= 36) view.requestedFrameRate = previous
         }
+        publishStatus()
     }
 
     private inner class SurfaceBinding(private val view: SurfaceView) : SurfaceHolder.Callback {
         private val vote = SurfaceRateVote()
         private var rate = 0f
+        var error: String? = null
+            private set
+        val isValid: Boolean get() = view.holder.surface.isValid
+        val submittedRate: Float? get() = if (isValid) vote.appliedRate else null
         init { view.holder.addCallback(this) }
-        fun applyRate(value: Float) {
+        fun applyRate(value: Float, retryFailed: Boolean = false) {
+            // A rejected request waits for settings/display/focus/surface events;
+            // unrelated animated layouts must not create a resubmission loop.
+            if (error != null && value == rate && !retryFailed) return
             rate = value
             val surface = view.holder.surface
             if (Build.VERSION.SDK_INT < 30) return
@@ -128,15 +184,20 @@ internal class HighRefreshRateController(private val activity: Activity) :
                         Surface.FRAME_RATE_COMPATIBILITY_DEFAULT, Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
                     else surface.setFrameRate(it, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
                 }
-            } catch (_: IllegalStateException) {
+                error = null
+            } catch (failure: IllegalStateException) {
                 // Destruction can race hierarchy events. Retry on the next real
                 // lifecycle event, never in a per-frame or timer polling loop.
                 vote.invalidate()
+                error = failure.javaClass.simpleName
+            } catch (failure: IllegalArgumentException) {
+                vote.invalidate()
+                error = failure.javaClass.simpleName
             }
         }
-        override fun surfaceCreated(holder: SurfaceHolder) { vote.invalidate(); applyRate(rate) }
-        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = applyRate(rate)
-        override fun surfaceDestroyed(holder: SurfaceHolder) = vote.invalidate()
+        override fun surfaceCreated(holder: SurfaceHolder) { vote.invalidate(); applyRate(rate, retryFailed = true); publishStatus() }
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { applyRate(rate, retryFailed = true); publishStatus() }
+        override fun surfaceDestroyed(holder: SurfaceHolder) { vote.invalidate(); error = null; publishStatus() }
         fun close() { view.holder.removeCallback(this); applyRate(0f) }
     }
 

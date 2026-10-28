@@ -5,6 +5,7 @@ import 'app_search_field.dart';
 import 'app_ui.dart';
 import 'book_collection_layout.dart';
 import 'catalog.dart';
+import 'dock_layout.dart';
 import 'feature_pages.dart';
 import 'library_state.dart';
 import 'book_categories.dart';
@@ -134,6 +135,54 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
     }
   }
 
+  Widget _dockActions(
+    BuildContext context,
+    Set<int> selected,
+    String removeLabel,
+    ({bool stacked, double height, double extent}) geometry,
+  ) {
+    final category = GlassPillButton(
+      key: const ValueKey('local-batch-category'),
+      icon: CupertinoIcons.folder,
+      label: '移动分类',
+      height: DockLayout.heightOf(context),
+      iconSize: DockLayout.iconSize,
+      fontSize: DockLayout.labelFontSize,
+      onPressed: _busy || selected.isEmpty ? null : () => _move(selected),
+    );
+    final remove = GlassPillButton(
+      key: const ValueKey('local-batch-remove'),
+      icon: CupertinoIcons.trash,
+      label: removeLabel,
+      height: DockLayout.heightOf(context),
+      iconSize: DockLayout.iconSize,
+      fontSize: DockLayout.labelFontSize,
+      onPressed: _busy || selected.isEmpty ? null : () => _remove(selected),
+    );
+    return ControlMaterialScope.chrome(
+      child: SizedBox(
+        key: const ValueKey('local-batch-action-dock'),
+        height: geometry.height,
+        child: geometry.stacked
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  remove,
+                  const SizedBox(height: DockLayout.actionGap),
+                  category,
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(flex: 5, child: category),
+                  const SizedBox(width: DockLayout.actionGap),
+                  Expanded(flex: 7, child: remove),
+                ],
+              ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: Listenable.merge([
@@ -156,6 +205,16 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
       final allSelected =
           visible.isNotEmpty &&
           visible.every((book) => selected.contains(book.id));
+      final removeLabel = switch (_progress) {
+        (final done, final total) => '正在处理 $done/$total',
+        null => selected.isEmpty ? '请选择书籍' : '移除 ${selected.length} 本书',
+      };
+      final geometry = glassActionDockGeometry(
+        context,
+        primary: removeLabel,
+        secondary: '移动分类',
+      );
+      final safe = MediaQuery.viewPaddingOf(context);
       return PopScope(
         canPop: !_busy,
         child: ArchiveFeaturePage(
@@ -193,136 +252,133 @@ class _LocalBookBatchPageState extends State<LocalBookBatchPage> {
               child: AppText(allSelected ? '取消全选' : '全选'),
             ),
           ],
-          child: Column(
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              Expanded(
-                child: CustomScrollView(
-                  slivers: [
-                    SliverPadding(
-                      padding: featurePadding(context).copyWith(bottom: 12),
-                      sliver: SliverToBoxAdapter(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            AppSearchField(
-                              inputKey: const ValueKey('local-batch-search'),
-                              controller: _query,
-                              hint: '搜索本地书名、作者',
-                              onChanged: (_) => setState(() {}),
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: AppText(
-                                    '${visible.length} 本 · 已选 ${selected.length} 本',
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ),
-                                if (selected.isNotEmpty)
-                                  GlassTextButton(
-                                    compact: true,
-                                    onPressed: _busy
-                                        ? null
-                                        : () => setState(_selected.clear),
-                                    child: const AppText('清空选择'),
-                                  ),
-                              ],
-                            ),
-                            FeatureError(_error),
-                            if (visible.isEmpty)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 28,
-                                ),
+              CustomScrollView(
+                slivers: [
+                  SliverPadding(
+                    padding: featurePadding(context).copyWith(bottom: 12),
+                    sliver: SliverToBoxAdapter(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          AppSearchField(
+                            inputKey: const ValueKey('local-batch-search'),
+                            controller: _query,
+                            hint: '搜索本地书名、作者',
+                            onChanged: (_) => setState(() {}),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
                                 child: AppText(
-                                  all.isEmpty ? '没有可整理的本地书籍。' : '没有符合关键词的书籍。',
+                                  '${visible.length} 本 · 已选 ${selected.length} 本',
+                                  style: const TextStyle(fontSize: 12),
                                 ),
                               ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      sliver: BookCollectionSliver(
-                        itemCount: visible.length,
-                        itemBuilder: (context, index) {
-                          final book = visible[index],
-                              chosen = selected.contains(book.id);
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: Semantics(
-                              selected: chosen,
-                              child: ContentPanel(
-                                key: ValueKey('local-batch-book-${book.id}'),
-                                onTap: _busy ? null : () => _toggle(book.id),
-                                child: Row(
-                                  children: [
-                                    NovelCover(book, width: 40, height: 56),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: _BookLabel(
-                                        book,
-                                        category: widget.library.organization
-                                            .nameOf(
-                                              widget.library.organization
-                                                  .groupOf(book.id),
-                                            ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    ArchiveIcon(
-                                      chosen
-                                          ? CupertinoIcons.checkmark_circle_fill
-                                          : CupertinoIcons.circle,
-                                      size: 23,
-                                    ),
-                                  ],
+                              Visibility(
+                                visible: selected.isNotEmpty,
+                                maintainSize: true,
+                                maintainState: true,
+                                maintainAnimation: true,
+                                child: GlassTextButton(
+                                  compact: true,
+                                  onPressed: _busy || selected.isEmpty
+                                      ? null
+                                      : () => setState(_selected.clear),
+                                  child: const AppText('清空选择'),
                                 ),
+                              ),
+                            ],
+                          ),
+                          FeatureError(_error),
+                          if (visible.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 28),
+                              child: AppText(
+                                all.isEmpty ? '没有可整理的本地书籍。' : '没有符合关键词的书籍。',
                               ),
                             ),
-                          );
-                        },
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    sliver: BookCollectionSliver(
+                      itemCount: visible.length,
+                      itemBuilder: (context, index) {
+                        final book = visible[index],
+                            chosen = selected.contains(book.id);
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Semantics(
+                            selected: chosen,
+                            child: ContentPanel(
+                              key: ValueKey('local-batch-book-${book.id}'),
+                              onTap: _busy ? null : () => _toggle(book.id),
+                              child: Row(
+                                children: [
+                                  NovelCover(book, width: 40, height: 56),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _BookLabel(
+                                      book,
+                                      category: widget.library.organization
+                                          .nameOf(
+                                            widget.library.organization.groupOf(
+                                              book.id,
+                                            ),
+                                          ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ArchiveIcon(
+                                    chosen
+                                        ? CupertinoIcons.checkmark_circle_fill
+                                        : CupertinoIcons.circle,
+                                    size: 23,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: SizedBox(height: geometry.extent + 20),
+                  ),
+                ],
               ),
-              SafeArea(
-                top: false,
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: DockUnderlay(contentHeight: geometry.height),
+              ),
+              Align(
+                alignment: Alignment.bottomCenter,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: GlassPillButton(
-                          key: const ValueKey('local-batch-category'),
-                          icon: CupertinoIcons.folder,
-                          label: '移动分类',
-                          onPressed: _busy || selected.isEmpty
-                              ? null
-                              : () => _move(selected),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: GlassPillButton(
-                          key: const ValueKey('local-batch-remove'),
-                          icon: CupertinoIcons.trash,
-                          label: switch (_progress) {
-                            (final done, final total) => '正在处理 $done/$total',
-                            null =>
-                              selected.isEmpty
-                                  ? '请选择书籍'
-                                  : '移除 ${selected.length} 本书',
-                          },
-                          onPressed: _busy || selected.isEmpty
-                              ? null
-                              : () => _remove(selected),
-                        ),
-                      ),
-                    ],
+                  padding: EdgeInsets.fromLTRB(
+                    DockLayout.actionSideInset + safe.left,
+                    0,
+                    DockLayout.actionSideInset + safe.right,
+                    DockLayout.bottomPaddingOf(context, viewPadding: true),
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: DockLayout.actionMaxWidth,
+                    ),
+                    child: _dockActions(
+                      context,
+                      selected,
+                      removeLabel,
+                      geometry,
+                    ),
                   ),
                 ),
               ),

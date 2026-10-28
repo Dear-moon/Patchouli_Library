@@ -17,9 +17,19 @@ import 'user_fonts.dart';
 import 'illustration_placement.dart';
 import 'app_palette.dart';
 import 'reading_entry.dart';
+import 'blocked_tags.dart';
+import 'book_grid_density.dart';
+import 'book_collection_mode.dart';
+import 'book_shelf_preferences.dart';
+import 'book_shelf_content_preferences.dart';
+import 'discovery_shelf_query.dart';
+import 'reader_underline.dart';
+import 'reading_activity.dart';
+import 'reading_moments.dart';
 
 final backupPreferenceKeys = <String>{
   'theme',
+  BlockedTags.preferenceKey,
   AppPalettePreferences.key,
   'appLanguage',
   'readerFontSize',
@@ -39,9 +49,20 @@ final backupPreferenceKeys = <String>{
   'shelfFilter',
   'shelfSourceFilter',
   'shelfLayout',
+  'shelfGridDensity',
+  'shelfPreferences',
+  'shelfContent',
+  'discoveryLayout',
+  'discoveryGridDensity',
+  'discoveryShelfPreferences',
+  'discoveryShelfContent',
+  'discoveryShelfQuery',
+  'localShelfContent',
   'adaptWhenOffline',
   'localReaderMode',
   'directReading',
+  'openRecentOnLaunch',
+  'startPage',
   'directReadingPages',
   'combinedShelf',
   'localTxtEncoding',
@@ -62,6 +83,8 @@ final _recordKey = RegExp(
 );
 
 bool isLibraryRecordKey(String key) =>
+    key == ReadingActivityStore.preferenceKey ||
+    key == ReadingMomentsStore.preferenceKey ||
     backupPreferenceKeys.contains(key) ||
     _listKeys.contains(key) ||
     (_recordKey.hasMatch(key) &&
@@ -110,7 +133,7 @@ String _encodeBackup(({int createdAt, Map<String, Object> records}) backup) {
     'records': backup.records,
   });
   if (utf8.encode(text).length > LibraryBackup.maxBytes) {
-    throw const FormatException('备份超过 4 MiB，请减少本地记录后重试');
+    throw const FormatException('备份超过 4 MiB，无法导出完整记录');
   }
   return text;
 }
@@ -151,7 +174,14 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
     final key = entry.key;
     final value = entry.value;
     if (!isLibraryRecordKey(key)) throw const FormatException('备份包含未识别的记录');
-    if (key.startsWith('book_merge_')) {
+    if (key == BlockedTags.preferenceKey) {
+      if (value is! List ||
+          value.length > 10000 ||
+          value.any((item) => item is! String)) {
+        throw const FormatException('屏蔽标签格式有误');
+      }
+      output[key] = BlockedTags(value.cast<String>()).toRecord();
+    } else if (key.startsWith('book_merge_')) {
       if (value is! List ||
           value.length > 20000 ||
           value.any((v) => v is! String || v.length > 512)) {
@@ -208,7 +238,18 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
         AppPalettePreferences.key => _validAppPalette(value),
         HapticPreferences.preferenceKey => _validHaptics(value),
         'shelfSort' => ['recentRead', 'recentAdded', 'title'].contains(value),
-        'shelfLayout' => ['shelf', 'list'].contains(value),
+        'shelfLayout' ||
+        'discoveryLayout' => BookCollectionMode.tryParse(value) != null,
+        'shelfGridDensity' ||
+        'discoveryGridDensity' => BookGridDensity.tryParse(value) != null,
+        'shelfPreferences' || 'discoveryShelfPreferences' =>
+          value is String && BookShelfPreferences.tryParse(value) != null,
+        'shelfContent' || 'discoveryShelfContent' || 'localShelfContent' =>
+          value is String &&
+              BookShelfContentPreferences.tryParse(value) != null,
+        'discoveryShelfQuery' =>
+          value is String && DiscoveryShelfQuery.tryParse(value) != null,
+        'startPage' => AppStartPage.tryParse(value) != null,
         'shelfSourceFilter' => [
           'all',
           'local',
@@ -227,6 +268,7 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
         'adaptWhenOffline' ||
         'localReaderMode' ||
         'directReading' ||
+        'openRecentOnLaunch' ||
         'combinedShelf' ||
         'checkAppUpdates' => value is bool,
         'appLanguage' => [
@@ -260,6 +302,14 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
       };
       if (!valid) throw const FormatException('偏好设置格式有误');
       output[key] = value is num ? value.toDouble() : value as Object;
+    } else if (key == ReadingMomentsStore.preferenceKey) {
+      if (value is! String) throw const FormatException('阅读纪念记录格式有误');
+      output[key] = ReadingMomentsStore.validateRecord(value);
+    } else if (key == ReadingActivityStore.preferenceKey) {
+      if (value is! String) {
+        throw const FormatException('阅读活动记录格式有误');
+      }
+      output[key] = ReadingActivityStore.validateRecord(value);
     } else if (key.startsWith('chapter_') || key.startsWith('shelf_added_')) {
       if (value is! int ||
           value < 0 ||
@@ -268,8 +318,14 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
       }
       output[key] = value;
     } else {
-      if (value is! String || value.length > 256 * 1024) {
+      if (value is! String) {
         throw const FormatException('书籍记录格式有误');
+      }
+      // Authored navigation and bookmark collections can legitimately exceed
+      // 256 KiB. Keep them intact under the complete backup's 4 MiB budget;
+      // their own entry/field limits are validated below as before.
+      if (value.length > LibraryBackup.maxBytes) {
+        throw const FormatException('备份文件超过 4 MiB');
       }
       final record = jsonDecode(value);
       if (key.startsWith('novel_meta_')) {
@@ -354,10 +410,18 @@ Map<String, Object> _validateRecords(Map<String, dynamic> input) {
                   (mark['category'] is! String ||
                       (mark['category'] as String).length > 30)) ||
               (mark['categoryAt'] != null &&
-                  (mark['categoryAt'] is! int || mark['categoryAt'] < 0))) {
+                  (mark['categoryAt'] is! int || mark['categoryAt'] < 0)) ||
+              (mark['rangeUpdatedAt'] != null &&
+                  (mark['rangeUpdatedAt'] is! int ||
+                      mark['rangeUpdatedAt'] < 0))) {
             throw const FormatException('书签格式有误');
           }
           _validatePosition(mark['position']);
+          decodeReaderUnderlineRanges(
+            mark['underlineRanges'],
+            position: mark['position'] as Map<Object?, Object?>,
+          );
+          ReaderAnnotationData.fromJson(mark['annotation']);
         }
         output[key] = jsonEncode(record);
       }

@@ -194,6 +194,56 @@ _Art _foldDrawing(
           a.line(10.6, 13.4, 20.4, 3.6);
         },
       );
+    case ArchiveSymbol.touch:
+      // The index finger presses while the curled fingers follow. The wrist
+      // stays anchored, so this reads as contact rather than a moving pointer.
+      final press = p.clamp(-.12, 1.0), curl = q.clamp(-.12, 1.0);
+      a.path(
+        (s) => s
+            .m(16.7, 14.9)
+            .l(19.3, 14.5)
+            .l(19.3, 15.6)
+            .q(19.3, 18.4, 17.6, 20.1)
+            .l(17.6, 21)
+            .l(15.8, 21)
+            .q(17.4, 17.5, 16.7, 14.9)
+            .z(),
+        fill: true,
+        opacity: .10 + active * .12,
+      );
+      a.path(
+        (s) => s
+            .m(8.2, 13.2)
+            .l(8.2 + .2 * press, 5.9 + 1.05 * press)
+            .c(
+              8.2 + .2 * press,
+              3.7 + press,
+              11.6 + .2 * press,
+              3.7 + press,
+              11.6 + .2 * press,
+              5.9 + 1.05 * press,
+            )
+            .l(11.6, 10.4)
+            .c(12.7, 9.2 - .3 * curl, 14.3, 9.6, 14.3, 11.1)
+            .c(15.1, 10 - .25 * curl, 16.7, 10.4, 16.7, 11.8)
+            .c(17.8, 10.9, 19.3, 11.7, 19.3, 13.2)
+            .l(19.3, 15.6)
+            .q(19.3, 18.4, 17.6, 20.1)
+            .l(17.6, 21)
+            .l(10, 21)
+            .l(10, 20.4)
+            .q(8.8, 19.7, 7.7, 18.1)
+            .l(4.4 + .3 * curl, 13.9)
+            .c(3.4 + .3 * curl, 12.6, 4.9, 11, 6.1, 12)
+            .l(8.2, 14.1)
+            .z(),
+      );
+      a.line(11.6, 10.4, 11.6, 13.1 + .4 * curl);
+      a.line(14.3, 11.1, 14.3, 13.6 + .3 * r);
+      a.line(16.7, 11.8, 16.7, 14);
+      a.line(10.2, 1.6 - .3 * r, 10.2, 2.5 - .15 * r);
+      a.line(5.6 - .35 * r, 3 - .25 * r, 6.5 - .15 * r, 3.8 - .1 * r);
+      a.line(14.8 + .35 * r, 3 - .25 * r, 13.9 + .15 * r, 3.8 - .1 * r);
     case ArchiveSymbol.typography:
       a.path(
         (s) =>
@@ -496,21 +546,44 @@ _Art _foldDrawing(
         );
       });
     case ArchiveSymbol.filter:
-      a.line(3.5, 5.7, 20.5, 5.7);
-      a.line(5.7 + 2.4 * p, 12, 18.3 - 2.4 * q, 12);
-      a.line(9 + 1.8 * q, 18.3, 15 - 1.8 * r, 18.3);
-      a.mark(3.5, 4.8, 1.7);
+      // Three calibrated tracks: the blocks move independently, while the
+      // fixed rails retain a clear filter silhouette throughout the gesture.
+      for (var i = 0; i < 3; i++) {
+        final y = 5.5 + i * 6.5;
+        final x = [8.0 + 5 * p, 16.0 - 5 * q, 10.0 + 4 * r][i];
+        a.path((s) => s.m(3.5, y).l(x - 2.5, y), width: .82);
+        a.path((s) => s.m(x + 2.5, y).l(20.5, y), width: .82);
+        a.rect(x - 1.3, y - 2, 2.6, 4, fill: true);
+      }
+    case ArchiveSymbol.layout:
+      // The same three units reflow from a sidebar into a header + two cells.
+      // No global spin/scale: this action demonstrates what its view changes.
+      final lead = p.clamp(-.12, 1.0);
+      final follow = q.clamp(-.12, 1.0);
+      final trail = r.clamp(-.12, 1.0);
+      a.rect(3.5, 4, 5.5 + 11.5 * lead, 16 - 10.5 * lead);
+      a.rect(
+        3.5,
+        4,
+        5.5 + 11.5 * lead,
+        16 - 10.5 * lead,
+        fill: true,
+        opacity: .08 + active * .13,
+      );
+      a.rect(
+        12 - 8.5 * follow,
+        4 + 8.5 * follow,
+        8.5 - 1.5 * follow,
+        6.5 + follow,
+      );
+      a.rect(12 + 1.5 * trail, 13.5 - trail, 8.5 - 1.5 * trail, 6.5 + trail);
     case ArchiveSymbol.grid:
       for (var i = 0; i < 4; i++) {
         final d = [p, q, r, q][i];
-        a.card(
-          3.4 + i % 2 * 10,
-          3.4 + i ~/ 2 * 10 - d * 1.3,
-          7.2,
-          7.2,
-          fold: 1.7,
-          shade: i == 0 ? .25 : .05 + active * .1,
-        );
+        final x = 4.0 + i % 2 * 10;
+        final y = 4.0 + i ~/ 2 * 10 - d * 1.3;
+        a.rect(x, y, 6, 6);
+        if (i == 0) a.rect(x, y, 6, 6, fill: true, opacity: .14 + active * .12);
       }
     case ArchiveSymbol.dotsGrid:
       for (var i = 0; i < 9; i++) {

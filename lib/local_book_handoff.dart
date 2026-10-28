@@ -14,7 +14,7 @@ class LocalHandoffFile {
     'length': length,
   };
   static bool validName(String name) => RegExp(
-    r'^(book\.json|original|decoded\.txt|media\.json|(layout-rich-v[12]/)?c[1-9][0-9]{0,5}\.txt|(cover|cover-custom-[0-9]+|img-[0-9]+)\.(png|jpg|jpeg|webp|gif))$',
+    r'^(book\.json|original|decoded\.txt|media\.json|((layout-rich-v[12]|layout-markup-v1)/)?c[1-9][0-9]{0,5}\.txt|(cover|cover-custom-[0-9]+|img-[0-9]+)\.(png|jpg|jpeg|webp|gif))$',
   ).hasMatch(name);
   static int limit(String name) => switch (name) {
     'book.json' => 4 * 1024 * 1024,
@@ -172,7 +172,7 @@ Future<LocalBookHandoff> _scanLocalHandoff(
     final folder = Directory('${input.root}/$id');
     final upgraded =
         manifest.identities.containsKey(id) &&
-        {'layout-rich-v1', 'layout-rich-v2'}.contains(
+        {'layout-rich-v1', 'layout-rich-v2', 'layout-markup-v1'}.contains(
           (jsonDecode(
                 await File('${folder.path}/book.json').readAsString(),
               )['source']
@@ -267,11 +267,19 @@ Future<LocalBookHandoff> _scanLocalHandoff(
   }
   final chapters = <NovelChapter>[], chapterIds = <int>{};
   if (source['layoutFolder'] != null &&
-      !{'layout-rich-v1', 'layout-rich-v2'}.contains(source['layoutFolder'])) {
+      !{
+        'layout-rich-v1',
+        'layout-rich-v2',
+        'layout-markup-v1',
+      }.contains(source['layoutFolder'])) {
     bad();
   }
   final prefix =
-      {'layout-rich-v1', 'layout-rich-v2'}.contains(source['layoutFolder'])
+      {
+        'layout-rich-v1',
+        'layout-rich-v2',
+        'layout-markup-v1',
+      }.contains(source['layoutFolder'])
       ? '${source['layoutFolder']}/'
       : '';
   final names = {
@@ -362,6 +370,9 @@ extension LocalBookHandoffStore on LocalBookStore {
     if (selected == null) throw const FormatException('本地原书已不存在');
     final series = _seriesBooks.containsKey(id) ? _series[id] : null;
     final ids = series?.volumes.map((v) => v.bookId).toList() ?? [id];
+    if (ids.any(isIncompleteBook)) {
+      throw const FormatException('这本书只导入了可读部分，不能作为完整原书搬移；请先获取完整原件');
+    }
     final manifest = LocalBookHandoff(
       bookId: id,
       title: selected.title,

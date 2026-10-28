@@ -7,10 +7,16 @@ import 'book_search.dart';
 import 'book_text_encoding.dart';
 import 'local_import_options.dart';
 import 'local_text_rules.dart';
+import 'book_grid_density.dart';
+import 'book_collection_mode.dart';
+import 'book_shelf_preferences.dart';
+import 'book_shelf_content_preferences.dart';
 
-enum LocalLibraryView { shelf, list }
+enum LocalLibraryView { shelf, list, grid, shelfGrid }
 
 enum LocalLibrarySort { recentAdded, recentRead, title }
+
+typedef _AssignmentState = ({String group, int at, bool available});
 
 /// Device layout stays local; named groups and timestamped assignments can be
 /// merged with the original books. Deletion tombstones prevent resurrection.
@@ -47,12 +53,18 @@ class LocalLibraryPreferences extends ChangeNotifier {
 
   final SharedPreferences preferences;
   LocalLibraryView view = LocalLibraryView.shelf;
+  BookGridDensity gridDensity = const BookGridDensity.auto();
+  BookShelfPreferences shelfPreferences = const BookShelfPreferences.defaults();
+  BookShelfContentPreferences shelfContent =
+      const BookShelfContentPreferences.defaults();
   LocalLibrarySort sort = LocalLibrarySort.recentAdded;
   String selected = all;
   String readingFilter = 'all';
   String shelfSelected = all;
   final Map<String, Map<String, dynamic>> _groups = {};
   final Map<int, Map<String, dynamic>> _assignments = {};
+  final _assignmentRevisions = <int, int>{};
+  int _nextAssignmentRevision = 0;
   int _clock = 0;
   Future<void> _writes = Future.value();
   bool _disposed = false;
@@ -72,6 +84,23 @@ class LocalLibraryPreferences extends ChangeNotifier {
     return value is String && _hasGroup(value) ? value : unfiled;
   }
 
+  /// An in-memory guard for delayed edits, not a value to persist or synchronize.
+  /// Explicit assignments advance it even when their visible group stays equal.
+  int assignmentRevision(int id) => _assignmentRevisions[id] ?? 0;
+
+  void _assignmentChanged(int id) {
+    _assignmentRevisions[id] = ++_nextAssignmentRevision;
+  }
+
+  Map<int, _AssignmentState> _assignmentState() => {
+    for (final entry in _assignments.entries)
+      entry.key: (
+        group: entry.value['group'] as String,
+        at: entry.value['at'] as int,
+        available: _hasGroup(entry.value['group'] as String),
+      ),
+  };
+
   String nameOf(String id) => id == all
       ? '全部书籍'
       : id == unfiled
@@ -81,7 +110,10 @@ class LocalLibraryPreferences extends ChangeNotifier {
       : _hasGroup(id)
       ? _groups[id]!['name'] as String
       : '全部书籍';
-  bool showsShelf(int count) => view == LocalLibraryView.shelf && count >= 10;
+  BookCollectionMode get viewMode =>
+      BookCollectionMode.parseOrDefault(view.name);
+  bool showsShelf(int count) =>
+      viewMode.hasShelf && shelfPreferences.featuredCount(count) > 0;
   void refresh() {
     load();
     if (!_disposed) notifyListeners();
@@ -142,6 +174,13 @@ class LocalLibraryPreferences extends ChangeNotifier {
       (v) => v.name == raw['view'],
       orElse: () => LocalLibraryView.shelf,
     );
+    gridDensity = BookGridDensity.parseOrAuto(raw['gridDensity']);
+    shelfPreferences = BookShelfPreferences.parseOrDefault(
+      raw['shelfPreferences'],
+    );
+    shelfContent = BookShelfContentPreferences.parseOrDefault(
+      raw['shelfContent'],
+    );
     sort = LocalLibrarySort.values.firstWhere(
       (v) => v.name == raw['sort'],
       orElse: () => LocalLibrarySort.recentAdded,
@@ -165,6 +204,19 @@ class LocalLibraryPreferences extends ChangeNotifier {
         !groups.containsKey(shelfSelected)) {
       shelfSelected = all;
     }
+    shelfContent = _visibleShelfContent(shelfContent);
+  }
+
+  BookShelfContentPreferences _visibleShelfContent(
+    BookShelfContentPreferences value,
+  ) {
+    final category = value.category;
+    return category == all ||
+            category == unfiled ||
+            categoryAuthor(category) != null ||
+            _hasGroup(category)
+        ? value
+        : value.copyWith(category: all);
   }
 
   int _stamp() {
@@ -235,8 +287,13 @@ class LocalLibraryPreferences extends ChangeNotifier {
     return result;
   }
 
-  void _accept(Object? raw) {
+  void _accept(Object? raw, {bool replace = false}) {
     final valid = validateOrganization(raw);
+    final before = _assignmentState();
+    if (replace) {
+      _groups.clear();
+      _assignments.clear();
+    }
     void accept<K>(
       Map<K, Map<String, dynamic>> target,
       K key,
@@ -262,6 +319,10 @@ class LocalLibraryPreferences extends ChangeNotifier {
         Map<String, dynamic>.from(e.value),
       );
     }
+    final after = _assignmentState();
+    for (final id in {...before.keys, ...after.keys}) {
+      if (before[id] != after[id]) _assignmentChanged(id);
+    }
   }
 
   Future<T> _organize<T>(Future<T> Function() action) {
@@ -280,14 +341,17 @@ class LocalLibraryPreferences extends ChangeNotifier {
     record['organization'] = valid;
     record['selected'] = visible(selected) ? selected : all;
     record['shelfSelected'] = visible(shelfSelected) ? shelfSelected : all;
+    final nextShelfContent = visible(shelfContent.category)
+        ? shelfContent
+        : shelfContent.copyWith(category: all);
+    record['shelfContent'] = nextShelfContent.toJson();
     if (!await preferences.setString(key, jsonEncode(record))) {
       throw const FormatException('本地分类保存失败');
     }
-    _groups.clear();
-    _assignments.clear();
-    _accept(valid);
+    _accept(valid, replace: true);
     selected = record['selected'];
     shelfSelected = record['shelfSelected'];
+    shelfContent = nextShelfContent;
     if (!_disposed) notifyListeners();
   }
 
@@ -321,9 +385,15 @@ class LocalLibraryPreferences extends ChangeNotifier {
     });
   }
 
-  String _record({Map<int, Map<String, dynamic>>? assignments}) => jsonEncode({
+  String _record({
+    Map<int, Map<String, dynamic>>? assignments,
+    BookShelfContentPreferences? content,
+  }) => jsonEncode({
     'version': 1,
     'view': view.name,
+    'gridDensity': gridDensity.value,
+    'shelfPreferences': shelfPreferences.toJson(),
+    'shelfContent': (content ?? shelfContent).toJson(),
     'sort': sort.name,
     'readingFilter': readingFilter,
     'selected': selected,
@@ -353,6 +423,47 @@ class LocalLibraryPreferences extends ChangeNotifier {
     view = value;
     return _save();
   }
+
+  Future<void> setViewMode(BookCollectionMode value) => setView(switch (value) {
+    BookCollectionMode.list => LocalLibraryView.list,
+    BookCollectionMode.shelfList => LocalLibraryView.shelf,
+    BookCollectionMode.shelfGrid => LocalLibraryView.shelfGrid,
+    BookCollectionMode.grid => LocalLibraryView.grid,
+  });
+
+  Future<void> setGridDensity(BookGridDensity value) {
+    gridDensity = value;
+    return _save();
+  }
+
+  Future<void> setShelfPreferences(BookShelfPreferences value) {
+    shelfPreferences = value;
+    return _save();
+  }
+
+  /// The featured region is independent of the existing lower collection.
+  Future<void> setShelfContent(BookShelfContentPreferences value) =>
+      restoreShelfContent(
+        value,
+        commit: (record) async {
+          if (!await preferences.setString(key, record)) {
+            throw const FormatException('本地分类保存失败');
+          }
+        },
+      );
+
+  /// Keeps a backup transaction on the same queue as classification edits.
+  /// The record is built at commit time, so delayed restores cannot replace
+  /// newer categories or assignments with an earlier organization snapshot.
+  Future<void> restoreShelfContent(
+    BookShelfContentPreferences value, {
+    required Future<void> Function(String record) commit,
+  }) => _organize(() async {
+    final next = _visibleShelfContent(value);
+    await commit(_record(content: next));
+    shelfContent = next;
+    if (!_disposed) notifyListeners();
+  });
 
   Future<void> setSort(LocalLibrarySort value) {
     sort = value;
@@ -431,23 +542,43 @@ class LocalLibraryPreferences extends ChangeNotifier {
 
   /// One durable record and one notification, even for a large selection.
   /// Failed writes leave every book in its previous category.
-  Future<void> assignMany(Iterable<int> books, String group) {
+  /// [expectedRevisions] protects delayed operations: only IDs whose revision
+  /// still matches are assigned; skipped IDs cause no write or notification.
+  /// Existing callers omit it and retain unconditional explicit assignment.
+  Future<void> assignMany(
+    Iterable<int> books,
+    String group, {
+    Map<int, int>? expectedRevisions,
+  }) {
     final ids = books.toSet();
+    final expected = expectedRevisions == null
+        ? null
+        : Map<int, int>.of(expectedRevisions);
     final work = _writes.catchError((Object _) {}).then((_) async {
       if (ids.any((id) => id <= 0 || id > 0x7fffffff) ||
-          (group != unfiled && !_hasGroup(group))) {
+          (expected == null && group != unfiled && !_hasGroup(group))) {
         throw const FormatException('请选择有效分类');
       }
-      if (ids.isEmpty) return;
+      final targets = expected == null
+          ? ids
+          : ids.where((id) => expected[id] == assignmentRevision(id)).toSet();
+      if (targets.isEmpty) return;
+      if (group != unfiled && !_hasGroup(group)) {
+        throw const FormatException('请选择有效分类');
+      }
       final at = _stamp();
       final next = {
         ..._assignments,
-        for (final id in ids) id: <String, dynamic>{'group': group, 'at': at},
+        for (final id in targets)
+          id: <String, dynamic>{'group': group, 'at': at},
       };
       if (!await preferences.setString(key, _record(assignments: next))) {
         throw const FormatException('本地分类保存失败');
       }
-      _assignments.addAll({for (final id in ids) id: next[id]!});
+      _assignments.addAll({for (final id in targets) id: next[id]!});
+      for (final id in targets) {
+        _assignmentChanged(id);
+      }
       if (!_disposed) notifyListeners();
     });
     _writes = work;

@@ -1,50 +1,43 @@
 package org.mewx.wenku8_flutter
 
-import android.content.res.Configuration
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
-import android.view.KeyEvent
-import com.ryanheise.audioservice.AudioServiceActivity
-import io.flutter.embedding.engine.FlutterEngine
 
-class MainActivity : AudioServiceActivity() {
-    private var refreshRate: HighRefreshRateController? = null
+/**
+ * Permanent compatibility entry for launchers and existing explicit intents.
+ *
+ * A switchable alias must never identify the task containing the Flutter UI:
+ * Android can remove an alias-root task even with DONT_KILL_APP. The distinct
+ * ReaderActivity component also prevents reuse of tasks from older releases.
+ */
+class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        refreshRate = HighRefreshRateController(this)
+        forward(intent)
     }
 
-    override fun onResume() {
-        super.onResume()
-        refreshRate?.start()
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        forward(intent)
     }
 
-    override fun onPause() {
-        (flutterEngine?.plugins?.get(ReaderControlsPlugin::class.java) as? ReaderControlsPlugin)?.suspend()
-        refreshRate?.stop()
-        super.onPause()
-    }
-
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        (flutterEngine?.plugins?.get(ReaderControlsPlugin::class.java) as? ReaderControlsPlugin)?.dispatch(event) == true || super.dispatchKeyEvent(event)
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) refreshRate?.refresh()
-    }
-
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        refreshRate?.refresh()
-    }
-
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        attachWenkuEnginePlugins(flutterEngine)
-    }
-
-    override fun onDestroy() {
-        refreshRate?.stop()
-        refreshRate = null
-        super.onDestroy()
+    private fun forward(source: Intent) {
+        try {
+            startActivity(stableReaderIntent(this, source))
+        } finally {
+            // Theme.NoDisplay requires completion before onResume. No URI is
+            // opened here; its grants/ClipData are transferred to the reader.
+            finish()
+        }
     }
 }
+
+/** Copies the full incoming contract, including file grants and stream extras. */
+internal fun stableReaderIntent(context: Context, source: Intent): Intent =
+    Intent(source).setClass(context, ReaderActivity::class.java).addFlags(
+        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
+            Intent.FLAG_ACTIVITY_SINGLE_TOP,
+    )

@@ -124,7 +124,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (LocalPlatform.android) ...[
+                      if (LocalPlatform.fileActions) ...[
                         GlassTextButton(
                           key: const ValueKey('backup-export-file'),
                           onPressed: _busy == null ? _export : null,

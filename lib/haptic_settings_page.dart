@@ -17,8 +17,40 @@ class HapticSettingsPage extends StatefulWidget {
   State<HapticSettingsPage> createState() => _HapticSettingsPageState();
 }
 
-class _HapticSettingsPageState extends State<HapticSettingsPage> {
+class _HapticSettingsPageState extends State<HapticSettingsPage>
+    with WidgetsBindingObserver {
   bool _saving = false;
+  Map<Object?, Object?>? _capabilities;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadCapabilities();
+  }
+
+  void _loadCapabilities() {
+    AppHaptics.capabilities().then((value) {
+      if (mounted) setState(() => _capabilities = value);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadCapabilities();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  bool get _canAdjustStrength => _capabilities?['hasAmplitudeControl'] != false;
+
+  bool get _canPreview =>
+      _capabilities?['hasVibrator'] != false &&
+      _capabilities?['hapticFeedbackEnabled'] != false;
 
   Future<void> _save(
     HapticPreferences preferences, {
@@ -125,6 +157,8 @@ class _HapticSettingsPageState extends State<HapticSettingsPage> {
                             ],
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        _capabilityNote,
                         const SizedBox(height: 24),
                         AppText(
                           '按交互调整',
@@ -142,8 +176,6 @@ class _HapticSettingsPageState extends State<HapticSettingsPage> {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 16),
-                        AppText('实际强度随设备和系统设置调整。', style: _supportingStyle),
                       ],
                     ),
                   ),
@@ -162,6 +194,31 @@ class _HapticSettingsPageState extends State<HapticSettingsPage> {
     color: Theme.of(context).colorScheme.onSurfaceVariant,
   );
 
+  Widget get _capabilityNote {
+    final caps = _capabilities;
+    if (caps == null) {
+      return AppText('实际强度随设备和系统设置调整。', style: _supportingStyle);
+    }
+    if (caps['hasVibrator'] == false) {
+      return AppText('此设备没有可用的振动马达。', style: _supportingStyle);
+    }
+    if (caps['hapticFeedbackEnabled'] == false) {
+      return AppText('系统已关闭触摸反馈；请在系统设置中开启后再试振。', style: _supportingStyle);
+    }
+    if (caps['hasAmplitudeControl'] == false) {
+      return AppText('此设备使用系统固定强度，可开关反馈和试振。', style: _supportingStyle);
+    }
+    if (caps['hasAmplitudeControl'] != true) {
+      return AppText(
+        caps['supportsIntensityRequest'] == true
+            ? '强度偏好交由系统执行，部分设备可能使用固定强度。'
+            : '实际强度随设备和系统设置调整。',
+        style: _supportingStyle,
+      );
+    }
+    return AppText('设备支持振幅控制；实际强度仍受系统设置和硬件调校影响。', style: _supportingStyle);
+  }
+
   Widget _allStrengthPicker(HapticPreferences preferences) => Row(
     key: const ValueKey('haptic-all-strength'),
     children: [
@@ -172,7 +229,7 @@ class _HapticSettingsPageState extends State<HapticSettingsPage> {
             compact: true,
             selected: preferences.uniformStrength == strength,
             haptic: null,
-            onPressed: !preferences.enabled || _saving
+            onPressed: !preferences.enabled || _saving || !_canAdjustStrength
                 ? null
                 : () {
                     if (preferences.uniformStrength == strength) return;
@@ -216,7 +273,7 @@ class _HapticSettingsPageState extends State<HapticSettingsPage> {
                   : _strengthPicker(
                       pickerKey: 'haptic-${category.name}-strength',
                       value: setting.strength,
-                      enabled: active,
+                      enabled: active && _canAdjustStrength,
                       onChanged: (strength) => _save(
                         preferences.withCategoryStrength(category, strength),
                         preview: category,
@@ -228,7 +285,9 @@ class _HapticSettingsPageState extends State<HapticSettingsPage> {
               key: ValueKey('haptic-${category.name}-preview'),
               compact: true,
               haptic: null,
-              onPressed: active ? () => _preview(category) : null,
+              onPressed: active && _canPreview
+                  ? () => _preview(category)
+                  : null,
               child: const AppText('试振'),
             ),
           ],

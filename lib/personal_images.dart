@@ -75,13 +75,17 @@ bool validBackgroundId(Object? id) =>
 class ReaderBackgroundStore {
   ReaderBackgroundStore({Directory? directory}) : _directory = directory;
   Directory? _directory;
+  final _resolvedFiles = <String, File>{};
+  File? resolvedFile(String? id) => _resolvedFiles[id];
   Future<Directory> get directory async => _directory ??= Directory(
     '${(await getApplicationSupportDirectory()).path}/reader-backgrounds',
   );
   Future<File?> file(String? id) async {
     if (!validBackgroundId(id)) return null;
     final value = File('${(await directory).path}/$id');
-    return await value.exists() ? value : null;
+    if (await value.exists()) return _resolvedFiles[id!] = value;
+    _resolvedFiles.remove(id);
+    return null;
   }
 
   Future<List<String>> list() async {
@@ -106,7 +110,7 @@ class ReaderBackgroundStore {
     final part = File('${root.path}/$id.part');
     try {
       await part.writeAsBytes(bytes, flush: true);
-      await part.rename('${root.path}/$id');
+      _resolvedFiles[id] = await part.rename('${root.path}/$id');
     } finally {
       if (await part.exists()) await part.delete();
     }
@@ -116,5 +120,6 @@ class ReaderBackgroundStore {
   Future<void> remove(String id) async {
     final owned = await file(id);
     if (owned != null) await owned.delete();
+    _resolvedFiles.remove(id);
   }
 }

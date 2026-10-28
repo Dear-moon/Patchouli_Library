@@ -1,0 +1,69 @@
+{
+  "themes": {
+    "shelf": "雾港书页",
+    "ink": "远山晨光"
+  },
+  "assets": [
+    {
+      "file": "assets/report/scene_mist_harbor.webp",
+      "size": [
+        1536,
+        864
+      ],
+      "bytes": 228122,
+      "mode": "opaque RGB",
+      "source": "built-in image_gen",
+      "use": "report/header wide scene",
+      "reference": "Original environment; layout/atmospheric perspective inspired by inspected official Arknights gallery; no official pixels used"
+    },
+    {
+      "file": "assets/report/scene_mountain_dawn.webp",
+      "size": [
+        1536,
+        864
+      ],
+      "bytes": 239438,
+      "mode": "opaque RGB",
+      "source": "built-in image_gen",
+      "use": "report/header wide scene",
+      "reference": "Original environment; layout/atmospheric perspective inspired by inspected official Arknights gallery; no official pixels used"
+    },
+    {
+      "file": "assets/report/scene_mist_harbor_portrait.webp",
+      "size": [
+        1024,
+        1536
+      ],
+      "bytes": 278344,
+      "mode": "opaque RGB",
+      "source": "built-in image_gen",
+      "use": "portrait short-card background",
+      "reference": "Original environment; layout/atmospheric perspective inspired by inspected official Arknights gallery; no official pixels used"
+    },
+    {
+      "file": "assets/report/scene_mountain_dawn_portrait.webp",
+      "size": [
+        1024,
+        1536
+      ],
+      "bytes": 297432,
+      "mode": "opaque RGB",
+      "source": "built-in image_gen",
+      "use": "portrait short-card background",
+      "reference": "Original environment; layout/atmospheric perspective inspired by inspected official Arknights gallery; no official pixels used"
+    }
+  ],
+  "references": [
+    {
+      "url": "https://ak.hypergryph.com/#media",
+      "gallery": "复明的街头",
+      "observed": "Warm window accents, layered architectural perspective; no characters or exact location copied."
+    },
+    {
+      "url": "https://ak.hypergryph.com/#media",
+      "gallery": "归来",
+      "observed": "Quiet warm horizon, atmospheric distance and open visual area; no character or exact location copied."
+    }
+  ],
+  "promptFile": ".local-notes/reading-exports-254/scenes/prompts.json"
+}

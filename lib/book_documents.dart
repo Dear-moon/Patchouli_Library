@@ -1,6 +1,9 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'book_import_limits.dart';
+import 'local_platform.dart';
+import 'portable_book_prepare.dart';
 
 class BookDocumentSelection {
   const BookDocumentSelection({
@@ -71,6 +74,10 @@ class BookOpenRequest {
     required this.id,
     required this.name,
     required this.canLink,
+    this.sourceName,
+    this.sourceLocation,
+    this.canLocate = false,
+    this.canMove = false,
     this.error,
   });
   factory BookOpenRequest.fromMap(Map<dynamic, dynamic> value) =>
@@ -78,10 +85,26 @@ class BookOpenRequest {
         id: value['id'] as String,
         name: value['name'] as String,
         canLink: value['canLink'] == true,
+        sourceName: value['sourceName'] as String?,
+        sourceLocation: value['sourceLocation'] as String?,
+        canLocate: value['canLocate'] == true,
+        canMove: value['canMove'] == true,
         error: value['error'] as String?,
       );
   final String id, name;
+
+  /// Whether the supplied source can be retained without another file picker.
+  /// A temporary read grant alone must not be stored as a library reference.
   final bool canLink;
+
+  /// Human-readable provider metadata, never an opaque URI or guessed path.
+  final String? sourceName, sourceLocation;
+
+  /// The system picker accepts an initial document hint, not a guaranteed jump.
+  final bool canLocate;
+
+  /// The host can delete this TXT/EPUB after its independent copy is verified.
+  final bool canMove;
   final String? error;
 }
 
@@ -102,7 +125,66 @@ class BookScanSnapshot {
 }
 
 class BookDocuments {
+  BookDocuments({PortableBookPreparer? preparer}) : _preparer = preparer;
+  final PortableBookPreparer? _preparer;
+  static Future<PortableBookPreparer>? _portable;
   static const channel = MethodChannel('org.mewx.wenku8/book_documents');
+
+  Future<PortableBookPreparer> _portablePreparer() async {
+    if (_preparer case final value?) return value;
+    final loading = _portable ??= () async {
+      final cache = await getTemporaryDirectory();
+      final directory = Directory('${cache.path}/portable-book-import');
+      await PortableBookPreparer.clearPreviousRuns(directory);
+      final token = ServicesBinding.rootIsolateToken;
+      if (token == null) throw StateError('文件转换服务尚未初始化，请重试');
+      return PortableBookPreparer(
+        directory: directory,
+        textCodecToken: token,
+        decodeNames: (names) async => (await channel.invokeListMethod<String>(
+          'decodeBookNames',
+          {'names': names},
+        ))!,
+        convert: _prepareNative,
+        extractKindle: (source, output) async =>
+            (await channel.invokeMethod<int>('extractKindle', {
+              'path': source,
+              'output': output,
+            }))!,
+        extractPdf: Platform.isIOS || LocalPlatform.harmony
+            ? (name, source, output) => channel.invokeMethod<void>(
+                'extractPdf',
+                {'name': name, 'path': source, 'output': output},
+              )
+            : null,
+      );
+    }();
+    try {
+      return await loading;
+    } catch (_) {
+      if (identical(_portable, loading)) _portable = null;
+      rethrow;
+    }
+  }
+
+  static Future<List<PreparedBookDocument>> _prepareNative(
+    String name,
+    String path,
+  ) async {
+    final values = await channel.invokeListMethod<dynamic>('prepareBook', {
+      'name': name,
+      'path': path,
+    });
+    return [
+      for (final value in values ?? const [])
+        (
+          name: value['name'] as String,
+          path: value['path'] as String?,
+          error: value['error'] as String?,
+        ),
+    ];
+  }
+
   Future<BookOpenRequest?> pendingOpen() async {
     final value = await channel.invokeMapMethod<String, dynamic>(
       'pendingBookOpen',
@@ -131,6 +213,12 @@ class BookDocuments {
   Future<void> finishOpen(String id) =>
       channel.invokeMethod<void>('finishBookOpen', {'id': id});
 
+  /// Deletes only the offered original after native streaming comparison with
+  /// the committed app-owned copy. Hosts distinguish a refused deletion from
+  /// an uncertain provider result; callers must not retry the latter blindly.
+  Future<void> deleteOpenSource(String id, String copyPath) => channel
+      .invokeMethod<void>('deleteBookOpenSource', {'id': id, 'path': copyPath});
+
   Future<BookDocumentSelection?> pickImage() async {
     final value = await channel.invokeMapMethod<String, dynamic>('pickImage');
     return value == null
@@ -149,6 +237,20 @@ class BookDocuments {
             name: value['name'] as String,
             path: value['path'] as String,
           );
+  }
+
+  /// Copies the chosen dictionary files into controlled temporary storage.
+  /// The dictionary repository must commit its own copies, then release these
+  /// selections; no external URI grant is retained as a dictionary location.
+  /// Hosts accept at most 64 files and stream no more than 512 MiB per file.
+  Future<List<BookDocumentSelection>> pickDictionaryFiles() async {
+    final values = await channel.invokeListMethod<dynamic>(
+      'pickDictionaryFiles',
+    );
+    return [
+      for (final value in values ?? const [])
+        BookDocumentSelection.fromMap(value as Map<dynamic, dynamic>),
+    ];
   }
 
   Future<BookScanFolder?> scanFolderInfo() async {
@@ -300,20 +402,40 @@ class BookDocuments {
     return BookDocumentSelection.fromMap(value);
   }
 
-  Future<void> releaseBooks(Iterable<BookDocumentSelection> books) =>
-      channel.invokeMethod<void>('releaseBooks', {
-        'paths': books
+  Future<void> releaseBooks(Iterable<BookDocumentSelection> books) async {
+    final selections = books.toList();
+    Object? failure;
+    StackTrace? failureStack;
+    try {
+      final preparer =
+          _preparer ?? (_portable == null ? null : await _portable);
+      await preparer?.releasePaths(
+        selections.map((book) => book.path).whereType<String>(),
+      );
+    } catch (error, stack) {
+      failure = error;
+      failureStack = stack;
+    }
+    try {
+      await channel.invokeMethod<void>('releaseBooks', {
+        'paths': selections
             .map((book) => book.path)
             .whereType<String>()
             .toSet()
             .toList(),
-        if (books.any((book) => book.token != null))
-          'tokens': books
+        if (selections.any((book) => book.token != null))
+          'tokens': selections
               .map((book) => book.token)
               .whereType<String>()
               .toSet()
               .toList(),
       });
+    } catch (error, stack) {
+      failure ??= error;
+      failureStack ??= stack;
+    }
+    if (failure != null) Error.throwWithStackTrace(failure, failureStack!);
+  }
 
   /// Existing TXT/EPUB callers keep their original, platform-independent path.
   /// MOBI is reconstructed as EPUB and ZIP yields a batch of staged originals.
@@ -326,26 +448,57 @@ class BookDocuments {
       return [book];
     }
     try {
-      final values = await channel.invokeListMethod<dynamic>(
-        book.reference == null ? 'prepareBook' : 'prepareLinkedDocument',
-        {
-          'name': book.name,
-          if (book.reference == null)
-            'path': book.path
-          else
-            'reference': book.reference,
-        },
-      );
-      return [
-        for (final value in values ?? const [])
-          BookDocumentSelection(
-            name: value['name'] as String,
-            path: value['path'] as String?,
-            error: value['error'] as String?,
-            originReference: book.reference,
-            originName: book.reference == null ? null : book.name,
-          ),
-      ];
+      final portableFormat =
+          RegExp(
+            r'\.(zip|html?|xhtml|md|markdown|fb2|docx|rtf|mobi|azw|azw3|prc|pdf)$',
+            caseSensitive: false,
+          ).hasMatch(book.name) &&
+          (_preparer != null || Platform.isIOS || LocalPlatform.harmony);
+      BookDocumentSelection? working;
+      try {
+        if (portableFormat && book.reference != null) {
+          working = BookDocumentSelection.fromMap(
+            (await channel.invokeMapMethod<String, dynamic>(
+              'stageLinkedDocument',
+              {'reference': book.reference},
+            ))!,
+          );
+        }
+        final List<PreparedBookDocument> values;
+        if (portableFormat) {
+          values = await (await _portablePreparer()).prepare(
+            book.name,
+            working?.path ?? book.path!,
+          );
+        } else if (book.reference != null) {
+          final converted = await channel.invokeListMethod<dynamic>(
+            'prepareLinkedDocument',
+            {'name': book.name, 'reference': book.reference},
+          );
+          values = [
+            for (final value in converted ?? const [])
+              (
+                name: value['name'] as String,
+                path: value['path'] as String?,
+                error: value['error'] as String?,
+              ),
+          ];
+        } else {
+          values = await _prepareNative(book.name, book.path!);
+        }
+        return [
+          for (final value in values)
+            BookDocumentSelection(
+              name: value.name,
+              path: value.path,
+              error: value.error,
+              originReference: book.reference,
+              originName: book.reference == null ? null : book.name,
+            ),
+        ];
+      } finally {
+        if (working != null) await releaseBooks([working]);
+      }
     } on PlatformException catch (failure) {
       return [
         BookDocumentSelection(

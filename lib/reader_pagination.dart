@@ -190,13 +190,20 @@ class _HorizontalMetrics {
 }
 
 class _VerticalMetrics {
-  _VerticalMetrics(this.clusters, this.offsets, this.advances, this.rotations);
+  _VerticalMetrics(
+    this.clusters,
+    this.offsets,
+    this.advances,
+    this.rotations,
+    this.annotations,
+  );
   final List<String> clusters;
   final Uint32List offsets;
   // Repeated glyphs share their boxed advances/rotations from the metric map.
   // Tight reference lists are smaller than duplicating a double per position
   // on pointer-compressed Android runtimes, and retain the same exact values.
   final List<double> advances, rotations;
+  final ReaderRichParagraphIndex? annotations;
 }
 
 class _VerticalColumn {
@@ -235,6 +242,7 @@ class _ReaderVerticalPageCache {
     final glyphs = <ReaderVerticalGlyph>[];
     for (final column in page._columns) {
       final metrics = column.metrics;
+      final annotations = metrics.annotations;
       final sourceStart = metrics.offsets[column.first];
       var y = column.indent;
       for (var c = column.first; c < column.end; c++) {
@@ -254,30 +262,18 @@ class _ReaderVerticalPageCache {
               metrics.advances[c],
             ),
             rotation: metrics.rotations[c],
-            emphasis: column.format.emphasisAt(metrics.offsets[c]),
+            emphasis: annotations?.emphasisAt(metrics.offsets[c]) ?? 0,
             opacity: column.format.opacity,
-            ruby: column.format.ruby
-                .where(
-                  (r) =>
-                      r.start < metrics.offsets[c + 1] &&
-                      r.end > metrics.offsets[c],
-                )
-                .map(
-                  (r) => ReaderRichParagraph.rubyPart(
-                    r,
-                    metrics.offsets[c],
-                    metrics.offsets[c + 1],
-                  ),
-                )
-                .join(),
-            note: column.format.references
-                .where(
-                  (r) =>
-                      r.start < metrics.offsets[c + 1] &&
-                      r.end > metrics.offsets[c],
-                )
-                .firstOrNull
-                ?.id,
+            ruby:
+                annotations?.rubyAt(
+                  metrics.offsets[c],
+                  metrics.offsets[c + 1],
+                ) ??
+                '',
+            note: annotations?.noteAt(
+              metrics.offsets[c],
+              metrics.offsets[c + 1],
+            ),
           ),
         );
         y += metrics.advances[c] + column.extra;
@@ -341,6 +337,9 @@ Future<ReaderPagination?> paginateReader({
     textAlign: preferences.justify ? TextAlign.justify : TextAlign.start,
   );
   final baseVertical = preferences.mode == ReaderMode.vertical;
+  final latinOrientation = baseVertical
+      ? preferences.verticalLatinOrientation
+      : ReaderVerticalLatinOrientation.rotated;
   var vertical = baseVertical;
   var forcePageBreak = false;
   ReaderRichParagraph? previousFormat;
@@ -364,6 +363,7 @@ Future<ReaderPagination?> paginateReader({
             : null,
         vertical ? verticalStyle : style,
         preferences.mode,
+        baseVertical ? latinOrientation : null,
         vertical ? null : preferences.indent,
         vertical ? null : preferences.justify,
         vertical ? preferences.letterSpacing : null,
@@ -413,6 +413,7 @@ Future<ReaderPagination?> paginateReader({
         lineHeight: style.height ?? 1.72,
         width: vertical ? size.height : size.width,
         defaultGap: preferences.paragraphGap,
+        overrideGap: preferences.paragraphGapOverride,
       );
       previousFormat = format;
       if (vertical) {
@@ -664,17 +665,23 @@ Future<ReaderPagination?> paginateReader({
           final offsets = Uint32List(clusters.length + 1);
           final advances = List<double>.filled(clusters.length, 0);
           final rotations = List<double>.filled(clusters.length, 0);
+          final annotations =
+              format.emphasis.isEmpty &&
+                  format.ruby.isEmpty &&
+                  format.references.isEmpty
+              ? null
+              : ReaderRichParagraphIndex(format);
           painter.textScaler = TextScaler.noScaling;
           var c = 0;
           for (final cluster in clusters) {
             offsets[c + 1] = offsets[c] + cluster.length;
-            final emphasis = format.emphasisAt(offsets[c]);
+            final emphasis = annotations?.emphasisAt(offsets[c]) ?? 0;
             final metric = glyphMetrics.putIfAbsent((cluster, emphasis), () {
               final display = _verticalCluster(cluster);
               final rotation = RotationRules.getRotationAngle(
                 display,
                 CharacterClassifier.classify(display),
-                true,
+                latinOrientation == ReaderVerticalLatinOrientation.rotated,
               );
               if (rotation == 0) {
                 return (
@@ -710,6 +717,7 @@ Future<ReaderPagination?> paginateReader({
             offsets,
             advances,
             rotations,
+            annotations,
           );
         }
         final clusters = metrics.clusters, offsets = metrics.offsets;

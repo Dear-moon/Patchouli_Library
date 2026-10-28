@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'app_interactions.dart';
 import 'app_ui.dart';
 import 'bookmark_library_page.dart';
+import 'reading_statistics_page.dart';
 import 'catalog.dart';
+import 'dock_layout.dart';
 import 'feature_pages.dart';
 import 'library_state.dart';
 import 'offline_repository.dart';
@@ -45,7 +47,7 @@ class MyPage extends StatelessWidget {
             key: const PageStorageKey('my-page'),
             padding: featurePadding(
               context,
-            ).copyWith(bottom: MediaQuery.paddingOf(context).bottom + 120),
+            ).copyWith(bottom: DockLayout.scrollPaddingOf(context)),
             children: [
               AnimatedBuilder(
                 animation: Listenable.merge([
@@ -167,6 +169,18 @@ class MyPage extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 24),
+              FeatureEntry(
+                key: const ValueKey('my-statistics'),
+                title: '统计',
+                subtitle: '阅读记录、藏书与书签',
+                icon: CupertinoIcons.chart_bar,
+                onTap: () => pushNovelPage<void>(
+                  context,
+                  ReadingStatisticsPage(state: state, repository: repository),
+                  reduceMotion: state.reduceMotion,
+                ),
+              ),
+              const SizedBox(height: 14),
               ActiveListenableBuilder(
                 listenable: state.bookmarkChanges,
                 builder: (context) {

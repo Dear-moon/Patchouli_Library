@@ -57,14 +57,6 @@ android {
     }
 
     buildTypes {
-        getByName("debug") {
-            // The integration runner uninstalls its package on completion.
-            // Keep rendering probes separate from the user's release data.
-            applicationIdSuffix = ".render_probe"
-        }
-        getByName("profile") {
-            applicationIdSuffix = ".profile_probe"
-        }
         release {
             proguardFile(file("document-import.pro"))
             if (readerPreview) {
@@ -109,5 +101,4 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     // Keep the media host classes available to the app's shared-engine wiring.
     implementation("androidx.media:media:1.7.0")
-    testImplementation("junit:junit:4.13.2")
 }

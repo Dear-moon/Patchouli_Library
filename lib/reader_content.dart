@@ -188,6 +188,7 @@ typedef _MeasuredParagraph = ({int index, double top, double height});
 /// saving or explicitly changing the reading layout.
 class ReaderParagraphRegistry {
   final Map<int, _ReaderParagraphRender> _rows = {};
+
   @visibleForTesting
   int debugParagraphMounts = 0;
 
@@ -238,7 +239,9 @@ class ReaderParagraphRegistry {
     visit(row);
     final text = paragraph;
     final viewport = RenderAbstractViewport.maybeOf(row);
-    if (text == null || viewport == null) return null;
+    if (text == null || !text.attached || !text.hasSize || viewport == null) {
+      return null;
+    }
     final top = viewport.getOffsetToReveal(row, 0).offset;
     final textOrigin = text.localToGlobal(Offset.zero, ancestor: row);
     final position = text.getPositionForOffset(

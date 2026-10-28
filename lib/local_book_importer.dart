@@ -3,19 +3,76 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_interactions.dart';
 import 'app_ui.dart';
 import 'book_documents.dart';
+import 'book_sync.dart';
 import 'catalog.dart';
 import 'cloud_library_page.dart';
 import 'cloud_sources.dart';
+import 'cloud_book_sync_panel.dart';
 import 'library_state.dart';
 import 'local_books.dart';
 import 'local_document_reference.dart';
 import 'local_book_scanner.dart';
 import 'local_import_batch.dart';
 import 'local_import_review.dart';
+import 'local_import_page.dart';
 import 'local_library_preferences.dart';
 import 'local_series_actions.dart';
 import 'local_scan_page.dart';
 import 'local_scan_selection.dart';
+
+/// Category writes follow the finite selected batch, not every parsed member.
+/// Books are durable first; a failed assignment is reported without reimporting
+/// or deleting them. Repeated books retain their last observed target category.
+class _ImportedCategoryBatch {
+  final _assignments = <int, ({String group, String name, int revision})>{};
+
+  void add(Novel book, String group, int revision) {
+    _assignments[book.id] = (
+      group: group,
+      name: book.title,
+      revision: revision,
+    );
+  }
+
+  Future<List<LocalImportNotice>> commit(
+    LocalLibraryPreferences organization,
+    Iterable<int> imported,
+  ) async {
+    if (_assignments.isEmpty) return const [];
+    final accepted = imported.toSet();
+    final groups = <String, Map<int, ({String name, int revision})>>{};
+    for (final entry in _assignments.entries) {
+      if (accepted.contains(entry.key) &&
+          organization.assignmentRevision(entry.key) == entry.value.revision) {
+        (groups[entry.value.group] ??= {})[entry.key] = (
+          name: entry.value.name,
+          revision: entry.value.revision,
+        );
+      }
+    }
+    final notices = <LocalImportNotice>[];
+    for (final entry in groups.entries) {
+      try {
+        await organization.assignMany(
+          entry.value.keys,
+          entry.key,
+          expectedRevisions: {
+            for (final book in entry.value.entries)
+              book.key: book.value.revision,
+          },
+        );
+      } catch (_) {
+        notices.addAll([
+          for (final book in entry.value.entries)
+            if (organization.assignmentRevision(book.key) ==
+                book.value.revision)
+              (name: book.value.name, message: '已导入，但分类未保存。可在“全部书籍”中重新分类。'),
+        ]);
+      }
+    }
+    return notices;
+  }
+}
 
 /// Shared by the two library entry points, including series review and cleanup.
 class LocalBookImporter extends ChangeNotifier {
@@ -79,6 +136,8 @@ class LocalBookImporter extends ChangeNotifier {
     BuildContext context, {
     bool management = false,
     VoidCallback? onManage,
+    VoidCallback? onBatch,
+    BookSync? sync,
   }) async {
     if (busy) return;
     final action = await showGlassMenu<String>(
@@ -92,24 +151,15 @@ class LocalBookImporter extends ChangeNotifier {
             label: '导入书籍',
             onPressed: () => Navigator.pop(menu, 'local'),
           ),
-          GlassMenuItem(
-            order: 1,
-            label: '复制到应用',
-            onPressed: () => Navigator.pop(menu, 'copy'),
-          ),
-          GlassMenuItem(
-            order: 2,
-            label: '从网盘导入',
-            onPressed: () => Navigator.pop(menu, 'cloud'),
-          ),
-          GlassMenuItem(
-            order: 3,
-            label: '扫描本地文件夹',
-            onPressed: () => Navigator.pop(menu, 'scan'),
-          ),
+          if (onBatch != null)
+            GlassMenuItem(
+              order: 1,
+              label: '批量整理',
+              onPressed: () => Navigator.pop(menu, 'batch'),
+            ),
           if (management)
             GlassMenuItem(
-              order: 4,
+              order: 2,
               label: '本地分类与同步',
               onPressed: () => Navigator.pop(menu, 'manage'),
             ),
@@ -121,27 +171,71 @@ class LocalBookImporter extends ChangeNotifier {
       onManage?.call();
       return;
     }
-    if (action == 'scan') {
+    if (action == 'batch') {
+      onBatch?.call();
+      return;
+    }
+    await openImportPage(context, sync: sync);
+  }
+
+  Future<void> openScanPage(BuildContext context) => pushNovelPage<void>(
+    context,
+    LocalScanPage(
+      documents: documents,
+      changes: this,
+      isBusy: () => busy,
+      progress: () => progress,
+      result: () => scanResult,
+      failure: () => error,
+      onScan: (page) => run(page, fromScan: true),
+    ),
+    reduceMotion: library.reduceMotion,
+  );
+
+  /// Existing callers share the same hub and retain their picker contracts.
+  Future<void> openImportPage(BuildContext context, {BookSync? sync}) async {
+    if (busy || _disposed) return;
+    BookSync? ownedSync;
+    final activeSync =
+        sync ??
+        (ownedSync = BookSync(
+          books: books,
+          state: library,
+          preferences: await SharedPreferences.getInstance(),
+          documents: documents,
+          organization: library.organization,
+          cloudSources: _cloud,
+        ));
+    try {
+      if (ownedSync != null) await activeSync.load();
+      if (!context.mounted || _disposed) return;
       await pushNovelPage<void>(
         context,
-        LocalScanPage(
-          documents: documents,
+        LocalImportPage(
+          library: library,
           changes: this,
           isBusy: () => busy,
           progress: () => progress,
-          result: () => scanResult,
           failure: () => error,
-          onScan: (page) => run(page, fromScan: true),
+          onScan: openScanPage,
+          onManual: (page) => run(page),
+          onCloud: (page) => run(page, fromCloud: true),
+          onSyncSettings: (page) async {
+            await _cloud.load();
+            if (!page.mounted || _disposed) return;
+            await showJellySheet<void>(
+              context: page,
+              reduceMotion: library.reduceMotion,
+              heightFactor: .86,
+              builder: (_) => CloudBookSyncPanel(sync: activeSync),
+            );
+          },
         ),
         reduceMotion: library.reduceMotion,
       );
-      return;
+    } finally {
+      ownedSync?.dispose();
     }
-    await run(
-      context,
-      fromCloud: action == 'cloud',
-      copyLocal: action == 'copy',
-    );
   }
 
   Future<void> run(
@@ -187,7 +281,11 @@ class LocalBookImporter extends ChangeNotifier {
       final encoding = prefs.getString('localTxtEncoding') ?? 'auto';
       final importOptions = organization.importOptions.effective;
       final fresh = <int>{};
-      Future<Novel> registerImported(Novel imported) async {
+      var categoryWarning = false;
+      Future<Novel> registerImported(
+        Novel imported, {
+        _ImportedCategoryBatch? categories,
+      }) async {
         final parent = books.seriesFor(imported.id);
         final book = parent == null ? imported : books.book(parent.id)!;
         if (parent != null) await reconcileLocalSeries(books, library);
@@ -197,13 +295,25 @@ class LocalBookImporter extends ChangeNotifier {
             : organization!.selected;
         if (group != LocalLibraryPreferences.all &&
             LocalLibraryPreferences.categoryAuthor(group) == null) {
-          await organization.assign(book.id, group);
+          if (categories == null) {
+            await organization.assign(book.id, group);
+          } else {
+            categories.add(
+              book,
+              group,
+              organization.assignmentRevision(book.id),
+            );
+          }
         }
         if (parent == null) fresh.add(book.id);
         return book;
       }
 
-      Future<Novel> importFile(String name, String path) async {
+      Future<Novel> importFile(
+        String name,
+        String path, {
+        _ImportedCategoryBatch? categories,
+      }) async {
         String? decoded;
         late Novel imported;
         try {
@@ -215,6 +325,8 @@ class LocalBookImporter extends ChangeNotifier {
             path,
             decodedPath: decoded,
             options: importOptions,
+            recoverDamagedEpub:
+                !automatic && name.toLowerCase().endsWith('.epub'),
           );
           if ((copyLocal || !organization!.linkLocalBooks) &&
               books.isLinkedBook(imported.id)) {
@@ -242,7 +354,7 @@ class LocalBookImporter extends ChangeNotifier {
             }
           }
         }
-        return registerImported(imported);
+        return registerImported(imported, categories: categories);
       }
 
       Future<LocalImportReport> importPrepared(
@@ -251,12 +363,16 @@ class LocalBookImporter extends ChangeNotifier {
         bool releaseSources = false,
       }) async {
         final origins = <String, LocalDocumentSource>{};
+        // Scanner acknowledgement depends on each source's category succeeding.
+        // Its immediate write/failure contract remains unchanged.
+        final categories = fromScan ? null : _ImportedCategoryBatch();
         try {
-          return await importLocalDocuments(
+          final imported = await importLocalDocuments(
             selections: sources,
             documents: documents,
             books: books,
-            importFile: importFile,
+            importFile: (name, path) =>
+                importFile(name, path, categories: categories),
             importSelection: (selected) async {
               if (selected.originReference case final reference?) {
                 final original = origins[reference] ??= await books
@@ -280,6 +396,7 @@ class LocalBookImporter extends ChangeNotifier {
                       decodedPath: decoded,
                       renewReference: selectedBooks != null,
                     ),
+                    categories: categories,
                   );
                 } finally {
                   if (decoded != null) {
@@ -310,10 +427,18 @@ class LocalBookImporter extends ChangeNotifier {
                           reference,
                           options: importOptions,
                           renewReference: selectedBooks != null,
+                          recoverDamagedEpub:
+                              !automatic &&
+                              selected.name.toLowerCase().endsWith('.epub'),
                         ),
+                  categories: categories,
                 );
               }
-              return importFile(selected.name, selected.path!);
+              return importFile(
+                selected.name,
+                selected.path!,
+                categories: categories,
+              );
             },
             releaseSources: releaseSources,
             onCleanupFailed: staged.addAll,
@@ -323,6 +448,19 @@ class LocalBookImporter extends ChangeNotifier {
                 _changed();
               }
             },
+          );
+          final notices = await categories?.commit(
+            organization!,
+            imported.bookIds,
+          );
+          if (notices == null || notices.isEmpty) return imported;
+          categoryWarning = true;
+          return LocalImportReport(
+            bookIds: imported.bookIds,
+            added: imported.added,
+            existing: imported.existing,
+            failures: imported.failures,
+            notices: [...imported.notices, ...notices],
           );
         } finally {
           for (final reference
@@ -462,7 +600,9 @@ class LocalBookImporter extends ChangeNotifier {
       }
       AppHaptics.play(
         context,
-        completed.failures.isNotEmpty
+        categoryWarning
+            ? HapticCue.warning
+            : completed.failures.isNotEmpty
             ? (completed.added > 0 ? HapticCue.warning : HapticCue.error)
             : (completed.added > 0 ? HapticCue.success : null),
       );
@@ -572,7 +712,7 @@ class _LocalBookImportButtonState extends State<LocalBookImportButton>
       child: Builder(
         builder: (anchor) => GlassIconButton(
           key: const ValueKey('shelf-import-book'),
-          icon: CupertinoIcons.plus,
+          icon: CupertinoIcons.arrow_down_doc,
           label: switch (importer.progress) {
             final progress? => '正在导入 ${progress.$1} / ${progress.$2} 本',
             _ => importer.busy ? '正在导入书籍' : '导入书籍',

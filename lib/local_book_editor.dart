@@ -1,15 +1,20 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'app_ui.dart';
+import 'app_interactions.dart' show pushNovelPage, showNovelFeedback;
 import 'catalog.dart';
 import 'library_state.dart';
 import 'local_books.dart';
 import 'local_library_preferences.dart';
 import 'local_series_editor.dart';
 import 'local_book_removal.dart';
-import 'app_interactions.dart';
 import 'book_documents.dart';
 import 'local_text_recovery.dart';
+import 'local_book_edit_widgets.dart';
+import 'local_book_tags_editor.dart';
+import 'book_tag_catalog.dart';
+import 'local_book_import_warning.dart';
+import 'feature_pages.dart' show FeatureEntry, FeatureError, featurePadding;
 
 enum LocalBookEditResult { saved, hidden, deleted, regrouped }
 
@@ -32,6 +37,7 @@ class LocalBookEditor extends StatefulWidget {
 class _LocalBookEditorState extends State<LocalBookEditor> {
   late final _title = TextEditingController(text: widget.book.title),
       _author = TextEditingController(text: widget.book.author);
+  late List<String> _tags = normalizeBookTags(widget.book.tags);
   LocalLibraryPreferences? _groups;
   String _group = LocalLibraryPreferences.unfiled;
   bool _busy = false;
@@ -107,9 +113,9 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
       );
     } catch (e) {
       if (mounted) {
-        setState(
-          () => _error = e is FormatException ? e.message : '封面保存未完成，请重试',
-        );
+        final message = e is FormatException ? e.message : '封面保存未完成，请重试';
+        setState(() => _error = message);
+        showNovelFeedback(context, message);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -185,6 +191,7 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
         title: _title.text,
         author: _author.text,
         summary: widget.book.summary,
+        tags: _tags,
       );
       await groups.assign(updated.id, _group);
       await widget.library.setShelfMembership(
@@ -195,10 +202,12 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
       if (mounted) Navigator.pop(context, LocalBookEditResult.saved);
     } catch (e) {
       if (mounted) {
+        final message = e is FormatException ? e.message : '书籍信息保存未完成，请重试';
         setState(() {
           _busy = false;
-          _error = e is FormatException ? e.message : '书籍信息保存未完成，请重试';
+          _error = message;
         });
+        showNovelFeedback(context, message);
       }
     }
   }
@@ -233,6 +242,7 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
           _busy = false;
           _error = '删除未完成，请重试';
         });
+        showNovelFeedback(context, _error!);
       }
     }
   }
@@ -256,186 +266,238 @@ class _LocalBookEditorState extends State<LocalBookEditor> {
     );
   }
 
-  Widget _field(
-    String label,
-    TextEditingController controller, {
-    int lines = 1,
-    required int limit,
-  }) => Padding(
-    padding: const EdgeInsets.only(bottom: 22),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+  void _back() =>
+      Navigator.pop(context, _coverChanged ? LocalBookEditResult.saved : null);
+
+  Future<void> _originalFiles() async {
+    await showJellySheet<void>(
+      context: context,
+      reduceMotion: widget.library.reduceMotion,
+      heightFactor: .72,
+      builder: (_) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+        children: [
+          const ArchiveSection(title: '关联原文件', code: 'LOCAL / ORIGINALS'),
+          const SizedBox(height: 20),
+          for (final original in widget.books.linkedOriginals(widget.book.id))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: ContentPanel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AppText(
+                      original.title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 12),
+                    LocalTextRecovery(
+                      books: widget.books,
+                      bookId: original.id,
+                      documents: widget.documents,
+                      allowCopy: true,
+                      onChanged: () {
+                        if (mounted) setState(() {});
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _importIssues() async {
+    await showLocalBookImportIssues(
+      context,
+      book: widget.books.book(widget.book.id) ?? widget.book,
+      books: widget.books,
+      reduceMotion: widget.library.reduceMotion,
+    );
+    if (mounted) setState(() {});
+  }
+
+  Widget _identity() {
+    final book = widget.books.book(widget.book.id) ?? widget.book;
+    final series = widget.books.seriesFor(book.id);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        AppText(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 9),
-        CupertinoTextField(
-          key: ValueKey('local-edit-$label'),
-          onTap: () => AppHaptics.play(context, HapticCue.selection),
-          onSubmitted: (_) => AppHaptics.play(context, HapticCue.action),
-          controller: controller,
-          enabled: !_busy,
-          maxLines: lines,
-          maxLength: limit,
-          padding: const EdgeInsets.all(15),
-          style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-            fontSize: 16,
-            height: 1.6,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-          decoration: BoxDecoration(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: .045),
-            borderRadius: BorderRadius.circular(ArchiveDesign.panelRadius),
+        NovelCover(book, width: 88, height: 124),
+        const SizedBox(width: 20),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppText(
+                book.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 7),
+              AppText(
+                '${series == null ? '本地书籍' : '${series.volumes.length} 卷合订本'} · ${book.chapters.length} 章',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  GlassTextButton(
+                    key: const ValueKey('local-edit-cover'),
+                    compact: true,
+                    onPressed: _busy ? null : _chooseCover,
+                    child: const AppText('更换封面'),
+                  ),
+                  if (widget.books.hasCustomCover(widget.book.id))
+                    GlassTextButton(
+                      key: const ValueKey('local-restore-cover'),
+                      compact: true,
+                      onPressed: _busy ? null : () => _cover(restore: true),
+                      child: const AppText('恢复封面'),
+                    ),
+                ],
+              ),
+            ],
           ),
         ),
       ],
-    ),
-  );
+    );
+  }
+
+  Widget _content() {
+    final series = widget.books.seriesFor(widget.book.id);
+    final linked = widget.books.linkedOriginals(widget.book.id);
+    final issues = widget.books.importIssues(widget.book.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _identity(),
+        const SizedBox(height: 30),
+        const ArchiveSection(title: '书籍信息', code: '01 / PROFILE'),
+        const SizedBox(height: 18),
+        LocalBookEditField(
+          label: '书名',
+          controller: _title,
+          inputKey: const ValueKey('local-edit-书名'),
+          enabled: !_busy,
+        ),
+        const SizedBox(height: 20),
+        LocalBookEditField(
+          label: '作者',
+          controller: _author,
+          inputKey: const ValueKey('local-edit-作者'),
+          enabled: !_busy,
+        ),
+        const SizedBox(height: 20),
+        LocalBookTagsEditor(
+          value: _tags,
+          availableTags: [
+            for (final id in {
+              ...widget.library.shelf,
+              ...widget.library.readingPositions.keys,
+            })
+              ...?widget.library.cachedNovel(id)?.tags,
+            for (final book in widget.books.books) ...book.tags,
+          ],
+          enabled: !_busy,
+          reduceMotion: widget.library.reduceMotion,
+          onChanged: (tags) => setState(() => _tags = tags),
+        ),
+        const SizedBox(height: 24),
+        FeatureEntry(
+          key: const ValueKey('local-edit-category'),
+          title: '书籍分类',
+          subtitle: _groups?.nameOf(_group) ?? '正在读取分类',
+          icon: CupertinoIcons.folder,
+          onTap: _busy || _groups == null ? null : _chooseGroup,
+        ),
+        const SizedBox(height: 30),
+        const ArchiveSection(title: '本地管理', code: '02 / LIBRARY'),
+        const SizedBox(height: 18),
+        if (issues.isNotEmpty) ...[
+          FeatureEntry(
+            key: const ValueKey('local-edit-import-issues'),
+            title: '导入问题',
+            subtitle:
+                '${issues.length} 项 · ${widget.books.shouldShowImportWarning(widget.book.id) ? '查看已发现的问题' : '封面警告已隐藏'}',
+            icon: CupertinoIcons.exclamationmark_triangle,
+            onTap: _busy ? null : _importIssues,
+          ),
+          const SizedBox(height: 12),
+        ],
+        FeatureEntry(
+          key: const ValueKey('local-edit-volumes'),
+          title: series == null ? '合并分卷' : '管理分卷',
+          subtitle: series == null
+              ? '将同一作品的多本书合为一本'
+              : '${series.volumes.length} 卷 · 排序、改名与移出',
+          icon: CupertinoIcons.square_stack,
+          onTap: _busy ? null : _volumes,
+        ),
+        if (linked.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          FeatureEntry(
+            key: const ValueKey('local-edit-originals'),
+            title: '关联原文件',
+            subtitle: '${linked.length} 个文件 · 重新关联或保存副本',
+            icon: CupertinoIcons.link,
+            onTap: _busy ? null : _originalFiles,
+          ),
+        ],
+        const SizedBox(height: 20),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: GlassTextButton(
+            key: const ValueKey('local-edit-delete'),
+            compact: true,
+            onPressed: _busy ? null : _delete,
+            child: AppText(
+              '移除书籍',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        ),
+        FeatureError(_error),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) => PopScope<LocalBookEditResult>(
     canPop: !_busy && !_coverChanged,
     onPopInvokedWithResult: (didPop, result) {
       if (!didPop && !_busy) Navigator.pop(context, LocalBookEditResult.saved);
     },
-    child: Scaffold(
-      body: Atmosphere(
-        child: GlassHeaderLayout(
-          header: ArchiveHeaderBar(
-            leading: GlassIconButton(
-              icon: CupertinoIcons.back,
-              label: '返回详情',
-              onPressed: _busy
-                  ? null
-                  : () => Navigator.pop(
-                      context,
-                      _coverChanged ? LocalBookEditResult.saved : null,
-                    ),
-            ),
-            title: const ArchiveRouteTitle(
-              title: '书籍配置',
-              code: 'LOCAL / BOOK PROFILE',
-            ),
-          ),
-          body: ListView(
-            padding: EdgeInsets.fromLTRB(
-              24,
-              MediaQuery.paddingOf(context).top +
-                  FrostedHeader.toolbarHeight +
-                  20,
-              24,
-              MediaQuery.paddingOf(context).bottom + 32,
-            ),
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  NovelCover(
-                    widget.books.book(widget.book.id) ?? widget.book,
-                    width: 80,
-                    height: 112,
-                  ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        GlassTextButton(
-                          key: const ValueKey('local-edit-cover'),
-                          onPressed: _busy ? null : _chooseCover,
-                          child: const AppText('更换封面'),
-                        ),
-                        if (widget.books.hasCustomCover(widget.book.id))
-                          GlassTextButton(
-                            key: const ValueKey('local-restore-cover'),
-                            onPressed: _busy
-                                ? null
-                                : () => _cover(restore: true),
-                            child: const AppText(
-                              '恢复原书封面',
-                              style: TextStyle(fontSize: 12),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              for (final original in widget.books.linkedOriginals(
-                widget.book.id,
-              )) ...[
-                AppText(
-                  '关联原文件 · ${original.title}',
-                  style: const TextStyle(fontSize: 14, height: 1.6),
-                ),
-                LocalTextRecovery(
-                  books: widget.books,
-                  bookId: original.id,
-                  documents: widget.documents,
-                  allowCopy: true,
-                  onChanged: () => setState(() {}),
-                ),
-                const SizedBox(height: 20),
-              ],
-              _field('书名', _title, limit: 160),
-              _field('作者', _author, limit: 160),
-              Row(
-                children: [
-                  const AppText(
-                    '分类',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: GlassTextButton(
-                      key: const ValueKey('local-edit-category'),
-                      onPressed: _busy || _groups == null ? null : _chooseGroup,
-                      child: AppText(_groups?.nameOf(_group) ?? '正在读取分类'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 22),
-              GlassTextButton(
-                key: const ValueKey('local-edit-volumes'),
-                onPressed: _busy ? null : _volumes,
-                child: AppText(
-                  widget.books.seriesFor(widget.book.id) == null
-                      ? '合并分卷'
-                      : '管理分卷',
-                ),
-              ),
-              const SizedBox(height: 22),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: AppText(
-                    _error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ),
-              GlassPillButton(
-                key: const ValueKey('local-edit-save'),
-                icon: CupertinoIcons.checkmark,
-                label: _busy ? '正在处理' : '保存修改',
-                onPressed: _busy || _groups == null ? null : _save,
-              ),
-              const SizedBox(height: 28),
-              GlassTextButton(
-                key: const ValueKey('local-edit-delete'),
-                onPressed: _busy ? null : _delete,
-                child: AppText(
-                  '移除书籍',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-            ],
-          ),
+    child: LocalBookEditLayout(
+      title: '书籍配置',
+      code: 'LOCAL / BOOK PROFILE',
+      onBack: _busy ? null : _back,
+      primaryKey: const ValueKey('local-edit-save'),
+      primaryLabel: _busy ? '正在处理' : '保存修改',
+      primaryIcon: CupertinoIcons.checkmark,
+      onPrimary: _busy || _groups == null ? null : _save,
+      secondaryLabel: '取消',
+      secondaryIcon: CupertinoIcons.xmark,
+      onSecondary: _busy ? null : _back,
+      slivers: [
+        SliverPadding(
+          padding: featurePadding(context).copyWith(bottom: 12),
+          sliver: SliverToBoxAdapter(child: _content()),
         ),
-      ),
+      ],
     ),
   );
 }

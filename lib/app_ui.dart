@@ -15,6 +15,7 @@ import 'app_haptics.dart';
 import 'app_window_insets.dart';
 import 'catalog.dart';
 import 'local_book_media.dart';
+import 'local_book_import_warning.dart';
 import 'cover_arrival.dart';
 import 'glass_optics.dart';
 import 'glass_palette.dart';
@@ -28,6 +29,9 @@ import 'motion_ui.dart';
 import 'native_effects.dart';
 import 'performance_preferences.dart';
 import 'scroll_edge_blur.dart';
+import 'route_identity.dart';
+import 'dock_layout.dart';
+import 'control_material_scope.dart';
 
 export 'scroll_edge_blur.dart' show ProgressiveBlur, ScrollEdgeProfile;
 export 'loading_ui.dart';
@@ -36,6 +40,7 @@ export 'archive_design.dart';
 export 'archive_icons.dart';
 export 'app_haptics.dart';
 export 'glass_controls.dart';
+export 'control_material_scope.dart';
 
 const ink = Color(0xFF181818);
 const accent = Color(0xFF202020);
@@ -274,6 +279,7 @@ abstract final class AppControls {
     double max = 1,
     int? divisions,
     bool haptics = true,
+    bool compact = false,
     ValueChanged<double>? onChangeStart,
     ValueChanged<double>? onChangeEnd,
   }) {
@@ -284,6 +290,7 @@ abstract final class AppControls {
       max: max,
       divisions: divisions,
       haptics: haptics,
+      compact: compact,
       onChanged: onChanged,
       onChangeStart: onChangeStart,
       onChangeEnd: onChangeEnd,
@@ -353,8 +360,8 @@ class Atmosphere extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final tonal = Theme.of(context).extension<AppTonalColors>();
+    final theme = Theme.of(context);
+    final tonal = theme.extension<AppTonalColors>();
     final content = headerBackground == null
         ? child
         : Stack(
@@ -374,7 +381,7 @@ class Atmosphere extends StatelessWidget {
             children: [
               Positioned.fill(
                 child: ArchiveBackdrop(
-                  filmColor: tonal?.milk ?? ArchiveDesign.milk,
+                  filmColor: tonal?.milk ?? theme.colorScheme.surface,
                 ),
               ),
               content,
@@ -388,9 +395,7 @@ class Atmosphere extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: tonal != null
               ? [tonal.pageStart, tonal.pageEnd]
-              : dark
-              ? [ArchiveDesign.darkBackground, ArchiveDesign.darkSurface]
-              : [ArchiveDesign.surface, ArchiveDesign.background],
+              : [theme.scaffoldBackgroundColor, theme.scaffoldBackgroundColor],
         ),
       ),
       child: NativeScrollEdgeGroup(
@@ -470,12 +475,14 @@ class FrostedHeader extends StatelessWidget {
     super.key,
     required this.child,
     this.blurBackground = true,
+    this.extraHeight = 0,
   });
 
   static const toolbarHeight = 56.0;
   static const featherHeight = 56.0;
   final Widget child;
   final bool blurBackground;
+  final double extraHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -490,7 +497,7 @@ class FrostedHeader extends StatelessWidget {
     final highContrast = MediaQuery.highContrastOf(context);
     return SizedBox(
       key: const ValueKey('frosted-navigation-plane'),
-      height: statusHeight + toolbarHeight + featherHeight,
+      height: statusHeight + toolbarHeight + extraHeight + featherHeight,
       child: Stack(
         children: [
           if (!highContrast && blurBackground)
@@ -498,6 +505,7 @@ class FrostedHeader extends StatelessWidget {
               child: ProgressiveBlur(
                 maxSigma: appearance.blur,
                 plateauHeight: statusHeight,
+                shadeOpacity: DockLayout.topEdgeShadeOpacity,
               ),
             ),
           if (highContrast)
@@ -510,8 +518,10 @@ class FrostedHeader extends StatelessWidget {
             top: statusHeight,
             left: padding.left + 24,
             right: padding.right + 24,
-            height: toolbarHeight,
-            child: NativeGlassGroup(child: GlassForeground(child: child)),
+            height: toolbarHeight + extraHeight,
+            child: ControlMaterialScope.chrome(
+              child: NativeGlassGroup(child: GlassForeground(child: child)),
+            ),
           ),
         ],
       ),
@@ -552,19 +562,22 @@ class GlassHeaderLayout extends StatelessWidget {
 /// A light scroll-edge treatment below the dock, not another glass plate.
 /// It extends to the gesture area without adding an opaque footer or hitbox.
 class DockUnderlay extends StatelessWidget {
-  const DockUnderlay({super.key});
+  const DockUnderlay({super.key, this.contentHeight});
+  final double? contentHeight;
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.viewPaddingOf(context).bottom;
     final blur = GlassAppearance.of(context).blur;
     return IgnorePointer(
       child: SizedBox(
         key: const ValueKey('dock-underlay'),
-        height: bottom + 52,
+        height: DockLayout.underlayExtentOf(
+          context,
+          contentHeight: contentHeight,
+        ),
         child: ProgressiveBlur(
-          maxSigma: math.min(3, blur * .16),
-          plateauHeight: bottom,
+          maxSigma: blur,
+          plateauHeight: DockLayout.bottomPaddingOf(context, viewPadding: true),
           fromBottom: true,
         ),
       ),
@@ -817,6 +830,7 @@ class DockSelectionLens extends StatelessWidget {
   );
 }
 
+/// A compact icon action with the shared hit area, semantics and app haptic.
 class GlassIconButton extends StatelessWidget {
   const GlassIconButton({
     super.key,
@@ -825,6 +839,10 @@ class GlassIconButton extends StatelessWidget {
     required this.onPressed,
     this.color,
     this.haptic = HapticCue.action,
+    this.liveGlass = true,
+    this.transparent = false,
+    this.pageHeight,
+    this.compactMainPage = false,
   }) : child = null;
 
   /// Shares the standard hit area, glass and press response with icon actions.
@@ -834,6 +852,10 @@ class GlassIconButton extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.haptic = HapticCue.action,
+    this.liveGlass = true,
+    this.transparent = false,
+    this.pageHeight,
+    this.compactMainPage = false,
   }) : icon = null,
        color = null;
 
@@ -844,41 +866,283 @@ class GlassIconButton extends StatelessWidget {
   final Color? color;
   final HapticCue? haptic;
 
+  /// Whether to sample and refract the live background.
+  ///
+  /// False preserves the low-cost painted glass face used by dense book rows.
+  final bool liveGlass;
+  final bool transparent;
+  // Kept for source compatibility; density now has an explicit main-page opt-in.
+  final double? pageHeight;
+  final bool compactMainPage;
+
   @override
-  Widget build(BuildContext context) => LibraryReflowPart(
-    child: Semantics(
+  Widget build(BuildContext context) {
+    final compact = compactMainPage || CompactMainPageControls.of(context);
+    final geometry = _compactControlGeometry(context);
+    final size = compact ? Size(48, geometry.hit) : const Size.square(46);
+    final content = SizedBox(
+      width: size.width,
+      height: size.height,
+      child: _unscaleCompactContent(
+        compact: compact,
+        scaleX: 40 / 48,
+        scaleY: geometry.scale,
+        child:
+            child ??
+            ArchiveIcon(
+              icon,
+              size: compact ? 20 : 21,
+              color:
+                  color ??
+                  (onPressed == null ? Theme.of(context).disabledColor : null),
+            ),
+      ),
+    );
+    final semanticLabel = appText(context, label);
+    final action = Semantics(
       button: true,
       enabled: onPressed != null,
       child: Tooltip(
-        message: appText(context, label),
+        message: semanticLabel,
         triggerMode: TooltipTriggerMode.manual,
         excludeFromSemantics: true,
-        child: LiquidGlass(
-          radius: 24,
-          elevated: false,
-          semanticLabel: appText(context, label),
-          onTap: onPressed,
-          haptic: haptic,
-          child: SizedBox(
-            width: 46,
-            height: 46,
-            child:
-                child ??
-                ArchiveIcon(
-                  icon,
-                  size: 21,
-                  color:
-                      color ??
-                      (onPressed == null
-                          ? Theme.of(context).disabledColor
-                          : null),
+        child: _scaleCompactFace(
+          compact: compact,
+          scaleX: 40 / 48,
+          scaleY: geometry.scale,
+          child: liveGlass
+              ? LiquidGlass(
+                  radius: 24,
+                  elevated: false,
+                  semanticLabel: semanticLabel,
+                  onTap: onPressed,
+                  haptic: haptic,
+                  child: content,
+                )
+              : _PaintedIconAction(
+                  size: size,
+                  transparent: transparent,
+                  label: semanticLabel,
+                  onPressed: onPressed,
+                  haptic: haptic,
+                  child: content,
+                ),
+        ),
+      ),
+    );
+    return LibraryReflowPart(
+      // The label and Material button action must share one boundary instead
+      // of lending the label to the enclosing book-open action.
+      child: liveGlass ? action : MergeSemantics(child: action),
+    );
+  }
+}
+
+/// Retains standard keyboard, focus and gesture-arena handling without adding a
+/// live backdrop pass for every visible content-row action.
+class _PaintedIconAction extends StatefulWidget {
+  const _PaintedIconAction({
+    required this.label,
+    required this.onPressed,
+    required this.haptic,
+    required this.child,
+    required this.size,
+    this.transparent = false,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final HapticCue? haptic;
+  final Widget child;
+  final bool transparent;
+  final Size size;
+
+  @override
+  State<_PaintedIconAction> createState() => _PaintedIconActionState();
+}
+
+class _PaintedIconActionState extends State<_PaintedIconAction> {
+  int _iconActivation = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final appearance = GlassAppearance.of(context);
+    final fill = widget.transparent
+        ? Colors.transparent
+        : MediaQuery.highContrastOf(context)
+        ? Theme.of(context).colorScheme.surface
+        : GlassAppearance.tintOf(
+            context,
+            opacity: appearance.opacity,
+          ).withValues(alpha: appearance.opacity);
+    return Semantics(
+      label: widget.label,
+      child: DecoratedBox(
+        decoration: ShapeDecoration(color: fill, shape: const CircleBorder()),
+        child: Material(
+          type: MaterialType.transparency,
+          child: IconButton(
+            onPressed: widget.onPressed == null
+                ? null
+                : () {
+                    AppHaptics.play(context, widget.haptic);
+                    setState(() => _iconActivation++);
+                    widget.onPressed!();
+                  },
+            icon: widget.child,
+            iconSize: 21,
+            enableFeedback: false,
+            padding: EdgeInsets.zero,
+            constraints: BoxConstraints.tight(widget.size),
+            visualDensity: VisualDensity.standard,
+            splashColor: Colors.transparent,
+            style:
+                IconButton.styleFrom(
+                  fixedSize: widget.size,
+                  shape: const CircleBorder(),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  animationDuration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : NovelMotion.contact,
+                  splashFactory: NoSplash.splashFactory,
+                ).copyWith(
+                  foregroundBuilder: (context, states, child) =>
+                      ArchiveIconContact(
+                        pressed: states.contains(WidgetState.pressed),
+                        activation: _iconActivation,
+                        child: child!,
+                      ),
+                  overlayColor: const WidgetStatePropertyAll(
+                    Colors.transparent,
+                  ),
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.disabled)) {
+                      return Colors.transparent;
+                    }
+                    final alpha =
+                        states.contains(WidgetState.pressed) ||
+                            states.contains(WidgetState.focused)
+                        ? .08
+                        : states.contains(WidgetState.hovered)
+                        ? .04
+                        : 0.0;
+                    return Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: alpha);
+                  }),
                 ),
           ),
         ),
       ),
-    ),
+    );
+  }
+}
+
+/// Shared sizing for the detail and batch-action pair, including large text.
+({bool stacked, double height, double extent}) glassActionDockGeometry(
+  BuildContext context, {
+  required String primary,
+  required String secondary,
+}) {
+  final media = MediaQuery.of(context);
+  final width = math.min(
+    DockLayout.actionMaxWidth,
+    media.size.width -
+        media.viewPadding.horizontal -
+        DockLayout.actionSideInset * 2,
+  );
+  final textStyle =
+      Theme.of(context).textTheme.bodyMedium ??
+      DefaultTextStyle.of(context).style;
+  ({double width, double height}) actionSize(String text) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: appText(context, text),
+        style: textStyle.merge(
+          const TextStyle(
+            fontSize: DockLayout.labelFontSize,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: media.textScaler,
+    )..layout();
+    final result = (
+      width: painter.width + DockLayout.iconSize + 37,
+      height: painter.height + 24,
+    );
+    painter.dispose();
+    return result;
+  }
+
+  final first = actionSize(primary), second = actionSize(secondary);
+  final rowWidth = math.max(0.0, width - DockLayout.actionGap);
+  final stacked =
+      second.width > rowWidth * 5 / 12 || first.width > rowWidth * 7 / 12;
+  final actionHeight = math.max(
+    DockLayout.heightOf(context),
+    math.max(first.height, second.height),
+  );
+  final height = stacked
+      ? actionHeight * 2 + DockLayout.actionGap
+      : actionHeight;
+  return (
+    stacked: stacked,
+    height: height,
+    extent:
+        height + DockLayout.bottomPaddingOf(context, viewPadding: true) + 12,
   );
 }
+
+({double face, double hit, double scale}) _compactControlGeometry(
+  BuildContext context,
+) {
+  final face = math.max(
+    40.0,
+    MediaQuery.textScalerOf(context).scale(14) * 1.4 + 12,
+  );
+  final hit = math.max(48.0, face + 8);
+  return (face: face, hit: hit, scale: face / hit);
+}
+
+// Paint only the glass face smaller; its original hit box and gesture handling
+// stay intact. Counter-scaling the foreground preserves the label/icon sizes.
+Widget _scaleCompactFace({
+  required bool compact,
+  required double scaleY,
+  double scaleX = 1,
+  required Widget child,
+}) => compact
+    ? _CompactControlFace(scaleX: scaleX, scaleY: scaleY, child: child)
+    : child;
+
+class _CompactControlFace extends StatelessWidget {
+  const _CompactControlFace({
+    required this.scaleX,
+    required this.scaleY,
+    required this.child,
+  });
+  final double scaleX, scaleY;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Transform.scale(
+    scaleX: scaleX,
+    scaleY: scaleY,
+    transformHitTests: false,
+    child: child,
+  );
+}
+
+Widget _unscaleCompactContent({
+  required bool compact,
+  required double scaleY,
+  double scaleX = 1,
+  required Widget child,
+}) => compact
+    ? Transform.scale(scaleX: 1 / scaleX, scaleY: 1 / scaleY, child: child)
+    : child;
 
 class GlassPillButton extends StatelessWidget {
   const GlassPillButton({
@@ -887,15 +1151,23 @@ class GlassPillButton extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.loading = false,
+    this.height = 54,
+    this.iconSize = 18,
+    this.fontSize = 14,
+    this.compactMainPage = false,
   });
   final IconData icon;
   final String label;
   final VoidCallback? onPressed;
   final bool loading;
+  final double height, iconSize, fontSize;
+  final bool compactMainPage;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final compact = compactMainPage || CompactMainPageControls.of(context);
+    final geometry = _compactControlGeometry(context);
     final scheme = theme.colorScheme;
     final action = loading ? null : onPressed;
     final color =
@@ -904,52 +1176,69 @@ class GlassPillButton extends StatelessWidget {
     return Semantics(
       button: true,
       enabled: action != null,
-      child: LiquidGlass(
-        radius: 27,
-        thickness: 16,
-        elevated: false,
-        onTap: action,
-        semanticLabel: label,
-        child: SizedBox(
-          width: 196,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 54),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              child: loading
-                  ? const SizedBox(
-                      width: 128,
-                      height: 18,
-                      child: ExcludeSemantics(
-                        child: LoadingSkeleton(
-                          layout: SkeletonLayout.button,
-                          label: '正在加载阅读进度',
-                        ),
-                      ),
-                    )
-                  : ArchivePart(
-                      start: .58,
-                      end: 1,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          ArchiveIcon(icon, size: 18, color: color),
-                          const SizedBox(width: 9),
-                          Flexible(
-                            child: AppText(
-                              label,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: color,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
+      child: _scaleCompactFace(
+        compact: compact,
+        scaleY: geometry.scale,
+        child: LiquidGlass(
+          radius: height / 2,
+          thickness: 16,
+          elevated: false,
+          onTap: action,
+          semanticLabel: label,
+          child: SizedBox(
+            width: 196,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: compact ? geometry.hit : height,
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: compact ? 10 : 12,
+                ),
+                child: _unscaleCompactContent(
+                  compact: compact,
+                  scaleY: geometry.scale,
+                  child: loading
+                      ? const SizedBox(
+                          width: 128,
+                          height: 18,
+                          child: ExcludeSemantics(
+                            child: LoadingSkeleton(
+                              layout: SkeletonLayout.button,
+                              label: '正在加载阅读进度',
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                        )
+                      : ArchivePart(
+                          start: .58,
+                          end: 1,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              ArchiveIcon(
+                                icon,
+                                size: compact ? 20 : iconSize,
+                                color: color,
+                              ),
+                              const SizedBox(width: 9),
+                              Flexible(
+                                child: AppText(
+                                  label,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: color,
+                                    fontSize: fontSize,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+              ),
             ),
           ),
         ),
@@ -968,75 +1257,96 @@ class GlassTextButton extends StatelessWidget {
     this.compact = false,
     this.selected,
     this.haptic = HapticCue.action,
+    this.pageHeight,
+    this.compactMainPage = false,
   });
   final Widget child;
   final VoidCallback? onPressed;
   final bool compact;
   final bool? selected;
   final HapticCue? haptic;
+  final double? pageHeight;
+  final bool compactMainPage;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    // A shared vertical gutter also separates wrapped rows and consecutive
-    // actions on secondary settings pages. The optical plates never touch.
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Semantics(
-      button: true,
-      enabled: onPressed != null,
-      selected: selected,
-      child: LiquidGlass(
-        radius: 22,
-        elevated: false,
-        tintColor: selected == true
-            ? Color.lerp(
-                GlassAppearance.tintOf(
-                  context,
-                  opacity: GlassAppearance.of(context).opacity,
+  Widget build(BuildContext context) {
+    final smallFace = compactMainPage || CompactMainPageControls.of(context);
+    final geometry = _compactControlGeometry(context);
+    return Padding(
+      // A shared vertical gutter also separates wrapped rows and consecutive
+      // actions on secondary settings pages. The optical plates never touch.
+      padding: EdgeInsets.symmetric(vertical: smallFace ? 0 : 4),
+      child: Semantics(
+        button: true,
+        enabled: onPressed != null,
+        selected: selected,
+        child: _scaleCompactFace(
+          compact: smallFace,
+          scaleY: geometry.scale,
+          child: LiquidGlass(
+            radius: 22,
+            elevated: false,
+            tintColor: selected == true
+                ? Color.lerp(
+                    GlassAppearance.tintOf(
+                      context,
+                      opacity: GlassAppearance.of(context).opacity,
+                    ),
+                    Theme.of(context).extension<AppTonalColors>()?.action ??
+                        Theme.of(context).colorScheme.onSurface,
+                    .10,
+                  )
+                : null,
+            onTap: onPressed,
+            haptic: selected != null && haptic == HapticCue.action
+                ? HapticCue.selection
+                : haptic,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: compact ? 48 : 64,
+                minHeight: smallFace ? geometry.hit : 48,
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 8 : 14,
+                  vertical: 10,
                 ),
-                Theme.of(context).extension<AppTonalColors>()?.action ??
-                    Theme.of(context).colorScheme.onSurface,
-                .10,
-              )
-            : null,
-        onTap: onPressed,
-        haptic: selected != null && haptic == HapticCue.action
-            ? HapticCue.selection
-            : haptic,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            minWidth: compact ? 48 : 64,
-            minHeight: 48,
-          ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 8 : 14,
-              vertical: 10,
-            ),
-            child: Align(
-              widthFactor: 1,
-              heightFactor: 1,
-              child: DefaultTextStyle.merge(
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.4,
-                  fontWeight: FontWeight.w500,
-                  color:
-                      ((selected == true
-                                  ? Theme.of(
-                                      context,
-                                    ).extension<AppTonalColors>()?.action
-                                  : null) ??
-                              Theme.of(context).colorScheme.onSurface)
-                          .withValues(alpha: onPressed == null ? .45 : 1),
+                child: Align(
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: _unscaleCompactContent(
+                    compact: smallFace,
+                    scaleY: geometry.scale,
+                    child: DefaultTextStyle.merge(
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.4,
+                        fontWeight: FontWeight.w500,
+                        color:
+                            ((selected == true
+                                        ? Theme.of(
+                                            context,
+                                          ).extension<AppTonalColors>()?.action
+                                        : null) ??
+                                    Theme.of(context).colorScheme.onSurface)
+                                .withValues(alpha: onPressed == null ? .45 : 1),
+                      ),
+                      child: ArchivePart(
+                        start: .24,
+                        end: .88,
+                        travel: const Offset(0, 6),
+                        child: child,
+                      ),
+                    ),
+                  ),
                 ),
-                child: child,
               ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 Widget sectionHeader(BuildContext context, String title, String subtitle) =>
@@ -1131,12 +1441,14 @@ class _ContentPanelState extends State<ContentPanel> {
 class JellyTapSurface extends StatefulWidget {
   const JellyTapSurface({
     super.key,
+    this.tapKey,
     required this.child,
     required this.onTap,
     this.haptic = HapticCue.action,
   });
 
   final Widget child;
+  final Key? tapKey;
   final VoidCallback? onTap;
   final HapticCue? haptic;
 
@@ -1165,6 +1477,7 @@ class _JellyTapSurfaceState extends State<JellyTapSurface> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
+          key: widget.tapKey,
           enableFeedback: false,
           splashFactory: NoSplash.splashFactory,
           highlightColor: Colors.transparent,
@@ -1235,49 +1548,76 @@ class NovelCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cover = _visual();
+    Widget warning(Widget child) =>
+        LocalBookImportWarningCover(book: novel, width: width, child: child);
     if (heroTag == null || MediaQuery.disableAnimationsOf(context)) {
-      return cover;
+      return warning(cover);
     }
-    return Hero(
-      tag: heroTag!,
-      transitionOnUserGestures: true,
-      createRectTween: (begin, end) => PaperCoverRectTween.toHero(
-        context: context,
-        begin: begin,
-        end: end,
-        returning: !isDetailCover,
+    return warning(
+      Hero(
+        tag: heroTag!,
+        transitionOnUserGestures: true,
+        createRectTween: (begin, end) => PaperCoverRectTween.toHero(
+          context: context,
+          begin: begin,
+          end: end,
+          returning: !isDetailCover,
+        ),
+        flightShuttleBuilder: (context, animation, direction, from, to) {
+          final pushing = direction == HeroFlightDirection.push;
+          // Hero builds the shuttle before the destination has laid out. Both
+          // cover faces already carry their explicit width in their container.
+          double endpointWidth(BuildContext endpoint) {
+            final hero = endpoint.widget;
+            final face = hero is Hero ? hero.child : null;
+            return face is Container
+                ? face.constraints?.maxWidth ?? width
+                : width;
+          }
+
+          final flightWidth = math.max(
+            width,
+            math.max(endpointWidth(from), endpointWidth(to)),
+          );
+          return PaperCoverFlight(
+            key: ValueKey('cover-flight-${novel.id}'),
+            animation:
+                ModalRoute.of(
+                  direction == HeroFlightDirection.push ? to : from,
+                )?.animation ??
+                animation,
+            imageProvider: switch (LocalBookMedia.peek(novel.coverUrl) ??
+                LegacyCover.peek(novel.id)) {
+              final bytes? => ResizeImage.resizeIfNeeded(
+                novelCoverDecodeWidth(
+                  flightWidth,
+                  MediaQuery.devicePixelRatioOf(context),
+                ),
+                null,
+                MemoryImage(bytes),
+              ),
+              null => null,
+            },
+            faceSize: Size(width, height),
+            beginPlane: PaperCoverPlane.fromHero(pushing ? from : to),
+            endPlane: PaperCoverPlane.fromHero(pushing ? to : from),
+            beginOcclusion: PaperCoverPlane.occlusionFromHero(
+              pushing ? from : to,
+            ),
+            endOcclusion: PaperCoverPlane.occlusionFromHero(
+              pushing ? to : from,
+            ),
+            backingColor: novel.coverUrl == null
+                ? accent
+                : Theme.of(context).colorScheme.surface,
+            child: FittedBox(
+              fit: BoxFit.fill,
+              child: _visual(recordArrival: false),
+            ),
+          );
+        },
+        child: cover,
       ),
-      flightShuttleBuilder: (context, animation, direction, from, to) {
-        final pushing = direction == HeroFlightDirection.push;
-        return PaperCoverFlight(
-          key: ValueKey('cover-flight-${novel.id}'),
-          animation:
-              ModalRoute.of(
-                direction == HeroFlightDirection.push ? to : from,
-              )?.animation ??
-              animation,
-          imageProvider: switch (LocalBookMedia.peek(novel.coverUrl) ??
-              LegacyCover.peek(novel.id)) {
-            final bytes? => MemoryImage(bytes),
-            null => null,
-          },
-          faceSize: Size(width, height),
-          beginPlane: PaperCoverPlane.fromHero(pushing ? from : to),
-          endPlane: PaperCoverPlane.fromHero(pushing ? to : from),
-          beginOcclusion: PaperCoverPlane.occlusionFromHero(
-            pushing ? from : to,
-          ),
-          endOcclusion: PaperCoverPlane.occlusionFromHero(pushing ? to : from),
-          backingColor: novel.coverUrl == null
-              ? accent
-              : Theme.of(context).colorScheme.surface,
-          child: FittedBox(
-            fit: BoxFit.fill,
-            child: _visual(recordArrival: false),
-          ),
-        );
-      },
-      child: cover,
     );
   }
 
@@ -1554,10 +1894,12 @@ PageRoute<T> softRoute<T>(
   Widget page, {
   bool reduceMotion = false,
   bool paperFlight = false,
+  RouteSettings? settings,
 }) => _NovelPageRoute<T>(
   page: page,
   reduceMotion: reduceMotion,
   paperFlight: paperFlight,
+  settings: settings,
 );
 
 class _NovelPageRoute<T> extends CupertinoPageRoute<T> {
@@ -1565,10 +1907,21 @@ class _NovelPageRoute<T> extends CupertinoPageRoute<T> {
     required Widget page,
     required this.reduceMotion,
     required this.paperFlight,
+    super.settings,
   }) : super(builder: (_) => RepaintBoundary(child: page));
 
   final bool reduceMotion;
   final bool paperFlight;
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) => RouteIdentity(
+    route: this,
+    child: super.buildPage(context, animation, secondaryAnimation),
+  );
 
   @override
   Duration get transitionDuration => reduceMotion
@@ -1589,17 +1942,27 @@ Future<T?> showJellySheet<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   bool reduceMotion = false,
+  bool guardDragDismiss = false,
   ValueListenable<bool>? previewing,
   double? heightFactor,
+  double maxWidth = 440,
+  double? maxHeight,
   Widget Function(Widget)? surfaceWrapper,
+  Rect? anchor,
+  BuildContext? sourceContext,
 }) => _showGlassOverlay<T>(
   context: context,
   builder: builder,
   reduceMotion: reduceMotion,
   kind: GlassOverlayKind.sheet,
+  guardDragDismiss: guardDragDismiss,
   previewing: previewing,
   heightFactor: heightFactor,
+  maxWidth: maxWidth,
+  maxHeight: maxHeight,
   surfaceWrapper: surfaceWrapper,
+  anchor: anchor,
+  sourceContext: sourceContext,
 );
 
 /// The trigger holds its layout slot while its material stretches into the
@@ -1631,10 +1994,61 @@ class _GlassMenuAnchorState extends State<GlassMenuAnchor> {
 
 final _activeGlassOverlays = Expando<bool>('active-glass-overlay');
 
+GlassMenuSource? _captureGlassSource(
+  BuildContext context,
+  NavigatorState navigator,
+) {
+  GlassMenuSource? source;
+  void capture(Element element) {
+    if (source != null) return;
+    final widget = element.widget;
+    if (widget is LiquidGlass) {
+      RenderBox? sourceBox;
+      void findSurface(Element candidate) {
+        if (sourceBox != null) return;
+        if (candidate.widget is NativeBackdrop) {
+          final render = candidate.findRenderObject();
+          if (render is RenderBox && render.attached && render.hasSize) {
+            sourceBox = render;
+          }
+        }
+        if (sourceBox == null) candidate.visitChildElements(findSurface);
+      }
+
+      element.visitChildElements(findSurface);
+      final compactFace = element
+          .findAncestorWidgetOfExactType<_CompactControlFace>();
+      final foreground = Padding(padding: widget.padding, child: widget.child);
+      source = GlassMenuSource(
+        box: sourceBox,
+        radius: widget.radius,
+        thickness: widget.thickness,
+        blur: widget.blur ?? 0,
+        foreground: InheritedTheme.capture(from: element, to: navigator.context)
+            .wrap(
+              compactFace == null
+                  ? foreground
+                  : Transform.scale(
+                      scaleX: compactFace.scaleX,
+                      scaleY: compactFace.scaleY,
+                      child: foreground,
+                    ),
+            ),
+      );
+      return;
+    }
+    element.visitChildElements(capture);
+  }
+
+  capture(context as Element);
+  return source;
+}
+
 Future<T?> showGlassMenu<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   bool reduceMotion = false,
+  bool preferBelow = false,
 }) async {
   if (!context.mounted) return null;
   if (_activeGlassOverlays[context] == true) return null;
@@ -1651,39 +2065,21 @@ Future<T?> showGlassMenu<T>({
     return null;
   }
   final appearance = GlassAppearance.of(context);
-  GlassMenuSource? source;
-  void capture(Element element) {
-    if (source != null) return;
-    final widget = element.widget;
-    if (widget is LiquidGlass) {
-      source = GlassMenuSource(
-        radius: widget.radius,
-        thickness: widget.thickness,
-        blur: widget.blur ?? 0,
-        foreground: InheritedTheme.capture(
-          from: element,
-          to: navigator.context,
-        ).wrap(Padding(padding: widget.padding, child: widget.child)),
-      );
-      return;
-    }
-    element.visitChildElements(capture);
-  }
-
-  capture(context as Element);
+  final source = _captureGlassSource(context, navigator);
+  final sourceBox = source?.box ?? box;
   final route = _GlassOverlayRoute<T>(
     builder: builder,
     reduceMotion: reduceMotion || MediaQuery.disableAnimationsOf(context),
     appearance: appearance,
     themes: InheritedTheme.capture(from: context, to: navigator.context),
     kind: GlassOverlayKind.menu,
+    preferBelow: preferBelow,
     // Layout, stretching and hit testing all use the owning Overlay's space.
     // A global offset is wrong for an inset/scaled/nested Navigator.
     anchor: MatrixUtils.transformRect(
-      box.getTransformTo(overlay),
-      Offset.zero & box.size,
+      sourceBox.getTransformTo(overlay),
+      Offset.zero & sourceBox.size,
     ),
-    anchorBox: box,
     source: source,
   );
   owner?.setOpen(true);
@@ -1704,26 +2100,43 @@ Future<T?> _showGlassOverlay<T>({
   required WidgetBuilder builder,
   required bool reduceMotion,
   required GlassOverlayKind kind,
+  bool guardDragDismiss = false,
   Rect? anchor,
+  BuildContext? sourceContext,
   ValueListenable<bool>? previewing,
   double? heightFactor,
+  double maxWidth = 440,
+  double? maxHeight,
   Widget Function(Widget)? surfaceWrapper,
 }) async {
   if (!context.mounted) return null;
   if (_activeGlassOverlays[context] == true) return null;
   final navigator = Navigator.of(context);
+  final sourceBox = sourceContext?.findRenderObject();
+  final source = sourceContext == null
+      ? null
+      : _captureGlassSource(sourceContext, navigator);
+  final owner = sourceContext?.findAncestorStateOfType<_GlassMenuAnchorState>();
   final route = _GlassOverlayRoute<T>(
     builder: builder,
     kind: kind,
     anchor: anchor,
+    anchorBox: sourceBox is RenderBox && sourceBox.attached && sourceBox.hasSize
+        ? sourceBox
+        : null,
+    source: source,
     reduceMotion: reduceMotion || MediaQuery.disableAnimationsOf(context),
     appearance: GlassAppearance.of(context),
     themes: InheritedTheme.capture(from: context, to: navigator.context),
     previewing: previewing,
     heightFactor: heightFactor,
+    maxWidth: maxWidth,
+    maxHeight: maxHeight,
     surfaceWrapper: surfaceWrapper,
+    guardDragDismiss: guardDragDismiss,
   );
   _activeGlassOverlays[context] = true;
+  owner?.setOpen(true);
   try {
     FocusManager.instance.primaryFocus?.unfocus();
     final result = await navigator.push<T>(route);
@@ -1732,6 +2145,7 @@ Future<T?> _showGlassOverlay<T>({
     return result;
   } finally {
     _activeGlassOverlays[context] = false;
+    owner?.setOpen(false);
   }
 }
 
@@ -1757,19 +2171,22 @@ class _GlassOverlaySurfaceState extends State<GlassOverlaySurface> {
   // surface and its transparent preview, including lightweight renderers.
   final _contentKey = GlobalKey();
   @override
-  Widget build(BuildContext context) => LiquidGlass(
-    transparent: widget.transparent,
-    radius: 28,
-    thickness: 20,
-    elevated: false,
-    preserveOptics: widget.preserveOptics,
-    morph: widget.morph,
-    // Panels contain several labels: soften the underlying text/controls so
-    // they do not read as a second, stationary set of foreground glyphs.
-    // The shared tint/opacity stays untouched; navigation keeps its clear core.
-    blur: math.min(12, GlassAppearance.of(context).blur),
-    child: KeyedSubtree(key: _contentKey, child: widget.child),
-  );
+  Widget build(BuildContext context) {
+    final content = KeyedSubtree(key: _contentKey, child: widget.child);
+    return LiquidGlass(
+      transparent: widget.transparent,
+      radius: 28,
+      thickness: 20,
+      elevated: false,
+      preserveOptics: widget.preserveOptics,
+      morph: widget.morph,
+      // Panels contain several labels: soften the underlying text/controls so
+      // they do not read as a second, stationary set of foreground glyphs.
+      // The shared tint/opacity stays untouched; navigation keeps its clear core.
+      blur: math.min(12, GlassAppearance.of(context).blur),
+      child: content,
+    );
+  }
 }
 
 class GlassMenuSource {
@@ -1778,11 +2195,13 @@ class GlassMenuSource {
     this.radius = 24,
     this.thickness = 20,
     this.blur = 0,
+    this.box,
   });
   final Widget foreground;
   final double radius;
   final double thickness;
   final double blur;
+  final RenderBox? box;
 }
 
 /// Both the route and rendering fixtures use this same material/content split.
@@ -1834,11 +2253,13 @@ class GlassMenuItem extends StatelessWidget {
     required this.onPressed,
     this.selected = false,
     this.order = 0,
+    this.icon,
   });
   final String label;
   final VoidCallback onPressed;
   final bool selected;
   final int order;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -1863,18 +2284,21 @@ class GlassMenuItem extends StatelessWidget {
             ),
             child: Row(
               children: [
-                ExcludeSemantics(
-                  child: SizedBox(
-                    width: 3,
-                    height: 3,
-                    child: ColoredBox(
-                      color: selected
-                          ? Theme.of(context).colorScheme.surface
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                if (icon != null)
+                  ArchiveIcon(icon, size: 20)
+                else
+                  ExcludeSemantics(
+                    child: SizedBox(
+                      width: 3,
+                      height: 3,
+                      child: ColoredBox(
+                        color: selected
+                            ? Theme.of(context).colorScheme.surface
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
+                SizedBox(width: icon == null ? 10 : 14),
                 Expanded(
                   child: AppText(
                     label,
@@ -1915,7 +2339,11 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
     this.source,
     this.previewing,
     this.heightFactor,
+    this.maxWidth = 440,
+    this.maxHeight,
     this.surfaceWrapper,
+    this.preferBelow = false,
+    this.guardDragDismiss = false,
   });
   final WidgetBuilder builder;
   final GlassOverlayKind kind;
@@ -1927,7 +2355,11 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
   final GlassMenuSource? source;
   final ValueListenable<bool>? previewing;
   final double? heightFactor;
+  final double maxWidth;
+  final double? maxHeight;
   final Widget Function(Widget)? surfaceWrapper;
+  final bool preferBelow;
+  final bool guardDragDismiss;
 
   @override
   void install() {
@@ -1972,16 +2404,22 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
             Offset.zero & trigger.size,
           )
         : anchor;
+    final dockSheet =
+        kind == GlassOverlayKind.sheet && origin != null && source != null;
     final material = GlassOverlayTransition(
       animation: animation,
-      kind: kind,
+      kind: dockSheet ? GlassOverlayKind.menu : kind,
       reduceMotion: reduceMotion,
       anchor: origin,
       coordinateSpace: overlay,
       child: kind == GlassOverlayKind.sheet
           ? _GlassSheet(
               reduceMotion: reduceMotion,
+              guardDragDismiss: guardDragDismiss,
               previewing: previewing,
+              animation: animation,
+              anchor: dockSheet ? origin : null,
+              source: dockSheet ? source : null,
               child: ArchiveMotionScope(
                 animation: animation,
                 enabled: !reduceMotion,
@@ -2020,18 +2458,30 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
               );
               if (kind == GlassOverlayKind.menu) {
                 return CustomSingleChildLayout(
-                  delegate: _GlassMenuPlacement(origin!, safe),
+                  delegate: _GlassMenuPlacement(origin!, safe, preferBelow),
                   child: surface,
                 );
               }
-              final width = math.min(440.0, math.max(0.0, safe.width - 24));
-              final height = math.max(0.0, safe.height - 22);
+              final width = math.min(maxWidth, math.max(0.0, safe.width - 24));
+              final sheetBottom = math.min(
+                dockSheet ? origin.bottom : origin?.top ?? safe.bottom,
+                safe.bottom,
+              );
+              final height = math.min(
+                maxHeight ?? double.infinity,
+                math.max(0.0, sheetBottom - safe.top - 22),
+              );
               return Stack(
                 children: [
                   Positioned(
                     left: safe.center.dx - width / 2,
                     bottom:
-                        math.max(0, constraints.maxHeight - safe.bottom) + 10,
+                        math.max(0, constraints.maxHeight - sheetBottom) +
+                        (dockSheet
+                            ? 0
+                            : origin == null
+                            ? 10
+                            : 8),
                     width: width,
                     child: ConstrainedBox(
                       constraints: BoxConstraints(maxHeight: height),
@@ -2084,12 +2534,13 @@ Rect _popupSafeRect(RenderBox overlay, Size size, MediaQueryData media) {
 }
 
 class _GlassMenuPlacement extends SingleChildLayoutDelegate {
-  _GlassMenuPlacement(this.anchor, this.safe);
+  _GlassMenuPlacement(this.anchor, this.safe, this.preferBelow);
   final Rect anchor;
   final Rect safe;
+  final bool preferBelow;
   Rect get available => Rect.fromLTWH(
     safe.left + math.min(12, safe.width / 2),
-    safe.top + math.min(12, safe.height / 2),
+    math.min(safe.top + math.min(12, safe.height / 2), math.max(0, anchor.top)),
     math.max(0, safe.width - 24),
     math.max(0, safe.height - 24),
   );
@@ -2108,10 +2559,10 @@ class _GlassMenuPlacement extends SingleChildLayoutDelegate {
       area.left,
       math.max(area.left, area.right - childSize.width),
     );
-    final below = anchor.top;
+    final below = preferBelow ? anchor.bottom + 8 : anchor.top;
     final y = below + childSize.height <= area.bottom
         ? below
-        : anchor.bottom - childSize.height;
+        : (preferBelow ? anchor.top - 8 : anchor.bottom) - childSize.height;
     return Offset(
       x.toDouble(),
       y.clamp(area.top, math.max(area.top, area.bottom - childSize.height)),
@@ -2120,18 +2571,28 @@ class _GlassMenuPlacement extends SingleChildLayoutDelegate {
 
   @override
   bool shouldRelayout(_GlassMenuPlacement oldDelegate) =>
-      anchor != oldDelegate.anchor || safe != oldDelegate.safe;
+      anchor != oldDelegate.anchor ||
+      safe != oldDelegate.safe ||
+      preferBelow != oldDelegate.preferBelow;
 }
 
 class _GlassSheet extends StatefulWidget {
   const _GlassSheet({
     required this.child,
     required this.reduceMotion,
+    this.guardDragDismiss = false,
     this.previewing,
+    this.animation,
+    this.anchor,
+    this.source,
   });
   final Widget child;
   final bool reduceMotion;
+  final bool guardDragDismiss;
   final ValueListenable<bool>? previewing;
+  final Animation<double>? animation;
+  final Rect? anchor;
+  final GlassMenuSource? source;
   @override
   State<_GlassSheet> createState() => _GlassSheetState();
 }
@@ -2175,7 +2636,16 @@ class _GlassSheetState extends State<_GlassSheet>
         if ((details.primaryVelocity ?? 0) > 550 ||
             _drag.value > box.size.height * .24) {
           AppHaptics.play(context, HapticCue.action);
-          Navigator.of(context).pop();
+          if (widget.guardDragDismiss) {
+            // Editors opt in without changing existing sheets' drag contract.
+            if (ModalRoute.of(context)?.popDisposition ==
+                RoutePopDisposition.doNotPop) {
+              _restore();
+            }
+            Navigator.of(context).maybePop();
+          } else {
+            Navigator.of(context).pop();
+          }
         } else {
           _restore();
         }
@@ -2183,36 +2653,30 @@ class _GlassSheetState extends State<_GlassSheet>
       onVerticalDragCancel: _restore,
       child: AnimatedBuilder(
         animation: _drag,
-        child: ValueListenableBuilder<bool>(
-          valueListenable:
-              widget.previewing ?? const AlwaysStoppedAnimation(false),
-          builder: (context, previewing, child) => GlassOverlaySurface(
-            key: _surfaceKey,
-            transparent: previewing,
-            child: child!,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              ValueListenableBuilder<bool>(
-                valueListenable:
-                    widget.previewing ?? const AlwaysStoppedAnimation(false),
-                builder: (context, previewing, child) =>
-                    Opacity(opacity: previewing ? 0 : 1, child: child),
-                child: Container(
-                  width: 32,
-                  height: 3,
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: .18),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              Flexible(child: widget.child),
-            ],
+        child: RepaintBoundary(
+          child: ValueListenableBuilder<bool>(
+            valueListenable:
+                widget.previewing ?? const AlwaysStoppedAnimation(false),
+            builder: (context, previewing, child) {
+              return GlassOverlaySurface(
+                key: _surfaceKey,
+                transparent: previewing,
+                preserveOptics: widget.source != null,
+                morph:
+                    widget.source == null ||
+                        widget.reduceMotion ||
+                        MediaQuery.disableAnimationsOf(context)
+                    ? null
+                    : NativeGlassMorph(
+                        animation: widget.animation!,
+                        radius: widget.source!.radius,
+                        thickness: widget.source!.thickness,
+                        blur: widget.source!.blur,
+                      ),
+                child: child!,
+              );
+            },
+            child: _contents(context),
           ),
         ),
         builder: (context, child) => Transform.translate(
@@ -2223,4 +2687,42 @@ class _GlassSheetState extends State<_GlassSheet>
       ),
     ),
   );
+
+  Widget _contents(BuildContext context) {
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 12),
+        ValueListenableBuilder<bool>(
+          valueListenable:
+              widget.previewing ?? const AlwaysStoppedAnimation(false),
+          builder: (context, previewing, child) =>
+              Opacity(opacity: previewing ? 0 : 1, child: child),
+          child: Container(
+            width: 32,
+            height: 3,
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: .18),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+        Flexible(child: widget.child),
+      ],
+    );
+    if (widget.source == null ||
+        widget.reduceMotion ||
+        MediaQuery.disableAnimationsOf(context)) {
+      return content;
+    }
+    return GlassMenuContents(
+      animation: widget.animation!,
+      sourceSize: widget.anchor!.size,
+      sourceRadius: widget.source!.radius,
+      source: widget.source!.foreground,
+      child: content,
+    );
+  }
 }

@@ -15,9 +15,10 @@ internal object RefreshRatePolicy {
         val fastest = eligible.asSequence()
             .maxWithOrNull(compareBy<Mode> { it.rate }.thenBy { it.id == current.id })
             ?: return null
-        // Before API 34 a rate-only window preference applies to the DEFAULT
-        // resolution, which need not be the resolution the user has selected.
-        return Preference(if (sdk >= 34) 0 else fastest.id, fastest.rate)
+        // A manual choice requests that exact same-resolution display mode.
+        // Automatic high refresh keeps rate-only scheduling on API 34+, where
+        // it no longer implicitly selects the DEFAULT resolution.
+        return Preference(if (target > 0f || sdk < 34) fastest.id else 0, fastest.rate)
     }
 
     fun rates(current: Mode, modes: List<Mode>): List<Float> = modes
@@ -31,6 +32,7 @@ internal object RefreshRatePolicy {
 /** One vote per live surface/rate, not one vote per layout or rendered frame. */
 internal class SurfaceRateVote {
     private var applied: Float? = null
+    val appliedRate: Float? get() = applied
     fun apply(rate: Float, valid: Boolean, submit: (Float) -> Unit): Boolean {
         if (!valid) { applied = null; return false }
         if (applied == rate) return false

@@ -39,6 +39,7 @@ class _CoverArrivalState extends State<CoverArrival>
   bool _started = false;
   bool _done = false;
   bool _queued = false;
+  bool _hasFrame = false;
 
   @override
   void didChangeDependencies() {
@@ -66,6 +67,7 @@ class _CoverArrivalState extends State<CoverArrival>
       _clock?.value = 0;
       _started = false;
       _done = false;
+      _hasFrame = false;
     }
     _prepare();
   }
@@ -83,7 +85,11 @@ class _CoverArrivalState extends State<CoverArrival>
   }
 
   void _prepare() {
-    if (!widget.ready || _done) return;
+    // Image's gapless replacement retains the old pixels while a new decode
+    // size resolves, but frameBuilder temporarily reports frame == null.
+    // Those pixels must not be covered by the skeleton again.
+    _hasFrame |= widget.ready;
+    if (!_hasFrame || _done) return;
     if (!widget.recordArrival) {
       _done = true;
       return;
@@ -99,7 +105,7 @@ class _CoverArrivalState extends State<CoverArrival>
     // actual push starts. Recheck after that first frame, never during flight.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _queued = false;
-      if (mounted && widget.ready && !_done && !_started && _routeReady) {
+      if (mounted && _hasFrame && !_done && !_started && _routeReady) {
         setState(_start);
       }
     });
@@ -127,7 +133,7 @@ class _CoverArrivalState extends State<CoverArrival>
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.ready || (!_started && !_done)) return widget.placeholder;
+    if (!_hasFrame || (!_started && !_done)) return widget.placeholder;
     if (_done) return widget.child;
     return Stack(
       fit: StackFit.expand,

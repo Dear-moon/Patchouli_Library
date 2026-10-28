@@ -19,11 +19,28 @@ class LanDiscovery {
   Stream<List<LanNearbyDevice>> get changes => _changes.stream;
   String name = '我的设备';
   bool available = false;
+  int _generation = 0;
+  bool _disposed = false;
+  List<LanNearbyDevice> _devices = const [];
   Future<void> start(String id, int port) async {
+    if (_disposed) return;
+    final generation = ++_generation;
+    var nativeStateReported = false;
+    available = false;
+    _devices = const [];
     _channel.setMethodCallHandler((call) async {
+      if (_disposed || generation != _generation) return;
       if (call.method == 'failure') {
+        nativeStateReported = true;
         available = false;
-        if (!_changes.isClosed) _changes.add(const []);
+        _devices = const [];
+        _changes.add(_devices);
+        return;
+      }
+      if (call.method == 'ready') {
+        nativeStateReported = true;
+        available = true;
+        _changes.add(_devices);
         return;
       }
       if (call.method != 'devices' || call.arguments is! List) return;
@@ -45,24 +62,30 @@ class LanDiscovery {
           ),
         );
       }
-      if (!_changes.isClosed) _changes.add(devices);
+      _devices = List.unmodifiable(devices);
+      _changes.add(_devices);
     });
     try {
-      name =
-          await _channel.invokeMethod<String>('start', {
-            'id': id,
-            'port': port,
-          }) ??
-          name;
-      available = true;
+      final label = await _channel.invokeMethod<String>('start', {
+        'id': id,
+        'port': port,
+      });
+      if (_disposed || generation != _generation) return;
+      name = label ?? name;
+      if (!nativeStateReported) available = true;
     } on MissingPluginException {
-      available = false;
+      if (generation == _generation) available = false;
     } on PlatformException {
-      available = false;
+      if (generation == _generation) available = false;
     }
   }
 
   Future<void> stop() async {
+    _generation++;
+    _channel.setMethodCallHandler(null);
+    available = false;
+    _devices = const [];
+    if (!_disposed) _changes.add(_devices);
     try {
       await _channel.invokeMethod<void>('stop');
     } on MissingPluginException {
@@ -70,10 +93,11 @@ class LanDiscovery {
     } on PlatformException {
       /* The platform may already have stopped discovery. */
     }
-    available = false;
   }
 
   void dispose() {
+    _disposed = true;
+    _generation++;
     _channel.setMethodCallHandler(null);
     unawaited(_changes.close());
   }
