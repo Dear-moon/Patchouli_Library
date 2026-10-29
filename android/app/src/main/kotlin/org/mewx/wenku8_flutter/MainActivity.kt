@@ -35,9 +35,15 @@ class MainActivity : Activity() {
     }
 }
 
-/** Copies the full incoming contract, including file grants and stream extras. */
+/**
+ * Preserve incoming data, ClipData, extras and URI grants, but not the
+ * trampoline's lifetime. Android adds EXCLUDE_FROM_RECENTS to its launch intent.
+ */
 internal fun stableReaderIntent(context: Context, source: Intent): Intent =
-    Intent(source).setClass(context, ReaderActivity::class.java).addFlags(
+    Intent(source).setClass(context, ReaderActivity::class.java).apply {
+        flags = flags and (Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or
+            Intent.FLAG_ACTIVITY_NO_HISTORY).inv()
+    }.addFlags(
         Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
             Intent.FLAG_ACTIVITY_SINGLE_TOP,
     )
