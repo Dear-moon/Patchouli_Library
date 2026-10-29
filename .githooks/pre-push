@@ -14,7 +14,9 @@ for line in sys.stdin:
     local_ref, local_sha, remote_ref, remote_sha = line.split()
     if set(local_sha) == {'0'}:
         continue
-    command = ['git', 'rev-list', local_sha]
+    # Previously published history is not re-exported by a new tag.
+    # Validate every newly reachable commit against the current inventory policy.
+    command = ['git', 'rev-list', local_sha, '--not', '--remotes']
     if set(remote_sha) != {'0'}:
         command += ['^' + remote_sha]
     for revision in subprocess.check_output(command, cwd=root, text=True).splitlines():
