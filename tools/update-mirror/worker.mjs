@@ -111,11 +111,11 @@ async function assetResponse(request, url, match, dependencies) {
   const tag = decodeURIComponent(match[1]);
   const name = decodeURIComponent(match[2]);
   const version = VERSION.exec(tag)?.[1];
-  if (!version || !new Set([
+  if (!version || (!new Set([
     `wenku8-${version}-arm64-v8a.apk`, `wenku8-${version}-armeabi-v7a.apk`,
     `wenku8-${version}-x86_64.apk`, `wenku8-${version}-universal.apk`,
     `wenku8-${version}-source.zip`,
-  ]).has(name)) return error('Unknown release asset', 404);
+  ]).has(name) && !new RegExp('^Wenku8-' + version.replaceAll('.', '\\.') + '-[0-9]+-(ios-unsigned(?:-fixed)?\\.ipa|harmony-unsigned\\.hap)$').test(name))) return error('Unknown release asset', 404);
   const policy = dependencies.approvedReleases ?? APPROVED_RELEASES;
   // Apply approval before cached bytes, range requests and known attachment IDs.
   if (!approvedTag(tag, policy)) return error('Release unavailable', 410);
@@ -328,7 +328,7 @@ export class ReleaseRegistry {
 
 export const HOME = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>轻小说文库 · 下载与更新</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#f5f4ee;color:#303633;font:16px/1.65 system-ui,-apple-system,sans-serif}main{max-width:900px;margin:auto;padding:12vh 28px 64px}small{letter-spacing:.16em;color:#65756e}h1{font-size:clamp(32px,6vw,56px);font-weight:500;letter-spacing:-.04em;margin:20px 0 12px}p{color:#65716c;max-width:630px}header{border-bottom:1px solid #d9dfd8;padding-bottom:36px;margin-bottom:32px}a{color:inherit}#files{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:26px 0 42px}.file{display:flex;flex-direction:column;gap:12px;padding:24px;background:#ffffffa8;border:1px solid #ffffff;border-radius:20px;text-decoration:none;transition:transform .2s,background .2s}.file:hover{transform:translateY(-3px);background:#fff}.file b{font-size:18px;font-weight:550}.file span{overflow-wrap:anywhere;color:#6c7970;font-size:14px}.file em{font-style:normal;color:#395f4e;margin-top:8px;font-size:14px}footer{font-size:13px;color:#79827b;display:flex;gap:24px;flex-wrap:wrap}.status{font-size:14px;color:#536a5c}pre{font-size:13px;overflow:auto;background:#e9ece5;padding:18px;border-radius:12px}</style>
-<main><header><small>WENKU8 / READING ARCHIVE</small><h1>把故事，留在手边。</h1><p><strong>本项目仅为第三方阅读客户端，提供阅读界面与本地书籍管理，不运营在线书库、不自行发布小说资源。在线内容及可读状态一切以 Wenku8 为准；不提供因版权限制而停止开放的在线书籍阅读。</strong></p><p><strong>本项目完全免费、开源，无任何赞助、打赏或付费渠道。</strong>请认准项目仓库与应用内更新。升级前请备份原书和阅读记录。</p><p>轻小说文库 0.5.0 · Android、iOS 与 HarmonyOS。在线发现、离线阅读、本地书库与自然听书，以轻盈的玻璃界面承载每一页故事。</p><p>分类阅读统计 · 八套图片报告 · 阅读日历与纪念 · 独立配置桌面小组件 · 离线词典 · S3 同步</p><p><strong>重要说明：本 APP 以后只保留轻小说文库源和本地导入功能，不再支持任何其他源以及自定义书源。</strong></p></header><section aria-label="安装说明"><h2>选择你的设备</h2><p>Android 为正式签名版，近年的手机和平板优先选择 ARM64。iOS IPA 与 HarmonyOS HAP 未签名，需要自行签名后安装。升级前请备份重要数据。</p></section><div class="status" id="status">正在读取最新版本…</div><section id="releases"><div id="files"></div></section><details><summary>本版更新说明</summary><pre id="release-notes" style="white-space:pre-wrap">正在读取…</pre></details><br><footer><a href="https://github.com/mikufoxxx/Wenku8_Flutter">项目仓库 ↗</a><a href="https://github.com/mikufoxxx/Wenku8_Flutter/releases">版本页面 ↗</a><span>轻小说文库 · Android / iOS / HarmonyOS</span></footer></main>
+<main><header><small>WENKU8 / READING ARCHIVE</small><h1>把故事，留在手边。</h1><p><strong>本项目仅为第三方阅读客户端，提供阅读界面与本地书籍管理，不运营在线书库、不自行发布小说资源。在线内容及可读状态一切以 Wenku8 为准；不提供因版权限制而停止开放的在线书籍阅读。</strong></p><p><strong>本项目完全免费、开源，无任何赞助、打赏或付费渠道。</strong>请认准项目仓库与应用内更新。升级前请备份原书和阅读记录。</p><p>轻小说文库 · Android、iOS 与 HarmonyOS。在线发现、离线阅读、本地书库与自然听书，以轻盈的玻璃界面承载每一页故事。</p><p>分类阅读统计 · 八套图片报告 · 阅读日历与纪念 · 独立配置桌面小组件 · 离线词典 · S3 同步</p><p><strong>重要说明：本 APP 以后只保留轻小说文库源和本地导入功能，不再支持任何其他源以及自定义书源。</strong></p></header><section aria-label="安装说明"><h2>选择你的设备</h2><p>Android 为正式签名版，近年的手机和平板优先选择 ARM64。iOS IPA 与 HarmonyOS HAP 未签名，需要自行签名后安装。升级前请备份重要数据。</p></section><div class="status" id="status">正在读取最新版本…</div><section id="releases"><div id="files"></div></section><details><summary>本版更新说明</summary><pre id="release-notes" style="white-space:pre-wrap">正在读取…</pre></details><br><footer><a href="https://github.com/mikufoxxx/Wenku8_Flutter">项目仓库 ↗</a><a href="https://github.com/mikufoxxx/Wenku8_Flutter/releases">版本页面 ↗</a><span>轻小说文库 · Android / iOS / HarmonyOS</span></footer></main>
 <script>
 async function read(url, method='GET') {
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(), 8000);
@@ -337,18 +337,17 @@ async function read(url, method='GET') {
 }
 const approved=${JSON.stringify(Object.fromEntries(Object.entries(APPROVED_RELEASES).filter(([tag]) => approvedTag(tag))))};
 async function latest(){if(Object.keys(approved).length===0)throw Error();try{return await read('/api/releases/latest')}catch{return await read('https://api.github.com/repos/mikufoxxx/Wenku8_Flutter/releases/latest')}}
-latest().then(d=>{
+function renderFiles(d, mobileOnly=false) {
   if(d.draft||d.prerelease||!approved[d.tag_name])throw Error();
-  document.getElementById('status').textContent=d.tag_name+' · 最新正式版本';
-  document.getElementById('release-notes').textContent=d.body||'此版本未提供更新说明。';
   const host=document.getElementById('files');
   for(const a of d.assets||[]){
+    if(mobileOnly&&!/\\.(ipa|hap)$/.test(a.name))continue;
     if(!/\\.(apk|ipa|hap|zip)$/.test(a.name)||!Number.isSafeInteger(a.id)||!approved[d.tag_name].includes(a.id))continue;
     const u=new URL(a.browser_download_url);
     if(u.origin!=='https://github.com'||u.username||u.password||u.search||u.hash||!u.pathname.startsWith('/mikufoxxx/Wenku8_Flutter/releases/download/'))continue;
     const link=document.createElement('a');link.className='file';link.href=u.pathname+'?asset='+a.id;
     const b=document.createElement('b');b.textContent=a.name.endsWith('.ipa')?'iOS · 未签名 IPA':a.name.endsWith('.hap')?'HarmonyOS · 未签名 HAP':a.name.endsWith('-source.zip')?'源代码':a.name.includes('arm64-v8a')?'Android · ARM64':a.name.includes('armeabi-v7a')?'Android · ARMv7':a.name.includes('x86_64')?'Android · x86_64':'Android · 通用';
-    const s=document.createElement('span');s.textContent=a.name+' · '+(a.size/1048576).toFixed(1)+' MB';
+    const s=document.createElement('span');s.textContent=d.tag_name+' · '+(a.size/1048576).toFixed(1)+' MB';
     const e=document.createElement('em');e.textContent='下载 ↓';link.append(b,s,e);host.append(link);
     let busy=false;
     link.addEventListener('click',async event=>{
@@ -358,6 +357,23 @@ latest().then(d=>{
       try{await read(target,'HEAD')}catch{target=u.href}
       window.location.assign(target);busy=false;e.textContent='下载 ↓';
     });
+  }
+}
+latest().then(async d=>{
+  if(d.draft||d.prerelease||!approved[d.tag_name])throw Error();
+  document.getElementById('status').textContent=d.tag_name+' · 最新正式版本';
+  document.getElementById('release-notes').textContent=d.body||'此版本未提供更新说明。';
+  renderFiles(d);
+  if(d.tag_name!=='v0.5.0'){
+    try {
+      let mobile;
+      try{mobile=await read('/api/releases/tags/v0.5.0')}catch{mobile=await read('https://api.github.com/repos/mikufoxxx/Wenku8_Flutter/releases/tags/v0.5.0')}
+      renderFiles(mobile,true);
+      document.getElementById('status').textContent=d.tag_name+' · Android 最新版；iOS / HarmonyOS 保持 v0.5.0';
+    }catch{
+      const message=document.createElement('p');
+      const link=document.createElement('a');link.href='https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.0';link.textContent='苹果与鸿蒙下载暂未加载，前往 0.5.0 发布页 →';message.append(link);document.getElementById('files').append(message);
+    }
   }
 }).catch(()=>{document.getElementById('status').textContent=Object.keys(approved).length===0?'暂无正式版本供下载。':'暂时无法读取版本，请稍后刷新。';document.getElementById('release-notes').textContent='暂无更新说明。'})
 </script></html>`;

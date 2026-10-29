@@ -46,3 +46,15 @@ python3 tools/check_public_source.py ../Wenku8_Flutter-public-source
 0.5.0+260 已进入三端分发：安卓 APK 使用长期正式签名；苹果 IPA 和鸿蒙 HAP 按发布说明以未签名形式提供。测试、fixture、测试驱动及设备验收脚本留在本地，不进入公开清单；以前公开的测试已从当前树移除，历史提交不重写。
 
 Android 使用独立的 source_preview 包名；iOS 与 HarmonyOS 也使用独立源码预览身份。三端工程共享 lib/，仅保留本地平台能力，不接入受限在线实现。iOS 需要自行配置签名和 App Group；HarmonyOS 构建入口为 scripts/build_harmony.sh。
+
+## 未签名 IPA 的归档
+
+以设备 Archive 内的 Runner.app 创建 Payload，打包时禁用 macOS 资源分支和扩展属性：
+
+```sh
+mkdir -p staging/Payload
+ditto --norsrc --noextattr --noqtn build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app staging/Payload/Runner.app
+COPYFILE_DISABLE=1 ditto -c -k --norsrc --noextattr --noqtn --keepParent staging/Payload app-unsigned.ipa
+```
+
+发布前检查 ZIP 中没有 `._*`、`__MACOSX` 或 `.DS_Store`，且主应用与 `PlugIns/ReadingWidgets.appex` 的 Info.plist、可执行文件及版本均完整。AppleDouble 文件会被部分安装器误识别成扩展，导致 `Failed to create app extension placeholder`。未签名包仍需用户为主应用及扩展正确签名；归档检查不代替实际安装验收。
