@@ -43,6 +43,6 @@ python3 tools/check_public_source.py ../Wenku8_Flutter-public-source
 
 ## 0.5.0 源码同步
 
-当前仅同步 0.5.0+260 源码，不创建版本标签或 Release，不更新正式下载渠道。测试、fixture、测试驱动及设备验收脚本留在本地，不进入公开清单；以前公开的测试已从当前树移除，历史提交不重写。
+0.5.0+260 已进入三端分发：安卓 APK 使用长期正式签名；苹果 IPA 和鸿蒙 HAP 按发布说明以未签名形式提供。测试、fixture、测试驱动及设备验收脚本留在本地，不进入公开清单；以前公开的测试已从当前树移除，历史提交不重写。
 
 Android 使用独立的 source_preview 包名；iOS 与 HarmonyOS 也使用独立源码预览身份。三端工程共享 lib/，仅保留本地平台能力，不接入受限在线实现。iOS 需要自行配置签名和 App Group；HarmonyOS 构建入口为 scripts/build_harmony.sh。

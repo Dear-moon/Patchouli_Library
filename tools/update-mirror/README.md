@@ -19,7 +19,6 @@
 Worker 为 `wenku8-update`，自定义域名为 `git.3952039.xyz`。维护现有程序时只更新版本，保留域名与触发器配置：
 
 ```sh
-node --test worker.test.mjs
 npx wrangler versions upload
 npx wrangler versions deploy VERSION_ID@100% --yes
 ```
