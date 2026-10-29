@@ -5,27 +5,31 @@
 >
 > **本项目完全免费、开源，无任何赞助、打赏或付费渠道。** 不出售会员、激活码或功能解锁服务。任何以本项目或开发者名义收费、募捐、索要赞助的行为均与本项目无关，请勿付款。
 >
-> **仅支持轻小说文库及本地导入，不再支持其他源或自定义书源。** 面向 Android 手机与平板，并非轻小说文库网站的官方应用。
+> **仅支持轻小说文库及本地导入，不再支持其他源或自定义书源。** 支持 Android、iOS 与 HarmonyOS，并非轻小说文库网站的官方应用。
 
 ## 0.5.0
 
-当前源码为 **0.5.0+260**，新增阅读统计与图片报告、阅读纪念、桌面小组件、离线词典、S3 同步及三端本地能力。安卓使用正式签名；苹果 IPA、鸿蒙 HAP 为未签名包，需要自行签名后安装。完整变更见 [更新说明](CHANGELOG.md)。
+**0.5.0 · build 260 已发布。** 从读一本书，到留下这一年的阅读足迹：新增分类统计、八套独立版式的图片报告，以及可独立配置的阅读日历、摘录与纪念桌面小组件。
+
+本版还加入离线词典与 S3 同步，完善 Android、iOS 和 HarmonyOS 的本地阅读能力。[查看自 0.4.8 以来的完整更新 →](CHANGELOG.md)
 
 ## 下载与更新
 
 当前正式版：**[0.5.0 · build 260](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.0)**。
 
-本版加入原创折页墨线动态图标与分类振动设置，优化搜索和标签筛选；修复翻页章名错位，支持逐行重排、连续滚动跨章及听书后续语段预缓存。
+Android 提供正式签名 APK；iOS 与 HarmonyOS 提供未签名安装包。请按设备选择：
 
 ### [镜像下载 →](https://git.3952039.xyz/#releases)　[GitHub Releases →](https://github.com/mikufoxxx/Wenku8_Flutter/releases/latest)
 
 | 你的设备 | 选择安装包 |
 | :-- | :-- |
-| 近年的 Android 手机、平板 | **arm64-v8a（推荐）** |
-| 旧款 32 位 ARM 设备 | armeabi-v7a |
-| x86_64 设备或模拟器 | x86_64 |
+| 近年的 Android 手机、平板 | [**ARM64 APK · 推荐**](https://github.com/mikufoxxx/Wenku8_Flutter/releases/download/v0.5.0/wenku8-0.5.0-arm64-v8a.apk) |
+| 旧款 32 位 ARM 设备 | [ARMv7 APK](https://github.com/mikufoxxx/Wenku8_Flutter/releases/download/v0.5.0/wenku8-0.5.0-armeabi-v7a.apk) |
+| x86_64 设备或模拟器 | [x86_64 APK](https://github.com/mikufoxxx/Wenku8_Flutter/releases/download/v0.5.0/wenku8-0.5.0-x86_64.apk) |
+| iPhone、iPad | [未签名 IPA](https://github.com/mikufoxxx/Wenku8_Flutter/releases/download/v0.5.0/Wenku8-0.5.0-260-ios-unsigned.ipa) · 需自行签名 |
+| HarmonyOS 设备 | [未签名 HAP](https://github.com/mikufoxxx/Wenku8_Flutter/releases/download/v0.5.0/Wenku8-0.5.0-260-harmony-unsigned.hap) · 需自行签名 |
 
-**沿用原包名与签名，可直接覆盖升级，不要先卸载旧版。** 升级、整理存储或同步前，请先备份重要数据。
+**Android 正式版沿用原包名与签名，可直接覆盖升级，不要先卸载旧版。** iOS／HarmonyOS 包不能直接安装，需自行完成签名；覆盖安装取决于签名与设备授权。 升级、整理存储或同步前，请先备份重要数据。
 
 App 内打开 **我的 → 关于 → 检查更新**，优先走镜像，连接失败时自动回退到 GitHub，无需选择线路。
 
@@ -34,15 +38,18 @@ App 内打开 **我的 → 关于 → 检查更新**，优先走镜像，连接�
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme-cover-dark.svg" />
-    <img src="docs/images/readme-cover-light.svg" width="100%" alt="轻小说文库 · 把故事，留在手边。Android 轻小说阅读客户端" />
+    <img src="docs/images/readme-cover-light.svg" width="100%" alt="轻小说文库 · 把故事，留在手边。Android、iOS 与 HarmonyOS 轻小说阅读客户端" />
   </picture>
 </p>
 
 <p align="center">
-  <a href="https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml"><img src="https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml/badge.svg?branch=master&amp;event=push" alt="Build" /></a>
+  <a href="https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml"><img src="https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml/badge.svg?branch=master&amp;event=push" alt="Source checks" /></a>
   <a href="https://github.com/mikufoxxx/Wenku8_Flutter/releases/latest"><img src="https://img.shields.io/github/v/release/mikufoxxx/Wenku8_Flutter?style=flat-square&amp;logo=github&amp;color=blue" alt="Release" /></a>
   <a href="https://github.com/mikufoxxx/Wenku8_Flutter/releases"><img src="https://img.shields.io/github/downloads/mikufoxxx/Wenku8_Flutter/total?style=flat-square&amp;label=GitHub%20Downloads&amp;color=brightgreen" alt="GitHub Release 下载量" /></a>
-  <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android" />
+  <img src="https://img.shields.io/badge/Android-signed-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android · 正式签名" />
+  <img src="https://img.shields.io/badge/iOS-self--sign-555555?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="iOS · 自行签名" />
+  <img src="https://img.shields.io/badge/HarmonyOS-self--sign-3157D5?style=flat-square" alt="HarmonyOS · 自行签名" />
+  <img src="https://img.shields.io/badge/Build-260-65756E?style=flat-square" alt="Build 260" />
   <a href="assets/licenses/GPL-3.0.txt"><img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square&amp;logo=gnu&amp;logoColor=white" alt="GPL 3.0" /></a>
 </p>
 
@@ -68,6 +75,18 @@ App 内打开 **我的 → 关于 → 检查更新**，优先走镜像，连接�
 - **随时找到读到哪里**：分卷目录、本章／整书进度、章内与整书查找、音量键翻页、自动阅读和跨章衔接。封面与插图支持双指缩放及原图保存。
 - **双语各取所需**：保留原书浅字样式，按书选择显示语言；朗读语言独立选择，每种语言可单独配置音色，缺少匹配语音模型时跳过。
 
+## 把阅读足迹，留成一张图
+
+- **分清每一种记录**：总览、节律、书目、记号与触摸分类查看，支持预设时间范围与自定义日期；没有数据的字段和图表自动省略。
+- **报告不只是换颜色**：八套独立版式，按需选择阅读日历、节律、相伴书单、进度和摘录；预览与导出使用同一份内容。
+- **为喜欢的句子留一页**：书签、批注、摘录图片与阅读纪念；四季插图随实际季节切换，保存图片使用短暂提示。
+
+## 桌面上，也有你的阅读日常
+
+今日阅读、本周热力、阅读日历、阅读纪念与摘录卡，搭配四季手帐等五种样式。每张小组件独立选择内容与外观，可同时放置多张；提供小、中、大三种尺寸和浅色／深色模式。
+
+点击统计进入统计页，点击最近阅读继续上次位置，摘录卡可直接换一条。Android 使用应用内配置，iOS 使用系统 WidgetKit 编辑入口，HarmonyOS 使用表单配置。
+
 ## 书库，不止一种整理方式
 
 - **立体与列表**：循环轮播、惯性吸附与触觉反馈，也可只用列表。分类、阅读状态和书籍来源一起筛选；本地书库可独立管理，也可与书架合并。
@@ -90,6 +109,8 @@ App 内打开 **我的 → 关于 → 检查更新**，优先走镜像，连接�
 ## 读到哪里，都能接着读
 
 - **局域网续读**：同一 Wi-Fi 自动发现，首次两端确认后自动重连。在「目录 → 章节进度 → 在其他设备上续读」选择设备，缺书时一并传送，已有同一本书时只传位置。
+- **S3 云端同步**：通过 S3／兼容存储手动合并原书、阅读进度、书签与分类；导入连接和同步目的地分别设置。
+- **离线查词**：导入 MDict、StarDict 或 Kindle 词典，在阅读时本地查词。
 - **书签与分类同步**：两台 App 保持前台时自动接续较新的进度，增量同步书签和分类；同时修改的记录可在冲突页选择保留。
 - **留下喜欢的句子**：长按正文选句或段落，复制、加入书签或快速查看本卷插图。书签可分类、定位高亮，也可分享成带图标水印的图片。
 - **换一种方式听故事**：自然在线音色、自定义 Microsoft SSML 接口，或手机已安装的系统 TTS 引擎。支持 0.5～3 倍速、段落跟随、睡眠定时、后台与锁屏控制；离线能力取决于引擎和音色。
@@ -116,7 +137,7 @@ App 内打开 **我的 → 关于 → 检查更新**，优先走镜像，连接�
 
 ## 开发与参与
 
-欢迎通过 [Issues](https://github.com/mikufoxxx/Wenku8_Flutter/issues) 反馈问题，或通过 Pull Request 参与开发。反馈请附 App 版本、Android 版本和复现步骤。
+欢迎通过 [Issues](https://github.com/mikufoxxx/Wenku8_Flutter/issues) 反馈问题，或通过 Pull Request 参与开发。反馈请附 App 版本、设备与系统版本和复现步骤。
 
 <details>
 <summary><b>本地构建与工程说明</b></summary>
@@ -132,7 +153,7 @@ flutter build apk --release --target-platform android-arm64
 
 公开工程用于本地导入、阅读器、书架与界面开发，构建为独立的「轻小说文库 · 源码预览」，不会覆盖正式版或访问其数据。
 
-[Flutter source checks](https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml) 执行代码检查、测试与独立预览构建，不上传安装包或创建版本发布。
+[Flutter source checks](https://github.com/mikufoxxx/Wenku8_Flutter/actions/workflows/flutter-ci.yml) 执行源码边界检查和静态分析，不上传安装包或创建版本发布。
 
 [构建指南 →](docs/RELEASING.md)
 
