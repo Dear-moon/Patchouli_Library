@@ -6,7 +6,7 @@ on:
       tag:
         description: Reviewed draft tag
         required: true
-        default: v0.4.8
+        default: v0.5.0
         type: string
 
 permissions:
