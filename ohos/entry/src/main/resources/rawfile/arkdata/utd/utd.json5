@@ -1,0 +1,20 @@
+{
+  "UniformDataTypeDeclarations": [
+    {
+      "TypeId": "org.mewx.wenku8_flutter.fb2",
+      "BelongingToTypes": ["general.ebook"],
+      "FilenameExtensions": [".fb2"],
+      "MIMETypes": ["application/x-fictionbook+xml"],
+      "Description": "FictionBook 2",
+      "ReferenceURL": ""
+    },
+    {
+      "TypeId": "org.mewx.wenku8_flutter.prc",
+      "BelongingToTypes": ["com.amazon.mobi"],
+      "FilenameExtensions": [".prc"],
+      "MIMETypes": [],
+      "Description": "Mobipocket PRC book",
+      "ReferenceURL": ""
+    }
+  ]
+}

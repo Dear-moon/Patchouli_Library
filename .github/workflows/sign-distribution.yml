@@ -1,0 +1,43 @@
+name: Sign reviewed distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Reviewed draft tag
+        required: true
+        default: v0.5.1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distribution-signing
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    if: github.repository == 'mikufoxxx/Wenku8_Flutter' && github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Check committed source
+        run: python3 tools/check_public_source.py --revision "$GITHUB_SHA"
+      - name: Sign reviewed draft packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: python3 tools/sign_distribution.py

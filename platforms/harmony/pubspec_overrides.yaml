@@ -1,0 +1,23 @@
+# Harmony-only graph. The normal Android/iOS lockfile is left unchanged.
+# Upstream stable plugin revisions are pinned, not moving development branches.
+dependency_overrides:
+  path_provider:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      ref: d4e49daa0acbd0bc419d58b1da27d64d44fab54b
+      path: packages/path_provider/path_provider
+  path_provider_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      ref: d4e49daa0acbd0bc419d58b1da27d64d44fab54b
+      path: packages/path_provider/path_provider_ohos
+  shared_preferences:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      ref: 4a7a536bba8447c7d4eacde2fb1a2e0fbe2da044
+      path: packages/shared_preferences/shared_preferences
+  shared_preferences_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      ref: 4a7a536bba8447c7d4eacde2fb1a2e0fbe2da044
+      path: packages/shared_preferences/shared_preferences_ohos

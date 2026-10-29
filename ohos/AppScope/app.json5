@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "org.mewx.wenku8_flutter.source_preview",
+    "vendor": "mikufoxxx",
+    "versionCode": 260,
+    "versionName": "0.5.0",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}

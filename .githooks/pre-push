@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Validate each new commit before it leaves the reviewed workspace."""
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+
+root = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip())
+spec = importlib.util.spec_from_file_location('source_policy', root / 'tools/check_public_source.py')
+policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(policy)
+checked = set()
+for line in sys.stdin:
+    local_ref, local_sha, remote_ref, remote_sha = line.split()
+    if set(local_sha) == {'0'}:
+        continue
+    # Previously published history is not re-exported by a new tag.
+    # Validate every newly reachable commit against the current inventory policy.
+    command = ['git', 'rev-list', local_sha]
+    if set(remote_sha) != {'0'}:
+        command += ['^' + remote_sha]
+    command += ['--not', '--remotes']
+    for revision in subprocess.check_output(command, cwd=root, text=True).splitlines():
+        if revision in checked:
+            continue
+        checked.add(revision)
+        issues = policy.inspect_revision(root, revision)
+        if issues:
+            print('Publication checks failed:\n' + '\n'.join(issues), file=sys.stderr)
+            raise SystemExit(1)
