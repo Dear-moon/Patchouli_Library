@@ -616,7 +616,7 @@ class AppUpdatePage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const AppText(
-                      '基于 MewX 与原项目贡献者的轻小说文库 Android 客户端重构。原项目 GPL v2 或后续版本许可保留；本 Flutter 组合版本按 GPL v3 分发。',
+                      '公开源码遵循仓库许可证；第三方组件、字体及其贡献者的版权与许可分别保留。',
                       style: TextStyle(height: 1.6),
                     ),
                     const SizedBox(height: 12),
@@ -636,7 +636,7 @@ class AppUpdatePage extends StatelessWidget {
                         applicationName: '轻小说文库',
                         applicationVersion: currentAppVersion,
                         applicationLegalese:
-                            'Copyright © MewX and contributors\nFlutter modifications © 2026 Wenku8 Flutter contributors',
+                            'Copyright © 2026 Wenku8 Flutter contributors',
                       ),
                       child: const AppText('开源许可与字体授权'),
                     ),

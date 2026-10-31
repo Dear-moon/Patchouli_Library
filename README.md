@@ -146,9 +146,9 @@ App 内打开 **我的 → 关于 → 检查更新**，优先走镜像，连接�
 
 ## 致谢与许可
 
-基于 [MewX/light-novel-library_Wenku8_Android](https://github.com/MewX/light-novel-library_Wenku8_Android) 重构。感谢 MewX、Baby Pepper（SeraphRoy）、Jack Liu（aaassseee）及原项目贡献者。
+感谢本项目使用的开源组件、字体及其贡献者。各组件的版权和许可分别保留。
 
-- **应用源码**：保留 [GPL v2 或后续版本声明](LICENSE)，本 Flutter 组合版本按 [GPL v3](assets/licenses/GPL-3.0.txt) 分发。
+- **公开源码**：沿用仓库既有 [LICENSE](LICENSE) 与 [GPL v3 声明](assets/licenses/GPL-3.0.txt)。
 - **可下载字体**：遵循各自的 SIL OFL 1.1 许可。
 - **在线语音适配**：[rany2/edge-tts](https://github.com/rany2/edge-tts)，[LGPL v3](assets/licenses/edge-tts.txt)。
 

@@ -8,11 +8,11 @@
   `tools/export_public_source.py`. It has no runtime dependencies.
 - Copyright 2016–2017 Alberto Fernández, 2006–2007 Kohei Taketa (Java port),
   2001 Netscape Communications Corporation; individual files retain their notices.
-- Upstream offers MPL 1.1, GPL 2.0-or-later or LGPL 2.1-or-later. This combined
-  application uses the GPL 2.0-or-later option under GPL 3.0, without removing the
-  upstream alternatives. The original notice and MPL text are also supplied in
-  `assets/licenses/juniversalchardet.txt`; `assets/licenses/GPL-3.0.txt` contains
-  the full application-distribution license.
+- Upstream offers MPL 1.1, GPL 2.0-or-later or LGPL 2.1-or-later. This distribution
+  selects the MPL 1.1 option without removing the upstream alternatives. The
+  complete unmodified source and build files remain in the directory above.
+  The original notice and MPL text are also supplied in
+  `assets/licenses/juniversalchardet.txt`.
 
 Only legacy TXT encoding identification uses this library, after strict UTF-8
 decoding fails. The app samples at most 64 KiB rather than asking the detector to

@@ -7,7 +7,7 @@ void registerAppLicenses() {
   _registered = true;
   LicenseRegistry.addLicense(() async* {
     yield LicenseEntryWithLineBreaks(const [
-      'Wenku8 Flutter',
+      'Wenku8 Flutter · 公开源码',
     ], await rootBundle.loadString('assets/licenses/GPL-3.0.txt'));
     yield LicenseEntryWithLineBreaks(const [
       'Source Han Serif CN / TW · Adobe',
@@ -45,7 +45,7 @@ void registerAppLicenses() {
       'Bouncy Castle': 'bouncycastle',
       'OpenJDK desugaring · Oracle / Google': 'desugar-jdk',
       'OpenCC dictionaries · BYVoid and contributors': 'opencc',
-      'juniversalchardet · Mozilla / Kohei Taketa / Alberto Fernández':
+      'juniversalchardet · MPL 1.1 · Mozilla / Kohei Taketa / Alberto Fernández':
           'juniversalchardet',
       'Cronet · Chromium and bundled third-party components': 'cronet',
       'Dart Jieba and bundled Jieba segmentation dictionary': 'dart-jieba',

@@ -1,13 +1,10 @@
 Wenku8 Flutter
 
-Based on MewX/light-novel-library_Wenku8_Android and its contributors.
-https://github.com/MewX/light-novel-library_Wenku8_Android
+The repository's existing LICENSE and assets/licenses/GPL-3.0.txt apply to
+published source files. Third-party components retain their own copyrights
+and license conditions.
 
-The upstream project's GNU GPL version 2 or (at your option) a later version
-notice is retained in LICENSE. Original notices remain applicable. This Flutter
-combined distribution uses GNU GPL version 3; see assets/licenses/GPL-3.0.txt.
-
-Flutter branch changes, September-October 2026:
+Implementation changes, September-October 2026:
 New Flutter presentation, reader, local library/cache, Android bridges and
 listening implementation. Modified on 2026-10-15 to retire vendor-specific
 speech integration, add configurable low-performance rendering, remove runtime
@@ -51,7 +48,7 @@ implemented in this project; the OpenCC native engine is not included.
 juniversalchardet 2.0.4: Copyright 2016-2017 Alberto Fernandez,
 2006-2007 Kohei Taketa (Java port), 2001 Netscape Communications Corporation.
 Upstream MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later alternatives retained;
-this GPL 3 application uses the GPL 2.0-or-later option. Unmodified source,
+this distribution uses the MPL 1.1 option. Unmodified source,
 build files and notices: third_party/juniversalchardet-2.0.4/.
 Apache POI HWPF 5.5.1 and document dependency notices: assets/licenses/poi.txt.
 

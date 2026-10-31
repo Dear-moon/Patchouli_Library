@@ -2,7 +2,7 @@
 
 ## 应用源码
 
-基于 [MewX/light-novel-library_Wenku8_Android](https://github.com/MewX/light-novel-library_Wenku8_Android) 与原贡献者的工作。原始 [LICENSE](../LICENSE) 保留 GNU GPL version 2 或后续版本条款。本次 Flutter 组合版本按 [GPL version 3](../assets/licenses/GPL-3.0.txt) 分发，以兼容 LGPL v3 的协议适配代码。保留原署名、修改说明和构建脚本；分发时应按各组件的实际许可提供对应源码和声明。
+公开源码沿用仓库既有 [LICENSE](../LICENSE) 与 [GPL v3 声明](../assets/licenses/GPL-3.0.txt)。第三方组件的源码、版权、许可和构建资料按各自条件保留。
 
 此工程用于界面、阅读器、本地书库与相关模型开发。构建和导出方式见 [构建指南](RELEASING.md)。
 
@@ -38,7 +38,7 @@ OpenJDK 兼容库通过 Gradle 依赖引入，源码与构建脚本见 [google/d
 
 旧 Word DOC 在 Android 本机使用 [Apache POI HWPF 5.5.1](https://poi.apache.org/components/document/) 转换，未接入在线转换服务。Apache POI 及其文档依赖的原许可与声明保存在 [`assets/licenses/poi.txt`](../assets/licenses/poi.txt)，注册到应用开源许可页。
 
-旧编码 TXT 检测使用 [juniversalchardet 2.0.4](https://github.com/albfernandez/juniversalchardet/tree/v2.0.4)。保留 MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later 三选一许可，本应用选择 GPL 2.0-or-later 条款并以 GPL 3 分发。运行库源码、构建配置与许可在 `third_party/juniversalchardet-2.0.4/`；[来源记录](../third_party/JUNIVERSALCHARDET.md)与[原许可](../assets/licenses/juniversalchardet.txt)随应用提供。
+旧编码 TXT 检测使用 [juniversalchardet 2.0.4](https://github.com/albfernandez/juniversalchardet/tree/v2.0.4)。保留 MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later 三选一许可，本次分发选择 MPL 1.1。运行库源码、构建配置与许可在 `third_party/juniversalchardet-2.0.4/`；[来源记录](../third_party/JUNIVERSALCHARDET.md)与[原许可](../assets/licenses/juniversalchardet.txt)随应用提供。
 
 局域网续读使用 `cryptography` 2.9.0（Apache-2.0），仅在用户开启并配对后交换阅读位置、书签和分类，不使用外部服务器。旧 EPUB 定位迁移使用 `diff_match_patch` 0.4.1（Apache-2.0），仅在本机计算定位映射。系统朗读通过 Android 公开 TextToSpeech 服务发现与文件合成接口连接已安装引擎。
 
