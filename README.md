@@ -9,18 +9,20 @@
 
 ## 当前预发布版
 
-**[0.5.1-preview.1 · Android build 261](https://github.com/Dear-moon/Patchouli_Library/releases/tag/v0.5.1-preview.1)**
+**[0.5.2-preview.1+262 · Android build 262](https://github.com/Dear-moon/Patchouli_Library/releases/tag/v0.5.2-preview.1%2B262)**
 
 - 保留通用多源引擎、平台账号、云端收藏、系列收藏和源站书号显示。
+- 新增纯白背景、文字颜色与不透明度、阅读信息顶部／底部切换，以及书架正序／倒序。
+- 新增默认关闭的 WebDAV 自动阅读进度同步，按书籍及章节标识匹配；坚果云需配置已有目录。
 - 支持原生触感／自定义波形切换，默认使用原生触感并保存偏好。
 - 首页平台切换改为胶囊；书籍详情支持在浏览器打开源站页面，逻辑地址由规则声明映射。
 - 接入上游 0.5 的阅读器、EPUB、离线词典、书架布局、阅读统计、小组件和 S3／局域网同步改进。
 
-主要功能和上游变更请参阅 [上游 0.5.0](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.0) 与 [上游 0.5.1](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.1)。
+主要功能和上游变更请参阅 [上游 0.5.2](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.2)，此前功能见 [0.5.0](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.0) 与 [0.5.1](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.1)。
 
 ## 下载与更新
 
-### [下载 Android ARM64 APK →](https://github.com/Dear-moon/Patchouli_Library/releases/download/v0.5.1-preview.1/patchouli-library-0.5.1-preview.1-arm64-v8a.apk)　[全部版本 →](https://github.com/Dear-moon/Patchouli_Library/releases)
+### [下载 Android ARM64 APK →](https://github.com/Dear-moon/Patchouli_Library/releases/download/v0.5.2-preview.1%2B262/patchouli-library-0.5.2-preview.1-arm64-v8a.apk)　[全部版本 →](https://github.com/Dear-moon/Patchouli_Library/releases)
 
 当前预发布仅提供 ARM64 APK。沿用现有帕秋莉图书馆预览版的包名与签名，可直接覆盖安装并保留数据；与上游正式版是独立安装标识。下载和版本说明以本仓库 Releases 为准。
 
