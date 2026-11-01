@@ -5,11 +5,21 @@
 >
 > **本项目完全免费，无任何赞助、打赏或付费渠道。** 不出售会员、激活码或功能解锁服务。任何以本项目或开发者名义收费、募捐、索要赞助的行为均与本项目无关，请勿付款。
 >
-> 当前提供 **Android ARM64 预发布版**，支持覆盖升级已有的帕秋莉图书馆预览版。iOS／HarmonyOS 的配套源码尚未构建验收；本项目并非任何书源平台的官方应用。
+> **0.5.5（263）正式版已发布**，Android 包名为 `reader.patchoulibrary.yushio`，与旧预览版独立安装。下载入口及迁移步骤见下方。iOS／HarmonyOS 的配套源码尚未构建验收；本项目并非任何书源平台的官方应用。
 
-## 当前预发布版
+## 当前版本与发布状态
 
-**[0.5.2-preview.1+262 · Android build 262](https://github.com/Dear-moon/Patchouli_Library/releases/tag/v0.5.2-preview.1%2B262)**
+当前正式版：**[0.5.5 · Android build 263](https://github.com/Dear-moon/Patchouli_Library/releases/tag/v0.5.5)**，Android 包名：`reader.patchoulibrary.yushio`。
+
+旧预览版：**[0.5.2-preview.1+262 · Android build 262](https://github.com/Dear-moon/Patchouli_Library/releases/tag/v0.5.2-preview.1%2B262)**
+
+### 0.5.5 本轮调整
+
+- Android 使用独立标识 `reader.patchoulibrary.yushio`，沿用现有签名；与旧包并存，不是旧包的覆盖升级。
+- 默认备份文件名改为 `patchouli-library-backup-YYYY-MM-DD.json`，旧备份继续支持导入。
+- 关于页统一显示通用多源支持说明。
+
+### 继续保留的功能
 
 - 保留通用多源引擎、平台账号、云端收藏、系列收藏和源站书号显示。
 - 新增纯白背景、文字颜色与不透明度、阅读信息顶部／底部切换，以及书架正序／倒序。
@@ -18,21 +28,28 @@
 - 首页平台切换改为胶囊；书籍详情支持在浏览器打开源站页面，逻辑地址由规则声明映射。
 - 接入上游 0.5 的阅读器、EPUB、离线词典、书架布局、阅读统计、小组件和 S3／局域网同步改进。
 
-主要功能和上游变更请参阅 [上游 0.5.2](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.2)，此前功能见 [0.5.0](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.0) 与 [0.5.1](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.1)。
+上游发行说明见 [0.5.5](https://github.com/mikufoxxx/Wenku8_Flutter/releases/tag/v0.5.5)。本项目保留独立多源引擎，具体变化以本页及对应发行说明中的帕秋莉更新为准。
 
 ## 下载与更新
 
-### [下载 Android ARM64 APK →](https://github.com/Dear-moon/Patchouli_Library/releases/download/v0.5.2-preview.1%2B262/patchouli-library-0.5.2-preview.1-arm64-v8a.apk)　[全部版本 →](https://github.com/Dear-moon/Patchouli_Library/releases)
+### [下载 0.5.5 ARM64 APK →](https://github.com/Dear-moon/Patchouli_Library/releases/download/v0.5.5/patchouli-library-0.5.5-arm64-v8a.apk)　[全部版本 →](https://github.com/Dear-moon/Patchouli_Library/releases)
 
-当前预发布仅提供 ARM64 APK。沿用现有帕秋莉图书馆预览版的包名与签名，可直接覆盖安装并保留数据；与上游正式版是独立安装标识。下载和版本说明以本仓库 Releases 为准。
+0.5.5 正式版提供 ARM64 APK，延续签名、改用新包名，安装后与旧预览版并存；请通过应用内备份迁移书架与设置，在新版重新导入规则并登录平台。下载和版本说明以本仓库 Releases 为准。
 
 首次安装后，在「书源管理」通过文件、链接或粘贴导入 JSON；已有规则可在导入时更新。各平台的登录、收藏、搜索和阅读能力取决于所用规则与源站。规则声明的逻辑地址需更新网页映射后，才能使用详情页的浏览器入口。
+
+## 从旧预览版迁移到 0.5.5
+
+1. 在旧版「备份与恢复」导出备份，保留原书文件。旧版导出的 `wenku8-backup-日期.json` 仍可用于新版恢复。
+2. 安装新包，在「备份与恢复」选择备份并合并记录，按需导入偏好设置。新旧应用独立保存数据，安装本身不会迁移书架。
+3. 在新版「书源管理」重新导入规则；聚合 JSON 可一次导入多条规则。平台账号、Cookie、令牌和网盘凭据不包含在书库备份中，需要重新登录或配置。
+4. JSON 备份不含本地原书和离线正文。本地书籍需保留原文件并重新导入或授予访问权限；确认新版记录与阅读正常后，再决定是否保留旧安装。
 
 [反馈问题](https://github.com/Dear-moon/Patchouli_Library/issues) · [上游阅读指南](https://github.com/mikufoxxx/Wenku8_Flutter/blob/master/docs/READER.md)
 
 ## 仓库说明
 
-本仓库保持上游 fork 关系，仅保留两个公开分支：`master` 原样跟随上游工程；`readme` 为默认分支，独立维护帕秋莉图书馆的介绍、发行与使用说明。两个分支不相互合并。定制 App 的日常开发和书源规则分别在独立仓库维护，不向本仓库提交定制运行代码。
+公开发行仓库 [Dear-moon/Patchouli_Library](https://github.com/Dear-moon/Patchouli_Library) 保持上游 fork 关系，仅保留两个公开分支：`master` 原样跟随上游工程；`readme` 为默认分支，独立维护介绍、发行与使用说明。两个分支不相互合并。
 
 **`master` 中的上游快照与 Releases 中的定制 APK 不等同，不能直接从该分支构建出帕秋莉图书馆发行包。**
 
@@ -45,9 +62,9 @@
 
 <p align="center">
   <a href="https://github.com/mikufoxxx/Wenku8_Flutter"><img src="https://img.shields.io/badge/Upstream-Wenku8_Flutter-555555?style=flat-square&amp;logo=github" alt="上游 Wenku8 Flutter" /></a>
-  <a href="https://github.com/Dear-moon/Patchouli_Library/releases"><img src="https://img.shields.io/github/v/release/Dear-moon/Patchouli_Library?include_prereleases&amp;style=flat-square&amp;logo=github&amp;color=blue" alt="帕秋莉图书馆预发布版" /></a>
+  <a href="https://github.com/Dear-moon/Patchouli_Library/releases"><img src="https://img.shields.io/github/v/release/Dear-moon/Patchouli_Library?style=flat-square&amp;logo=github&amp;color=blue" alt="帕秋莉图书馆正式版" /></a>
   <a href="https://github.com/Dear-moon/Patchouli_Library/releases"><img src="https://img.shields.io/github/downloads/Dear-moon/Patchouli_Library/total?style=flat-square&amp;label=GitHub%20Downloads&amp;color=brightgreen" alt="本仓库 Release 下载量" /></a>
-  <img src="https://img.shields.io/badge/Android-ARM64_preview-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android ARM64 预发布版" />
+  <img src="https://img.shields.io/badge/Android-ARM64-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android ARM64 正式版" />
   <a href="https://github.com/Dear-moon/Patchouli_Library/blob/v0.5.1-preview.1/assets/licenses/GPL-3.0.txt"><img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square&amp;logo=gnu&amp;color=blue" alt="GPL 3.0" /></a>
 </p>
 
@@ -119,7 +136,7 @@
 - **书籍发现**：分类、排行、出版文库，按书名、作者或标签搜索；点作者或标签继续浏览相关作品。[搜索指南 →](https://github.com/Dear-moon/Patchouli_Library/blob/v0.5.1-preview.1/docs/SEARCH.md)
 - **平台账号与云端收藏**：按导入规则提供对应入口，实际可用能力取决于规则和源站。
 - **阅读操作**：分区点按可选左右两侧都翻下一页；发现、书架和本地页可分别设置点书直接续读，再从阅读器进入详情。
-- **离线与备份**：失败续缓存、缓存管理、阅读历史与本地备份。
+- **离线与备份**：失败续缓存、缓存管理、阅读历史与本地备份。备份包含书架、进度、书签、历史和偏好，账号与离线正文另行管理。
 - **主题图标**：桌面图标可跟随系统主题取色，开关独立控制。
 - **中文支持**：简体中文、香港繁体与台湾繁体，可跟随系统或手动选择。
 - **使用方式**：可在 App 内强制竖屏，不影响其他应用旋转；无网时保留可离线阅读的书，阅读器模式随本地／合并书架设置联动。
@@ -137,7 +154,7 @@
 
 帕秋莉图书馆的问题请在[本仓库 Issues](https://github.com/Dear-moon/Patchouli_Library/issues) 反馈，附上 App 版本、设备与系统版本、复现步骤及相关书源名称，不要发送账号凭据。上游项目的问题与贡献请前往[上游仓库](https://github.com/mikufoxxx/Wenku8_Flutter)。
 
-本次定制预发布使用 Flutter 3.41.6／Dart 3.11.4 验证 Android 构建。公开 `master` 的构建命令和文档属于上游工程；定制功能的源码交付以具体 Release 的说明和附件为准。
+本次定制发行使用 Flutter 3.41.6／Dart 3.11.4 验证 Android 构建。公开 `master` 的构建命令和文档属于上游工程；定制功能的源码交付以具体 Release 的说明和附件为准。
 
 ## 致谢与许可
 
@@ -151,10 +168,10 @@
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=Dear-moon%2FPatchouli_Library&type=date&releases=&legend=bottom-right">
+<a href="https://www.star-history.com/?repos=Dear-moon%2FPatchouli_Library&amp;type=date&amp;legend=top-left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Dear-moon/Patchouli_Library&type=date&theme=dark&legend=top-left" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Dear-moon/Patchouli_Library&type=date&legend=top-left" />
-    <img src="https://api.star-history.com/chart?repos=Dear-moon/Patchouli_Library&type=date&legend=top-left" width="100%" alt="Star History Chart" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Dear-moon%2FPatchouli_Library&amp;type=date&amp;theme=dark&amp;legend=top-left&amp;v=20261101" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Dear-moon%2FPatchouli_Library&amp;type=date&amp;legend=top-left&amp;v=20261101" />
+    <img src="https://api.star-history.com/chart?repos=Dear-moon%2FPatchouli_Library&amp;type=date&amp;legend=top-left&amp;v=20261101" width="100%" alt="Star History Chart" />
   </picture>
 </a>
