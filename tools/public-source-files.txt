@@ -1,2 +1,5 @@
 README.md
+docs/CUSTOM_SOURCES.md
+docs/SOURCE_AUTHORING.md
+docs/SOURCE_ENGINE.md
 tools/public-source-files.txt
